@@ -30,15 +30,20 @@ module CAST =
 
         let defO<'a> (defvalue: obj) (o: obj) : obj =
             match o with
-            | :? 'a as v -> o
+            | :? 'a -> o
             | _ -> defvalue
 
-        let trydef<'a> (defvalue: 'a option) (o: obj) : 'a option =
+        let tryDV<'a> (defvalue: 'a option) (o: obj) : 'a option =
             match o with
             | :? 'a as v -> Some v
             | _ -> defvalue
 
     [<RequireQualifiedAccess>]
+    module Bool =
+        let def (defvalue: bool) (xlval: obj) = Cast.def<bool> defvalue xlval
+        let tryDV (defvalue: bool option) (xlval: obj) = Cast.tryDV<bool> defvalue xlval
+
+    [<RequireQualifiedAccess>]
     module Stg =
-        let map = 1
-        let defaultValue (value: string) = 1.0
+        let def (defvalue: string) (xlval: obj) = Cast.def<string> defvalue xlval
+        let tryDV (defvalue: string option) (xlval: obj) = Cast.tryDV<string> defvalue xlval

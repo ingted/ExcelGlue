@@ -1,12 +1,24 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net472</TargetFramework> 
+	<PropertyGroup>
+		<TargetFramework>net472</TargetFramework> 
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+	</PropertyGroup>
 
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-  </PropertyGroup>
+	<PropertyGroup>
+		<ExcelDnaAllowPackageReferenceProjectStyle>true</ExcelDnaAllowPackageReferenceProjectStyle>
+		<RunExcelDnaSetDebuggerOptions>false</RunExcelDnaSetDebuggerOptions>
+	</PropertyGroup>
+	
+	<ItemGroup>
+		<Compile Include="Library1.fs" />
+		<None Include="Script.fsx" />
+	</ItemGroup>
 
-  <ItemGroup>
-    <Compile Include="Library1.fs" />
-    <None Include="Script.fsx" />
-  </ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="ExcelDna.AddIn" Version="1.1.1" PrivateAssets="All" />
+		<PackageReference Include="ExcelDna.Integration" Version="1.1.0" />
+		<PackageReference Include="ExcelDna.Interop" Version="14.0.1" />
+		<PackageReference Include="ExcelDna.Registration" Version="1.1.0" />
+	</ItemGroup>
+
 </Project>

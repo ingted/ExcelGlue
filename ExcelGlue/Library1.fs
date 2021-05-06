@@ -1,9 +1,15 @@
 ﻿namespace ExcelGlue
 
 [<RequireQualifiedAccess>]
-module CAST =
+module Cast =
     open System
     open ExcelDna.Integration
+
+    /// Indicates which xl-values are to be converted to special values (e.g. Double.NaN in 0D, [||] in 1D) :
+    ///    - if OnlyErrorNA, only ExcelErrorNA values are converted.
+    ///    - if AllErrors, all Excel error values are converted.
+    ///    - if AllNonNumeric, any non-numeric xl-value are.
+    type EdgeCaseConversion = | OnlyErrorNA | AllErrors | AllNonNumeric | AllNonNumericAndNA | AllNonNumericAndErrors | NoConversion
 
     [<RequireQualifiedAccess>]
     module Cast =
@@ -77,14 +83,8 @@ module CAST =
 
     [<RequireQualifiedAccess>]
     module Nan =
-        /// Indicates which xl-values are to be converted to Double.NaN :
-        ///    - if OnlyErrorNA, only ExcelErrorNA values are converted to Double.NaN.
-        ///    - if AllErrors, all Excel error values are converted to Double.NaN.
-        ///    - if AllNonNumeric, any non-numeric xl-value are converted to Double.NaN.
-        type NanConversion = | OnlyErrorNA | AllErrors | AllNonNumeric | AllNonNumericAndNA | AllNonNumericAndErrors | NoConversionToNaN
-
         /// Converts an xl-value to boxed Double.NaN in some cases.
-        let nanify (toNaN: NanConversion) (xlVal: obj) : obj = 
+        let nanify (toNaN: EdgeCaseConversion) (xlVal: obj) : obj = 
             match xlVal, toNaN with
             | :? double, _ -> xlVal
             | :? ExcelError as xlerr, OnlyErrorNA when xlerr = ExcelError.ExcelErrorNA -> box Double.NaN
@@ -98,19 +98,19 @@ module CAST =
             | _ -> xlVal
 
         /// Casts an xl-value to double or fails, with some values potentially cast to Double.NaN.
-        let fail (toNaN: NanConversion) (msg: string option) (xlVal: obj) = 
+        let fail (toNaN: EdgeCaseConversion) (msg: string option) (xlVal: obj) = 
             nanify toNaN xlVal |> Cast.fail<double> msg
 
         /// Casts an xl-value to double with a default value, with some values potentially cast to Double.NaN.
-        let def (toNaN: NanConversion) (defValue: double) (xlVal: obj) = 
+        let def (toNaN: EdgeCaseConversion) (defValue: double) (xlVal: obj) = 
             nanify toNaN xlVal |> Cast.def<double> defValue
 
         /// Casts an xl-value to a double option type with a default value, with some values potentially cast to Double.NaN.
-        let tryDV (toNaN: NanConversion) (defValue: double option) (xlVal: obj) = 
+        let tryDV (toNaN: EdgeCaseConversion) (defValue: double option) (xlVal: obj) = 
             nanify toNaN xlVal |> Cast.tryDV<double> defValue
 
         /// Replaces an xl-value with a double default value if it isn't a boxed double type (e.g. box true), with some values potentially cast to Double.NaN.
-        let defO (toNaN: NanConversion) (defValue: double) (xlVal: obj) = 
+        let defO (toNaN: EdgeCaseConversion) (defValue: double) (xlVal: obj) = 
             nanify toNaN xlVal |> Cast.def<double> defValue
 
         /// Converts a boxed Double.NaN into an ExcelErrorNA.
@@ -169,7 +169,7 @@ module CAST =
     module D1 =
         /// Converts a 1-row or 1-column xl-range into a 1D array.
         /// In case of non-1D xl-range, returns the 1st row if rowWiseDef and the 1st column otherwise.
-        let of2D2 (rowWiseDef: bool) (o2D: obj[,]) : obj[] = 
+        let of2D (rowWiseDef: bool) (o2D: obj[,]) : obj[] = 
             // column-wise slice
             if Array2D.length2 o2D = 1 then
                 o2D.[*, Array2D.base2 o2D]
@@ -180,6 +180,31 @@ module CAST =
             else 
                 o2D.[*, Array2D.base2 o2D]
 
+        let to1D (rowWiseDef: bool) (xlVal: obj) : obj[] =
+            match xlVal with
+            | :? (obj[,]) as o2D -> of2D rowWiseDef o2D
+            | :? (obj[]) as o1D -> o1D
+            | o0D -> [| o0D |]
+
+        let try1D (rowWiseDef: bool) (xlVal: obj) : obj[] option =
+            match xlVal with
+            | :? (obj[,]) as o2D -> of2D rowWiseDef o2D |> Some
+            | :? (obj[]) as o1D -> Some o1D
+            | _ -> None
+
+        [<RequireQualifiedAccess>]
+        module WithEdgeCase =
+            let to1D (emptyArray: EdgeCaseConversion) (rowWiseDef: bool) (xlVal: obj) : obj[] =
+                match xlVal with
+                | :? (obj[,]) as o2D -> of2D rowWiseDef o2D
+                | :? (obj[]) as o1D -> o1D
+                | o0D -> [| o0D |]
+
+            let try1D (emptyArray: EdgeCaseConversion) (rowWiseDef: bool) (xlVal: obj) : obj[] option =
+                match xlVal with
+                | :? (obj[,]) as o2D -> of2D rowWiseDef o2D |> Some
+                | :? (obj[]) as o1D -> Some o1D
+                | _ -> None
 
 
         let _end = "here"

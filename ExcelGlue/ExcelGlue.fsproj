@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
 		<TargetFramework>net48</TargetFramework> 
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -13,13 +13,10 @@
 	</PropertyGroup>
 	
 	<ItemGroup>
-		<!--<None Include="C:\Users\W1\source\repos\ExcelGlue\ExcelGlue-Addin.dna" />-->
-		<None Include="..\LICENSE">
-		  <Pack>True</Pack>
-		  <PackagePath></PackagePath>
-		</None>
+		<None Include="..\LICENSE" Pack="True" />
 		<None Include="ExcelGlue-Addin.dna" />
-		<Compile Include="Library1.fs" />
+		<Compile Include="1000_main.fs" />
+		<Compile Include="2000_xlxl.fs" />
 		<None Include="Script.fsx" />
 	</ItemGroup>
 

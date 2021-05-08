@@ -210,7 +210,16 @@ module Cast =
         let _end = "here"
 
 
+module Cast_XL =
+    open System
+    open ExcelDna.Integration
 
+    [<ExcelFunction(Category="XL", Description="Cast.")>]
+    let cast_o1d
+        ([<ExcelArgument(Description= "Range")>] range: obj)
+        : obj[]  =
+
+        Cast.D1.to1D false range
 
 
 

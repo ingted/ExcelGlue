@@ -149,9 +149,8 @@ module Cast =
             | :? ExcelMissing -> defValue
             | _ -> o
 
-
-
         /// Replaces an xl-value with None if missing.
+        /// Otherwise passes the xl-value through.
         let tryO (o: obj) : obj option =
             match o with
             | :? ExcelMissing -> None
@@ -183,45 +182,35 @@ module Cast =
             // column-wise slice as default
             else 
                 o2D.[*, Array2D.base2 o2D]
-
+        
+        /// Converts an xl-range to a 1D array option.
+        /// Use to1D over try1D when the obj argument is an xl-value.
         let to1D (rowWiseDef: bool) (xlVal: obj) : obj[] =
             match xlVal with
             | :? (obj[,]) as o2D -> of2D rowWiseDef o2D
             | :? (obj[]) as o1D -> o1D
             | o0D -> [| o0D |]
-
+        
+        /// Converts an xl-range to a 1D array option.
+        /// Use try1D over to1D when the obj argument is not an xl-value.
         let try1D (rowWiseDef: bool) (o: obj) : obj[] option =
             match o with
             | :? (obj[,]) as o2D -> of2D rowWiseDef o2D |> Some
             | :? (obj[]) as o1D -> Some o1D
             | _ -> None
 
-        [<RequireQualifiedAccess>]
-        module WithEdgeCase =
-            let to1D (emptyArray: EdgeCaseConversion) (rowWiseDef: bool) (xlVal: obj) : obj[] =
-                match xlVal with
-                | :? (obj[,]) as o2D -> of2D rowWiseDef o2D
-                | :? (obj[]) as o1D -> o1D
-                | o0D -> [| o0D |]
-
-            let try1D (emptyArray: EdgeCaseConversion) (rowWiseDef: bool) (xlVal: obj) : obj[] option =
-                match xlVal with
-                | :? (obj[,]) as o2D -> of2D rowWiseDef o2D |> Some
-                | :? (obj[]) as o1D -> Some o1D
-                | _ -> None
-
         // -----------------------------------
         // -- Convenience functions
         // -----------------------------------
 
-        /// Returns a default value instead of an empty object 
+        /// Returns a default value instead of an empty array. 
         let ofEmpty<'a> (defValue: obj) (o1d: 'a[]) : obj[] =
             if o1d |> Array.isEmpty then
                 [| defValue |]
             else
                 o1d |> Array.map box
 
-        /// Returns a default value instead of an empty object 
+        /// Returns a default value instead of an empty array.
         let ofEmptyO (defValue: obj) (o1d: obj[]) : obj[] =
             if o1d |> Array.isEmpty then
                 [| defValue |]
@@ -232,6 +221,64 @@ module Cast =
 
         let _end = "here"
 
+    let private isOptionalType (typeLabel: string) : bool = typeLabel.IndexOf("#") >= 0
+    let private prepString (typeLabel: string) =
+        typeLabel.Replace(" ", "").Replace(":", "").Replace("#", "").ToUpper()
+
+    /// DU representing xl-value types.
+    type Variant = | BOOL | BOOLOPT | STRING | STRINGOPT | DOUBLE | DOUBLEOPT | DOUBLENAN | DOUBLENANOPT | INT | INTOPT | DATE | DATEOPT | VAR | VAROPT | OBJ with
+        static member ofLabel (typeLabel: string) : Variant = 
+            let isoption = isOptionalType typeLabel
+            match prepString typeLabel with
+            | "B" | "BOOL" | "BOOLEAN" -> if isoption then BOOLOPT else BOOL
+            | "S" | "STR" | "STG" | "STRG" | "STRING" -> if isoption then STRINGOPT else STRING
+            | "D" | "DBL" | "DOUBLE" -> if isoption then DOUBLEOPT else DOUBLE
+            | "DNAN" | "DBLNAN" | "DOUBLENAN" -> if isoption then DOUBLENANOPT else DOUBLENAN
+            | "I" | "INT" | "INTEGER" -> if isoption then INTOPT else INT
+            | "DTE" | "DATE" -> if isoption then DATEOPT else DATE
+            | "V" | "VAR" -> if isoption then VAROPT else VAR
+            | _ -> OBJ
+
+        member this.toLabel : String = 
+            match this with
+            | BOOL -> "BOOL"
+            | BOOLOPT -> "#BOOL"
+            | STRING -> "STRING"
+            | STRINGOPT -> "#STRING"
+            | DOUBLE -> "DOUBLE"
+            | DOUBLEOPT -> "#DOUBLE"
+            | DOUBLENAN -> "DOUBLENAN"
+            | DOUBLENANOPT -> "#DOUBLENAN"
+            | INT -> "INT"
+            | INTOPT -> "#INT"
+            | DATE -> "DATE"
+            | DATEOPT -> "#DATE"
+            | VAR -> "VAR"
+            | VAROPT -> "#VAR"
+            | OBJ-> "PBJ"
+
+        member this.toType : Type = 
+            match this with
+            | BOOL -> typeof<bool>
+            | BOOLOPT -> typeof<bool option>
+            | STRING -> typeof<string>
+            | STRINGOPT -> typeof<string option>
+            | DOUBLE -> typeof<double>
+            | DOUBLEOPT -> typeof<double option>
+            | DOUBLENAN -> typeof<double>
+            | DOUBLENANOPT -> typeof<double option>
+            | INT -> typeof<int>
+            | INTOPT -> typeof<int option>
+            | DATE -> typeof<DateTime>
+            | DATEOPT -> typeof<DateTime option>
+            | VAR -> typeof<obj>
+            | VAROPT -> typeof<obj option>
+            | OBJ-> typeof<obj>
+
+
+    [<RequireQualifiedAccess>]
+    module Variant =
+        let x = 2
 
 module Cast_XL =
     open System

@@ -135,17 +135,21 @@ module Cast =
 
     [<RequireQualifiedAccess>]
     module Missing =
-        /// Replaces an xl-value with a typed default value.
+        /// Casts an obj to generic type with typed default value.
+        /// If missing, also returns the default value.
         let def<'a> (defValue: 'a) (xlVal: obj) : 'a =
             match xlVal with
             | :? ExcelMissing -> defValue
             | _ -> Cast.def<'a> defValue xlVal
 
         /// Replaces an xl-value with an obj default value if missing.
+        /// Otherwise passes the xl-value through.
         let defO (defValue: obj) (o: obj) : obj =
             match o with
             | :? ExcelMissing -> defValue
             | _ -> o
+
+
 
         /// Replaces an xl-value with None if missing.
         let tryO (o: obj) : obj option =
@@ -186,8 +190,8 @@ module Cast =
             | :? (obj[]) as o1D -> o1D
             | o0D -> [| o0D |]
 
-        let try1D (rowWiseDef: bool) (xlVal: obj) : obj[] option =
-            match xlVal with
+        let try1D (rowWiseDef: bool) (o: obj) : obj[] option =
+            match o with
             | :? (obj[,]) as o2D -> of2D rowWiseDef o2D |> Some
             | :? (obj[]) as o1D -> Some o1D
             | _ -> None
@@ -206,6 +210,25 @@ module Cast =
                 | :? (obj[]) as o1D -> Some o1D
                 | _ -> None
 
+        // -----------------------------------
+        // -- Convenience functions
+        // -----------------------------------
+
+        /// Returns a default value instead of an empty object 
+        let ofEmpty<'a> (defValue: obj) (o1d: 'a[]) : obj[] =
+            if o1d |> Array.isEmpty then
+                [| defValue |]
+            else
+                o1d |> Array.map box
+
+        /// Returns a default value instead of an empty object 
+        let ofEmptyO (defValue: obj) (o1d: obj[]) : obj[] =
+            if o1d |> Array.isEmpty then
+                [| defValue |]
+            else
+                o1d
+            
+
 
         let _end = "here"
 
@@ -216,11 +239,15 @@ module Cast_XL =
 
     [<ExcelFunction(Category="XL", Description="Cast.")>]
     let cast_o1d
-        ([<ExcelArgument(Description= "Range")>] range: obj)
+        ([<ExcelArgument(Description= "Range.")>] range: obj)
+        ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
         : obj[]  =
 
-        Cast.D1.to1D false range
+        // intermediary stage
+        let rowWiseDef = Cast.Bool.def false rowWiseDirection
 
+        // result
+        Cast.D1.to1D rowWiseDef range
 
 
 

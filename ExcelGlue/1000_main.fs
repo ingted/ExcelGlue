@@ -9,8 +9,21 @@ module Cast0D =
     ///    - if OnlyErrorNA, only ExcelErrorNA values are converted.
     ///    - if AllErrors, all Excel error values are converted.
     ///    - if AllNonNumeric, any non-numeric xl-value are.
-    type EdgeCaseConversion = | OnlyErrorNA | AllErrors | AllNonNumeric | AllNonNumericAndNA | AllNonNumericAndErrors | NoConversion
+    type EdgeCaseConversion = | OnlyErrorNA | AllErrors | AllNonNumeric | AllNonNumericAndNA | AllNonNumericAndErrors | NoConversion with
+        static member ofLabel (label: string) : EdgeCaseConversion =
+            match label.ToUpper() with
+            | "NA" -> OnlyErrorNA
+            | "ERR" | "ERROR" -> AllErrors
+            | "NN" | "NONNUM" | "NONNUMERIC" -> AllNonNumeric
+            | "NNNA" | "NN_NA" | "NN+NA" | "NONNUM_NA" | "NONNUM+NA" | "NONNUMERIC_NA" | "NONNUMERIC+NA" -> AllNonNumericAndNA
+            | "NNE" | "NN_ERR" | "NN+ERR" | "NONNUM_ERR" | "NONNUM+ERR" | "NONNUMERIC_ERROR" | "NONNUMERIC+ERROR" -> AllNonNumericAndErrors
+            | _ -> NoConversion
 
+        static member labelGuide : (string*string) [] =
+            let labels = [| "NA"; "ERR"; "NN"; "NNNA"; "NNE"; "NOCONVERSION"; "default" |]
+            labels |> Array.map (fun lbl -> (lbl, (EdgeCaseConversion.ofLabel lbl).ToString()))
+
+            
     // ----------------
     // -- 0D functions
     // ----------------
@@ -133,19 +146,19 @@ module Cast0D =
             | _, AllNonNumericAndErrors -> box Double.NaN
             | _ -> xlVal
 
-        /// Casts an xl-value to double or fails, with some values potentially cast to Double.NaN.
+        /// Casts an xl-value to double or fails, with some other non-double values potentially cast to Double.NaN.
         let fail (toNaN: EdgeCaseConversion) (msg: string option) (xlVal: obj) = 
             nanify toNaN xlVal |> fail<double> msg
 
-        /// Casts an xl-value to double with a default-value, with some values potentially cast to Double.NaN.
+        /// Casts an xl-value to double with a default-value, with some other non-double values potentially cast to Double.NaN.
         let def (toNaN: EdgeCaseConversion) (defValue: double) (xlVal: obj) = 
             nanify toNaN xlVal |> def<double> defValue
 
-        /// Casts an xl-value to a double option type with a default-value, with some values potentially cast to Double.NaN.
+        /// Casts an xl-value to a double option type with a default-value, with some other non-double values potentially cast to Double.NaN.
         let tryDV (toNaN: EdgeCaseConversion) (defValue: double option) (xlVal: obj) = 
             nanify toNaN xlVal |> tryDV<double> defValue
 
-        /// Replaces an xl-value with a double default-value if it isn't a (boxed double) type (e.g. box 1.0), with some values potentially cast to Double.NaN.
+        /// Replaces an xl-value with a double default-value if it isn't a (boxed double) type (e.g. box 1.0), with some other non-double values potentially cast to Double.NaN.
         let defO (toNaN: EdgeCaseConversion) (defValue: double) (xlVal: obj) = 
             nanify toNaN xlVal |> defO<double> defValue
 
@@ -314,6 +327,27 @@ module Cast1D =
         let tryDV (defValue: double[] option) (o1D: obj[])  = tryDV<double> defValue o1D
 
     [<RequireQualifiedAccess>]
+    module Nan =
+        /// Converts an obj[] to a double[], given a default-value for non-double elements.
+        let def (toNaN: Cast0D.EdgeCaseConversion) (defValue: double) (o1D: obj[]) =
+            o1D |> Array.map (Cast0D.Nan.def toNaN defValue)
+
+        /// Converts an obj[] to a ('a option)[], given a default-value for non-double elements.
+        let defOpt (toNaN: Cast0D.EdgeCaseConversion) (defValue: double option) (o1D: obj[]) =
+            o1D |> Array.map (Cast0D.Nan.tryDV toNaN defValue)
+
+        /// Converts an obj[] to a DateTime[], removing any non-double element.
+        let filter (toNaN: Cast0D.EdgeCaseConversion) (o1D: obj[]) =
+            o1D |> Array.choose (Cast0D.Nan.tryDV toNaN None)
+
+        /// Converts an obj[] to an optional 'a[]. All the elements must be double, otherwise defValue array is returned. 
+        let tryDV (toNaN: Cast0D.EdgeCaseConversion) (defValue: double[] option) (o1D: obj[])  =
+            let convert = defOpt toNaN None o1D
+            match convert |> Array.tryFind Option.isNone with
+            | None -> convert |> Array.map Option.get |> Some
+            | Some _ -> defValue
+
+    [<RequireQualifiedAccess>]
     module Intg =
         /// Converts an obj[] to a int[], given a default-value for non-int elements.
         let def (defValue: int) (o1D: obj[]) =
@@ -359,16 +393,17 @@ module Cast1D =
     // -- Convenience functions
     // -----------------------------------
 
-    /// Returns a default-singleton instead of an empty array. 
-    let ofEmpty<'a> (sglValue: obj) (o1d: 'a[]) : obj[] =
+
+    /// Returns an xl 1D range, or a default-singleton instead of an empty array. 
+    let range<'a> (sglValue: obj) (o1d: 'a[]) : obj[] =
         if o1d |> Array.isEmpty then
             [| sglValue |]
         else
             o1d |> Array.map box
 
-    /// Returns a default-singleton instead of an empty array. 
+    /// Returns an xl 1D range, or a default-singleton instead of an empty array. 
     /// None elements are converted to noneValue.
-    let ofEmptyOpt<'a> (noneValue: obj) (sglValue: obj) (o1d: ('a option)[]) : obj[] =
+    let rangeOpt<'a> (noneValue: obj) (sglValue: obj) (o1d: ('a option)[]) : obj[] =
         if o1d |> Array.isEmpty then
             [| sglValue |]
         else
@@ -440,6 +475,14 @@ module Cast_XL =
     open System
     open ExcelDna.Integration
 
+    [<ExcelFunction(Category="XL", Description="Cast an xl-range to DateTime[].")>]
+    let cast_edgeCases ()
+        : obj[,]  =
+
+        // result
+        let (lbls, dus) = Cast0D.EdgeCaseConversion.labelGuide |> Array.map (fun (lbl, du) -> (box lbl, box du)) |> Array.unzip
+        [| lbls; dus |] |> array2D
+
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to obj[]")>]
     let cast1d_obj
         ([<ExcelArgument(Description= "Range.")>] range: obj)
@@ -473,11 +516,11 @@ module Cast_XL =
         let o1D = Cast0D.to1D rowwise range 
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = Cast1D.Bool.filter o1D
-                 a1D |> Cast1D.ofEmpty<bool> empty
+                 a1D |> Cast1D.range<bool> empty
         | "O" -> let a1D = Cast1D.Bool.defOpt None o1D
-                 a1D |> Cast1D.ofEmptyOpt<bool> none empty
+                 a1D |> Cast1D.rangeOpt<bool> none empty
         | _   -> let a1D = Cast1D.Bool.def defVal o1D 
-                 a1D |> Cast1D.ofEmpty<bool> empty
+                 a1D |> Cast1D.range<bool> empty
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to string[].")>]
     let cast1d_stg
@@ -500,11 +543,11 @@ module Cast_XL =
         let o1D = Cast0D.to1D rowwise range 
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = Cast1D.Stg.filter o1D
-                 a1D |> Cast1D.ofEmpty<string> empty
+                 a1D |> Cast1D.range<string> empty
         | "O" -> let a1D = Cast1D.Stg.defOpt None o1D
-                 a1D |> Cast1D.ofEmptyOpt<string> none empty
+                 a1D |> Cast1D.rangeOpt<string> none empty
         | _   -> let a1D = Cast1D.Stg.def defVal o1D 
-                 a1D |> Cast1D.ofEmpty<string> empty
+                 a1D |> Cast1D.range<string> empty
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to double[].")>]
     let cast1d_dbl
@@ -527,11 +570,11 @@ module Cast_XL =
         let o1D = Cast0D.to1D rowwise range 
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = Cast1D.Dbl.filter o1D
-                 a1D |> Cast1D.ofEmpty<double> empty
+                 a1D |> Cast1D.range<double> empty
         | "O" -> let a1D = Cast1D.Dbl.defOpt None o1D
-                 a1D |> Cast1D.ofEmptyOpt<double> none empty
+                 a1D |> Cast1D.rangeOpt<double> none empty
         | _   -> let a1D = Cast1D.Dbl.def defVal o1D 
-                 a1D |> Cast1D.ofEmpty<double> empty
+                 a1D |> Cast1D.range<double> empty
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to int[].")>]
     let cast1d_int
@@ -554,11 +597,11 @@ module Cast_XL =
         let o1D = Cast0D.to1D rowwise range 
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = Cast1D.Intg.filter o1D
-                 a1D |> Cast1D.ofEmpty<int> empty
+                 a1D |> Cast1D.range<int> empty
         | "O" -> let a1D = Cast1D.Intg.defOpt None o1D
-                 a1D |> Cast1D.ofEmptyOpt<int> none empty
+                 a1D |> Cast1D.rangeOpt<int> none empty
         | _   -> let a1D = Cast1D.Intg.def defVal o1D 
-                 a1D |> Cast1D.ofEmpty<int> empty
+                 a1D |> Cast1D.range<int> empty
         
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to DateTime[].")>]
     let cast1d_dte
@@ -581,11 +624,11 @@ module Cast_XL =
         let o1D = Cast0D.to1D rowwise range 
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = Cast1D.Dte.filter o1D
-                 a1D |> Cast1D.ofEmpty<DateTime> empty
+                 a1D |> Cast1D.range<DateTime> empty
         | "O" -> let a1D = Cast1D.Dte.defOpt None o1D
-                 a1D |> Cast1D.ofEmptyOpt<DateTime> none empty
+                 a1D |> Cast1D.rangeOpt<DateTime> none empty
         | _   -> let a1D = Cast1D.Dte.def defVal o1D 
-                 a1D |> Cast1D.ofEmpty<DateTime> empty
+                 a1D |> Cast1D.range<DateTime> empty
 
 
 

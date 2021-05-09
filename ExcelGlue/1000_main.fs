@@ -11,23 +11,23 @@ module Output =
 
     /// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
     /// NaN elements are converted according to replaceValues.
-    let range<'a> (replaceValues: ReplaceValues) (o1d: 'a[]) : obj[] =
-        if o1d |> Array.isEmpty then
+    let range<'a> (replaceValues: ReplaceValues) (a1D: 'a[]) : obj[] =
+        if a1D |> Array.isEmpty then
             [| replaceValues.empty |]
         else
             if typeof<'a> = typeof<double> then
-                o1d |> Array.map (fun num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval)
+                a1D |> Array.map (fun num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval)
             else
-                o1d |> Array.map box
+                a1D |> Array.map box
 
     /// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
     /// None and NaN elements are converted according to replaceValues.
-    let rangeOpt<'a> (replaceValues: ReplaceValues) (o1d: ('a option)[]) : obj[] =
-        if o1d |> Array.isEmpty then
+    let rangeOpt<'a> (replaceValues: ReplaceValues) (a1D: ('a option)[]) : obj[] =
+        if a1D |> Array.isEmpty then
             [| replaceValues.empty |]
         else
             if typeof<'a> = typeof<double> then
-                o1d 
+                a1D 
                 |> Array.map 
                     (fun elem -> 
                         match elem with 
@@ -35,12 +35,96 @@ module Output =
                         | Some num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval
                     )
             else
-                o1d |> Array.map (fun elem -> match elem with | None -> replaceValues.none | Some e -> box e)
+                a1D |> Array.map (fun elem -> match elem with | None -> replaceValues.none | Some e -> box e)
 
 [<RequireQualifiedAccess>]
 module Cast0D =
     open System
     open ExcelDna.Integration
+
+    // let private isOptionalType (typeLabel: string) : bool = typeLabel.IndexOf("#") >= 0
+    let private prepString (typeLabel: string) =
+        typeLabel.Replace(" ", "").Replace(":", "").Replace("#", "").ToUpper()
+
+    /// DU representing xl-value types.
+    type Variant = | BOOL | BOOLOPT | STRING | STRINGOPT | DOUBLE | DOUBLEOPT | DOUBLENAN | DOUBLENANOPT | INT | INTOPT | DATE | DATEOPT | VAR | VAROPT | OBJ with
+        static member isOptionalType (typeLabel: string) : bool = 
+            typeLabel.IndexOf("#") >= 0
+
+        static member ofLabel (typeLabel: string) : Variant = 
+            let isoption = Variant.isOptionalType typeLabel
+            match prepString typeLabel with
+            | "B" | "BOOL" | "BOOLEAN" -> if isoption then BOOLOPT else BOOL
+            | "S" | "STR" | "STG" | "STRG" | "STRING" -> if isoption then STRINGOPT else STRING
+            | "D" | "DBL" | "DOUBLE" -> if isoption then DOUBLEOPT else DOUBLE
+            | "DNAN" | "DBLNAN" | "DOUBLENAN" -> if isoption then DOUBLENANOPT else DOUBLENAN
+            | "I" | "INT" | "INTEGER" -> if isoption then INTOPT else INT
+            | "DTE" | "DATE" -> if isoption then DATEOPT else DATE
+            | "V" | "VAR" -> if isoption then VAROPT else VAR
+            | _ -> OBJ
+
+        member this.toLabel : string = 
+            match this with
+            | BOOL -> "BOOL"
+            | BOOLOPT -> "#BOOL"
+            | STRING -> "STRING"
+            | STRINGOPT -> "#STRING"
+            | DOUBLE -> "DOUBLE"
+            | DOUBLEOPT -> "#DOUBLE"
+            | DOUBLENAN -> "DOUBLENAN"
+            | DOUBLENANOPT -> "#DOUBLENAN"
+            | INT -> "INT"
+            | INTOPT -> "#INT"
+            | DATE -> "DATE"
+            | DATEOPT -> "#DATE"
+            | VAR -> "VAR"
+            | VAROPT -> "#VAR"
+            | OBJ-> "OBJ"
+
+        member this.toType : Type = 
+            match this with
+            | BOOL -> typeof<bool>
+            | BOOLOPT -> typeof<bool option>
+            | STRING -> typeof<string>
+            | STRINGOPT -> typeof<string option>
+            | DOUBLE -> typeof<double>
+            | DOUBLEOPT -> typeof<double option>
+            | DOUBLENAN -> typeof<double>
+            | DOUBLENANOPT -> typeof<double option>
+            | INT -> typeof<int>
+            | INTOPT -> typeof<int option>
+            | DATE -> typeof<DateTime>
+            | DATEOPT -> typeof<DateTime option>
+            | VAR -> typeof<obj>
+            | VAROPT -> typeof<obj option>
+            | OBJ-> typeof<obj>
+
+        static member labelType (typeLabel: string) : Type = 
+            let var = Variant.ofLabel typeLabel
+            var.toType
+
+        /// Convenience function. Arbitrary defaults.
+        member this.defVal : obj = 
+            match this with
+            | BOOL -> box false
+            | BOOLOPT -> (Option.None : bool option) |> box
+            | STRING -> box ""
+            | STRINGOPT -> (Option.None : string option) |> box
+            | DOUBLE -> box 0.0
+            | DOUBLEOPT -> (Option.None : double option) |> box
+            | DOUBLENAN -> box 0.0
+            | DOUBLENANOPT -> (Option.None : double option) |> box
+            | INT -> box 0
+            | INTOPT -> (Option.None : int option) |> box
+            | DATE -> box (DateTime(2000,1,1))
+            | DATEOPT -> (Option.None : DateTime option) |> box
+            | VAR -> box ExcelError.ExcelErrorNA
+            | VAROPT -> (Option.None : obj option) |> box
+            | OBJ-> box ExcelError.ExcelErrorNA
+
+        static member labelDefVal (typeLabel: string) : obj = 
+            let var = Variant.ofLabel typeLabel
+            var.defVal
 
     /// Indicates which xl-values are to be converted to special values (e.g. Double.NaN in 0D, [||] in 1D) :
     ///    - if OnlyErrorNA, only ExcelErrorNA values are converted.
@@ -429,8 +513,132 @@ module Cast1D =
             match convert |> Array.tryFind Option.isNone with
             | None -> convert |> Array.map Option.get |> Some
             | Some _ -> defValue
+    
+    [<RequireQualifiedAccess>]
+    module Gen = 
+        type Gen =
+            /// Converts an xl-value to a 'A[], given a default-value for non-'A elements.
+            static member def<'A> (rowWiseDef: bool) (defValue: obj) (typeLabel: string) (xlValue: obj) : 'A[] = 
+                let o1D = Cast0D.to1D rowWiseDef xlValue
 
+                match typeLabel |> Cast0D.Variant.ofLabel with
+                | Cast0D.BOOL -> 
+                    let defval = defValue :?> 'A
+                    def<'A> defval o1D
+                | Cast0D.STRING -> 
+                    let defval = defValue :?> string
+                    let a1D = Stg.def defval o1D
+                    a1D |> Array.map (fun x -> (box x) :?> 'A)
+                | Cast0D.DOUBLE -> 
+                    let defval = defValue :?> 'A
+                    def<'A> defval o1D
+                | Cast0D.INT -> 
+                    let defval = defValue :?> double
+                    let a1D = Intg.def ((int) defval) o1D
+                    a1D |> Array.map (fun x -> (box x) :?> 'A)
+                | Cast0D.DATE -> 
+                    let defval = defValue :?> double
+                    let a1D = Dte.def (DateTime.FromOADate(defval)) o1D
+                    a1D |> Array.map (fun x -> (box x) :?> 'A)
+                | _ -> [||]
+        
+            /// Same as Gen.def, but returns an obj[] instead of a 'a[].
+            static member defObj<'A> (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
+                let a1D = Gen.def<'A> rowWiseDef defValue typeLabel xlValue
+                Output.range<'A> replaceValues a1D
+    
+            /// Converts an xl-value to a ('A option)[], given a default-value for non-'A elements.
+            static member defOpt<'A> (rowWiseDef: bool) (defValue: obj option) (typeLabel: string) (xlValue: obj) : ('A option)[] = 
+                let o1D = Cast0D.to1D rowWiseDef xlValue
 
+                match typeLabel |> Cast0D.Variant.ofLabel with
+                | Cast0D.BOOL -> 
+                    let defval = match defValue with | None -> None | Some dfvl -> dfvl :?> 'A option
+                    defOpt<'A> defval o1D
+                | Cast0D.STRING -> 
+                    let defval = match defValue with | None -> None | Some dfvl -> dfvl :?> string option
+                    let a1D = Stg.defOpt defval o1D
+                    a1D |> Array.map (fun x -> (box x) :?> 'A option)
+                | Cast0D.DOUBLE -> 
+                    let defval = match defValue with | None -> None | Some dfvl -> dfvl :?> 'A option
+                    defOpt<'A> defval o1D
+                | Cast0D.INT -> 
+                    let defval = match defValue with | None -> None | Some dfvl -> dfvl :?> double option |> Option.map (int)
+                    let a1D = Intg.defOpt defval o1D
+                    a1D |> Array.map (fun x -> (box x) :?> 'A option)
+                | Cast0D.DATE -> 
+                    let defval = match defValue with | None -> None | Some dfvl -> dfvl :?> double option |> Option.map (fun d -> DateTime.FromOADate(d))
+                    let a1D = Dte.defOpt defval o1D
+                    a1D |> Array.map (fun x -> (box x) :?> 'A option)
+                | _ -> [||]
+
+            static member defOptObj<'A> (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj[] = 
+                let a1D = Gen.defOpt<'A> rowWiseDef defValue typeLabel xlValue
+                Output.rangeOpt<'A> replaceValues a1D
+
+            static member filter<'A> (rowWiseDef: bool) (typeLabel: string) (xlValue: obj) : 'A[] = 
+                let o1D = Cast0D.to1D rowWiseDef xlValue
+
+                match typeLabel |> Cast0D.Variant.ofLabel with
+                | Cast0D.BOOL -> filter<'A> o1D
+                | Cast0D.STRING -> 
+                    let a1D = Stg.filter o1D
+                    a1D |> Array.map (fun x -> (box x) :?> 'A)
+                | Cast0D.DOUBLE -> filter<'A> o1D
+                | Cast0D.INT -> 
+                    let a1D = Intg.filter o1D
+                    a1D |> Array.map (fun x -> (box x) :?> 'A)
+                | Cast0D.DATE -> 
+                    let a1D = Dte.filter o1D
+                    a1D |> Array.map (fun x -> (box x) :?> 'A)
+                | _ -> [||]
+
+            /// Same as Gen.filter, but returns an obj[] instead of a 'a[].
+            static member filterObj<'A> (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (typeLabel: string) (xlValue: obj) : obj[] = 
+                let a1D = Gen.filter<'A> rowWiseDef typeLabel xlValue
+                Output.range<'A> replaceValues a1D
+
+        let private callMethod (methodnm: string) (genType: Type) (args: obj[]) : obj =
+            let meth = typeof<Gen>.GetMethod(methodnm)
+            let genm = meth.MakeGenericMethod(genType)
+            let res  = genm.Invoke(null, args)
+            res
+
+        let def (rowWiseDef: bool) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj = 
+            let gentype = typeLabel |> Cast0D.Variant.labelType
+            let args = [| box rowWiseDef; defValue; box typeLabel; xlValue |]
+            let res = callMethod "def" gentype args
+            res
+
+        let defObj (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
+            let gentype = typeLabel |> Cast0D.Variant.labelType
+            let args = [| box rowWiseDef; box replaceValues; defValue; box typeLabel; xlValue |]
+            let res = callMethod "defObj" gentype args
+            res :?> obj[]
+        
+        let defOpt (rowWiseDef: bool) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj = 
+            let gentype = typeLabel |> Cast0D.Variant.labelType
+            let args = [| box rowWiseDef; defValue; box typeLabel; xlValue |]
+            let res = callMethod "defOpt" gentype args
+            res
+
+        let defOptObj (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
+            let gentype = typeLabel |> Cast0D.Variant.labelType
+            let args = [| box rowWiseDef; box replaceValues; defValue; box typeLabel; xlValue |]
+            let res = callMethod "defObjOpt" gentype args
+            res :?> obj[]
+
+        let filter (rowWiseDef: bool) (typeLabel: string) (xlValue: obj) : obj = 
+            let gentype = typeLabel |> Cast0D.Variant.labelType
+            let args = [| box rowWiseDef; box typeLabel; xlValue |]
+            let res = callMethod "filter" gentype args
+            res
+
+        let filterObj (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (typeLabel: string) (xlValue: obj) : obj[] = 
+            let gentype = typeLabel |> Cast0D.Variant.labelType
+            let args = [| box rowWiseDef; box replaceValues; box typeLabel; xlValue |]
+            let res = callMethod "filterObj" gentype args
+            res :?> obj[]
 
 
 
@@ -438,63 +646,95 @@ module Cast1D =
 
     let _end = "here"
 
-    let private isOptionalType (typeLabel: string) : bool = typeLabel.IndexOf("#") >= 0
-    let private prepString (typeLabel: string) =
-        typeLabel.Replace(" ", "").Replace(":", "").Replace("#", "").ToUpper()
 
-    /// DU representing xl-value types.
-    type Variant = | BOOL | BOOLOPT | STRING | STRINGOPT | DOUBLE | DOUBLEOPT | DOUBLENAN | DOUBLENANOPT | INT | INTOPT | DATE | DATEOPT | VAR | VAROPT | OBJ with
-        static member ofLabel (typeLabel: string) : Variant = 
-            let isoption = isOptionalType typeLabel
-            match prepString typeLabel with
-            | "B" | "BOOL" | "BOOLEAN" -> if isoption then BOOLOPT else BOOL
-            | "S" | "STR" | "STG" | "STRG" | "STRING" -> if isoption then STRINGOPT else STRING
-            | "D" | "DBL" | "DOUBLE" -> if isoption then DOUBLEOPT else DOUBLE
-            | "DNAN" | "DBLNAN" | "DOUBLENAN" -> if isoption then DOUBLENANOPT else DOUBLENAN
-            | "I" | "INT" | "INTEGER" -> if isoption then INTOPT else INT
-            | "DTE" | "DATE" -> if isoption then DATEOPT else DATE
-            | "V" | "VAR" -> if isoption then VAROPT else VAR
-            | _ -> OBJ
+    
 
-        member this.toLabel : string = 
-            match this with
-            | BOOL -> "BOOL"
-            | BOOLOPT -> "#BOOL"
-            | STRING -> "STRING"
-            | STRINGOPT -> "#STRING"
-            | DOUBLE -> "DOUBLE"
-            | DOUBLEOPT -> "#DOUBLE"
-            | DOUBLENAN -> "DOUBLENAN"
-            | DOUBLENANOPT -> "#DOUBLENAN"
-            | INT -> "INT"
-            | INTOPT -> "#INT"
-            | DATE -> "DATE"
-            | DATEOPT -> "#DATE"
-            | VAR -> "VAR"
-            | VAROPT -> "#VAR"
-            | OBJ-> "PBJ"
 
-        member this.toType : Type = 
-            match this with
-            | BOOL -> typeof<bool>
-            | BOOLOPT -> typeof<bool option>
-            | STRING -> typeof<string>
-            | STRINGOPT -> typeof<string option>
-            | DOUBLE -> typeof<double>
-            | DOUBLEOPT -> typeof<double option>
-            | DOUBLENAN -> typeof<double>
-            | DOUBLENANOPT -> typeof<double option>
-            | INT -> typeof<int>
-            | INTOPT -> typeof<int option>
-            | DATE -> typeof<DateTime>
-            | DATEOPT -> typeof<DateTime option>
-            | VAR -> typeof<obj>
-            | VAROPT -> typeof<obj option>
-            | OBJ-> typeof<obj>
+//[<RequireQualifiedAccess>]
+//module Gen1D =
+//    open System
 
-    [<RequireQualifiedAccess>]
-    module Variant =
-        let x = 2
+//    type Gen =
+//        static member def<'A> (rowWiseDef: bool) (defValue: obj) (typeLabel: string) (xlValue: obj) : 'A[] = 
+//            let o1D = Cast0D.to1D rowWiseDef xlValue
+
+//            match typeLabel |> Cast0D.Variant.ofLabel with
+//            | Cast0D.BOOL -> 
+//                let defval = defValue :?> 'A
+//                Cast1D.def<'A> defval o1D
+//            | Cast0D.STRING -> 
+//                let defval = defValue :?> string
+//                let a1D = Cast1D.Stg.def defval o1D
+//                a1D |> Array.map (fun x -> (box x) :?> 'A)
+//            | Cast0D.DOUBLE -> 
+//                let defval = defValue :?> 'A
+//                Cast1D.def<'A> defval o1D
+//            | Cast0D.INT -> 
+//                let defval = defValue :?> double
+//                let a1D = Cast1D.Intg.def ((int) defval) o1D
+//                a1D |> Array.map (fun x -> (box x) :?> 'A)
+//            | Cast0D.DATE -> 
+//                let defval = defValue :?> double
+//                let a1D = Cast1D.Dte.def (DateTime.FromOADate(defval)) o1D
+//                a1D |> Array.map (fun x -> (box x) :?> 'A)
+//            | _ -> [||]
+        
+//        /// Same as Gen.def, but returns an obj[] instead of a 'a[].
+//        static member defObj<'A> (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
+//            let a1D = Gen.def<'A> rowWiseDef defValue typeLabel xlValue
+//            Output.range<'A> replaceValues a1D
+    
+//        static member filter<'A> (rowWiseDef: bool) (typeLabel: string) (xlValue: obj) : 'A[] = 
+//            let o1D = Cast0D.to1D rowWiseDef xlValue
+
+//            match typeLabel |> Cast0D.Variant.ofLabel with
+//            | Cast0D.BOOL -> Cast1D.filter<'A> o1D
+//            | Cast0D.STRING -> 
+//                let a1D = Cast1D.Stg.filter o1D
+//                a1D |> Array.map (fun x -> (box x) :?> 'A)
+//            | Cast0D.DOUBLE -> Cast1D.filter<'A> o1D
+//            | Cast0D.INT -> 
+//                let a1D = Cast1D.Intg.filter o1D
+//                a1D |> Array.map (fun x -> (box x) :?> 'A)
+//            | Cast0D.DATE -> 
+//                let a1D = Cast1D.Dte.filter o1D
+//                a1D |> Array.map (fun x -> (box x) :?> 'A)
+//            | _ -> [||]
+
+//        /// Same as Gen.filter, but returns an obj[] instead of a 'a[].
+//        static member filterObj<'A> (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (typeLabel: string) (xlValue: obj) : obj[] = 
+//            let a1D = Gen.filter<'A> rowWiseDef typeLabel xlValue
+//            Output.range<'A> replaceValues a1D
+
+//    let private callMethod (methodnm: string) (genType: Type) (args: obj[]) : obj =
+//        let meth = typeof<Gen>.GetMethod(methodnm)
+//        let genm = meth.MakeGenericMethod(genType)
+//        let res  = genm.Invoke(null, args)
+//        res
+
+//    let def (rowWiseDef: bool) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj = 
+//        let gentype = typeLabel |> Cast0D.Variant.labelType
+//        let args = [| box rowWiseDef; defValue; box typeLabel; xlValue |]
+//        let res = callMethod "def" gentype args
+//        res
+
+//    let defObj (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
+//        let gentype = typeLabel |> Cast0D.Variant.labelType
+//        let args = [| box rowWiseDef; box replaceValues; defValue; box typeLabel; xlValue |]
+//        let res = callMethod "defObj" gentype args
+//        res :?> obj[]
+        
+//    let filter (rowWiseDef: bool) (typeLabel: string) (xlValue: obj) : obj = 
+//        let gentype = typeLabel |> Cast0D.Variant.labelType
+//        let args = [| box rowWiseDef; box typeLabel; xlValue |]
+//        let res = callMethod "filter" gentype args
+//        res
+
+//    let filterObj (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (typeLabel: string) (xlValue: obj) : obj[] = 
+//        let gentype = typeLabel |> Cast0D.Variant.labelType
+//        let args = [| box rowWiseDef; box replaceValues; box typeLabel; xlValue |]
+//        let res = callMethod "filterObj" gentype args
+//        res :?> obj[]
 
 module Cast_XL =
     open System
@@ -690,7 +930,37 @@ module Cast_XL =
         | _   -> let a1D = Cast1D.Dte.def defVal o1D 
                  a1D |> Output.range<DateTime> rplval
 
+    [<ExcelFunction(Category="XL", Description="Cast an xl-range to a generic type array.")>]
+    let cast1d_gen
+        ([<ExcelArgument(Description= "Range.")>] range: obj)
+        ([<ExcelArgument(Description= "Type label.")>] typeLabel: string)
+        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Optional\" (= replace with None) or \"Filter\". Default is \"Replace\".]")>] replaceMethod: obj)
+        ([<ExcelArgument(Description= "[Default Value. Must be of the appropriate type. Default \"<default>\" (will fail for non-string types).]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
+        ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
+        ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
+        : obj[]  =
 
+        // intermediary stage
+        let rowwise = Cast0D.Bool.def false rowWiseDirection
+        let replmethod = Cast0D.Stg.def "REPLACE" replaceMethod
+        let none = Cast0D.Stg.def "<none>" noneValue
+        let empty = Cast0D.Stg.def "<empty>" emptyValue
+        let rplval = { Output.ReplaceValues.def with none = none; empty = empty }
+        let isoptional = Cast0D.Variant.isOptionalType typeLabel
+
+        let tonone (b: bool) : bool option = if b then None else None
+
+        let defVal = 
+            match isoptional with
+            | false -> Cast0D.Missing.defO (Cast0D.Variant.labelDefVal typeLabel) defaultValue
+            | true ->  (tonone true) |> box // Cast0D.Missing.defO (Cast0D.Variant.labelDefVal typeLabel) defaultValue
+            
+
+        match isoptional, replmethod.ToUpper().Substring(0,1) with
+        | _, "F" -> Cast1D.Gen.filterObj rowwise rplval typeLabel range
+        | true, _ -> Cast1D.Gen.defOptObj rowwise rplval (Some defVal) typeLabel range
+        | false, _ -> Cast1D.Gen.defObj rowwise rplval defVal typeLabel range
 
 
 

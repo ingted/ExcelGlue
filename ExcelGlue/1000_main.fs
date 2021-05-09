@@ -11,6 +11,10 @@ module Cast0D =
     ///    - if AllNonNumeric, any non-numeric xl-value are.
     type EdgeCaseConversion = | OnlyErrorNA | AllErrors | AllNonNumeric | AllNonNumericAndNA | AllNonNumericAndErrors | NoConversion
 
+    // ----------------
+    // -- 0D functions
+    // ----------------
+
     /// Casts an obj to generic type or fails.
     let fail<'a> (msg: string option) (o: obj) : 'a =
         match o with
@@ -36,6 +40,40 @@ module Cast0D =
         match o with
         | :? 'a -> o
         | _ -> defValue
+
+    // ----------------
+    // -- 1D functions
+    // ----------------
+
+    /// Slices xl-ranges into 1D arrays.
+    /// 1-row or 1-column xl-ranges are directly converted to their corresponding 1D array.
+    /// For 2D xl-range, the 1st row is returned if rowWiseDef is true, and the 1st column otherwise.
+    let slice2D (rowWiseDef: bool) (o2D: obj[,]) : obj[] = 
+        // column-wise slice
+        if Array2D.length2 o2D = 1 then
+            o2D.[*, Array2D.base2 o2D]
+        // row-wise slice
+        elif rowWiseDef || (Array2D.length1 o2D = 1) then
+            o2D.[Array2D.base1 o2D, *]
+        // column-wise slice as default
+        else 
+            o2D.[*, Array2D.base2 o2D]
+        
+    /// Converts an xl-value to a 1D array.
+    /// (Use to1D rather than try1D when the obj argument is an xl-value).
+    let to1D (rowWiseDef: bool) (xlVal: obj) : obj[] =
+        match xlVal with
+        | :? (obj[,]) as o2D -> slice2D rowWiseDef o2D
+        | :? (obj[]) as o1D -> o1D
+        | o0D -> [| o0D |]
+        
+    /// Converts an obj to a 1D array option.
+    /// (Use try1D rather than to1D when the obj argument is not an xl-value).
+    let try1D (rowWiseDef: bool) (o: obj) : obj[] option =
+        match o with
+        | :? (obj[,]) as o2D -> slice2D rowWiseDef o2D |> Some
+        | :? (obj[]) as o1D -> Some o1D
+        | _ -> None
 
     [<RequireQualifiedAccess>]
     module Bool =
@@ -77,7 +115,7 @@ module Cast0D =
         let tryDV (defValue: double option) (xlVal: obj) = tryDV<double> defValue xlVal
 
         /// Replaces an xl-value with a (boxed double) default-value if it isn't a (boxed double) type (e.g. box 1.0).
-        let defO (defValue: double) (xlVal: obj) = defO<double> defValue xlVal
+        let defO (defValue: double) (xlVal: obj) = defO<double> defValue xlVal  // TODO FIXME defValue type is obj not double
 
     [<RequireQualifiedAccess>]
     module Nan =
@@ -119,20 +157,61 @@ module Cast0D =
 
     [<RequireQualifiedAccess>]
     module Intg =
+        let ofDouble (d: double) : int option = 
+            let floor = Math.Floor d
+            if d = floor then (int) floor |> Some else None
+
+        // for functions matching on xlVal type below, no need to test xlVal as a int as numeric xl-values are doubles, not int.
+
         /// Casts an xl-value to int or fails.
-        let fail (msg: string option) (xlVal: obj) = fail<int> msg xlVal
+        let fail (msg: string option) (xlVal: obj) = // fail<int> msg xlVal
+            match xlVal with
+            | :? double as d -> match ofDouble d with | Some i -> i | None -> failwith (msg |> Option.defaultValue "Cast failed.")
+            | _ -> failwith (msg |> Option.defaultValue "Cast failed.")
 
         /// Casts an xl-value to int with a default-value.
         let def (defValue: int) (xlVal: obj) =
             match xlVal with
-            | :? double as d -> (int) d
+            | :? double as d -> ofDouble d |> Option.defaultValue defValue
             | _ -> defValue
 
         /// Casts an xl-value to a int option type with a default-value.
-        let tryDV (defValue: int option) (xlVal: obj) = tryDV<int> defValue xlVal
+        let tryDV (defValue: int option) (xlVal: obj) =
+            match xlVal with
+            | :? double as d -> match ofDouble d with | None -> defValue | Some i -> Some i
+            | _ -> defValue
 
         /// Replaces an xl-value with a (boxed int) default-value if it isn't a (boxed int) type (e.g. box 42).
-        let defO (defValue: int) (xlVal: obj) = defO<int> defValue xlVal
+        let defO (defValue: obj) (xlVal: obj) =
+            match xlVal with
+            | :? double as d -> match ofDouble d with | None -> defValue | Some i -> box i
+            | _ -> defValue
+
+    [<RequireQualifiedAccess>]
+    module Dte =
+        /// Casts an xl-value to a DateTime or fails.
+        let fail (msg: string option) (xlVal: obj) =
+            match xlVal with
+            | :? double as d -> DateTime.FromOADate d
+            | _ -> failwith (msg |> Option.defaultValue "Cast failed.")
+
+        /// Casts an xl-value to a DateTime with a default-value.
+        let def (defValue: DateTime) (xlVal: obj) =
+            match xlVal with
+            | :? double as d -> DateTime.FromOADate d
+            | _ -> defValue
+
+        /// Casts an xl-value to a DateTime option type with a default-value.
+        let tryDV (defValue: DateTime option) (xlVal: obj) =
+            match xlVal with
+            | :? double as d -> DateTime.FromOADate d |> Some
+            | _ -> defValue
+
+        /// Replaces an xl-value with a default-value if it isn't a (boxed DateTime) type (e.g. box 36526.0).
+        let defO (defValue: obj) (xlVal: obj) =
+            match xlVal with
+            | :? double as d -> xlVal
+            | _ -> defValue
 
     [<RequireQualifiedAccess>]
     module Missing =
@@ -168,38 +247,6 @@ module Cast0D =
             match xlVal with
             | :? ExcelMissing -> None
             | _ -> mapping xlVal
-
-    [<RequireQualifiedAccess>]
-    module O1D =
-        /// Slices xl-ranges into 1D arrays.
-        /// 1-row or 1-column xl-ranges are directly converted to their corresponding 1D array.
-        /// For 2D xl-range, the 1st row is returned if rowWiseDef is true, and the 1st column otherwise.
-        let slice2D (rowWiseDef: bool) (o2D: obj[,]) : obj[] = 
-            // column-wise slice
-            if Array2D.length2 o2D = 1 then
-                o2D.[*, Array2D.base2 o2D]
-            // row-wise slice
-            elif rowWiseDef || (Array2D.length1 o2D = 1) then
-                o2D.[Array2D.base1 o2D, *]
-            // column-wise slice as default
-            else 
-                o2D.[*, Array2D.base2 o2D]
-        
-        /// Converts an xl-value to a 1D array.
-        /// Use to1D over try1D when the obj argument is an xl-value.
-        let to1D (rowWiseDef: bool) (xlVal: obj) : obj[] =
-            match xlVal with
-            | :? (obj[,]) as o2D -> slice2D rowWiseDef o2D
-            | :? (obj[]) as o1D -> o1D
-            | o0D -> [| o0D |]
-        
-        /// Converts an obj to a 1D array option.
-        /// Use try1D over to1D when the obj argument is not an xl-value.
-        let try1D (rowWiseDef: bool) (o: obj) : obj[] option =
-            match o with
-            | :? (obj[,]) as o2D -> slice2D rowWiseDef o2D |> Some
-            | :? (obj[]) as o1D -> Some o1D
-            | _ -> None
 
 [<RequireQualifiedAccess>]
 module Cast1D =
@@ -277,28 +324,55 @@ module Cast1D =
             o1D |> Array.map (Cast0D.Intg.tryDV defValue)
 
         /// Converts an obj[] to a int[], removing any non-int element.
-        let filter (o1D: obj[]) = filter<int> o1D // TODO FIXME
+        let filter (o1D: obj[]) =
+            o1D |> Array.choose (Cast0D.Intg.tryDV None)
 
         /// Converts an obj[] to an optional 'a[]. All the elements must be int, otherwise defValue array is returned. 
-        let tryDV (defValue: int[] option) (o1D: obj[])  = tryDV<int> defValue o1D // TODO FIXME
+        let tryDV (defValue: int[] option) (o1D: obj[])  =
+            let convert = defOpt None o1D
+            match convert |> Array.tryFind Option.isNone with
+            | None -> convert |> Array.map Option.get |> Some
+            | Some _ -> defValue
+
+    [<RequireQualifiedAccess>]
+    module Dte =
+        /// Converts an obj[] to a DateTime[], given a default-value for non-DateTime elements.
+        let def (defValue: DateTime) (o1D: obj[]) =
+            o1D |> Array.map (Cast0D.Dte.def defValue)
+
+        /// Converts an obj[] to a ('a option)[], given a default-value for non-DateTime elements.
+        let defOpt (defValue: DateTime option) (o1D: obj[]) =
+            o1D |> Array.map (Cast0D.Dte.tryDV defValue)
+
+        /// Converts an obj[] to a DateTime[], removing any non-DateTime element.
+        let filter (o1D: obj[]) =
+            o1D |> Array.choose (Cast0D.Dte.tryDV None)
+
+        /// Converts an obj[] to an optional 'a[]. All the elements must be DateTime, otherwise defValue array is returned. 
+        let tryDV (defValue: DateTime[] option) (o1D: obj[])  =
+            let convert = defOpt None o1D
+            match convert |> Array.tryFind Option.isNone with
+            | None -> convert |> Array.map Option.get |> Some
+            | Some _ -> defValue
 
     // -----------------------------------
     // -- Convenience functions
     // -----------------------------------
 
-    /// Returns a default-value instead of an empty array. 
-    let ofEmpty<'a> (defValue: obj) (o1d: 'a[]) : obj[] =
+    /// Returns a default-singleton instead of an empty array. 
+    let ofEmpty<'a> (sglValue: obj) (o1d: 'a[]) : obj[] =
         if o1d |> Array.isEmpty then
-            [| defValue |]
+            [| sglValue |]
         else
             o1d |> Array.map box
 
-    /// Returns a default-value instead of an empty array.
-    let ofEmptyO (defValue: obj) (o1d: obj[]) : obj[] =
+    /// Returns a default-singleton instead of an empty array. 
+    /// None elements are converted to noneValue.
+    let ofEmptyOpt<'a> (noneValue: obj) (sglValue: obj) (o1d: ('a option)[]) : obj[] =
         if o1d |> Array.isEmpty then
-            [| defValue |]
+            [| sglValue |]
         else
-            o1d
+            o1d |> Array.map (fun elem -> match elem with | None -> noneValue | Some e -> box e)
             
 
 
@@ -358,7 +432,6 @@ module Cast1D =
             | VAROPT -> typeof<obj option>
             | OBJ-> typeof<obj>
 
-
     [<RequireQualifiedAccess>]
     module Variant =
         let x = 2
@@ -367,8 +440,8 @@ module Cast_XL =
     open System
     open ExcelDna.Integration
 
-    [<ExcelFunction(Category="XL", Description="Cast range to obj[]")>]
-    let cast_obj1d
+    [<ExcelFunction(Category="XL", Description="Cast an xl-range to obj[]")>]
+    let cast1d_obj
         ([<ExcelArgument(Description= "Range.")>] range: obj)
         ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
         : obj[]  =
@@ -377,51 +450,142 @@ module Cast_XL =
         let rowWiseDef = Cast0D.Bool.def false rowWiseDirection
 
         // result
-        Cast0D.O1D.to1D rowWiseDef range
+        Cast0D.to1D rowWiseDef range
 
-    [<ExcelFunction(Category="XL", Description="Cast range to bool[].")>]
-    let cast_bool1d
+    [<ExcelFunction(Category="XL", Description="Cast an xl-range to bool[].")>]
+    let cast1d_bool
         ([<ExcelArgument(Description= "Range.")>] range: obj)
+        ([<ExcelArgument(Description= "[Replacement method for non-bool elements. \"Replace\", \"Optional\" (= replace with None) or \"Filter\". Default is \"Replace\".]")>] replaceMethod: obj)
+        ([<ExcelArgument(Description= "[Default Value. Default is FALSE.]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
+        ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
         ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
         : obj[]  =
 
         // intermediary stage
-        let rowWiseDef = Cast0D.Bool.def false rowWiseDirection
+        let rowwise = Cast0D.Bool.def false rowWiseDirection
+        let replmethod = Cast0D.Stg.def "REPLACE" replaceMethod
+        let none = Cast0D.Stg.def "<none>" noneValue
+        let empty = Cast0D.Stg.def "<empty>" emptyValue
+        let defVal = Cast0D.Bool.def false defaultValue
 
         // result
-        let o1D = Cast0D.O1D.to1D rowWiseDef range 
-        let i1D = Cast1D.Bool.def true o1D
-        i1D |> Array.map box |> Cast1D.ofEmptyO "<empty>"
+        let o1D = Cast0D.to1D rowwise range 
+        match replmethod.ToUpper().Substring(0,1) with
+        | "F" -> let a1D = Cast1D.Bool.filter o1D
+                 a1D |> Cast1D.ofEmpty<bool> empty
+        | "O" -> let a1D = Cast1D.Bool.defOpt None o1D
+                 a1D |> Cast1D.ofEmptyOpt<bool> none empty
+        | _   -> let a1D = Cast1D.Bool.def defVal o1D 
+                 a1D |> Cast1D.ofEmpty<bool> empty
 
-    [<ExcelFunction(Category="XL", Description="Cast range to string[].")>]
-    let cast_stg1d
+    [<ExcelFunction(Category="XL", Description="Cast an xl-range to string[].")>]
+    let cast1d_stg
         ([<ExcelArgument(Description= "Range.")>] range: obj)
+        ([<ExcelArgument(Description= "[Replacement method for non-string elements. \"Replace\", \"Optional\" (= replace with None) or \"Filter\". Default is \"Replace\".]")>] replaceMethod: obj)
+        ([<ExcelArgument(Description= "[Default Value. Default is \"-foo-\".]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
+        ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
         ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
         : obj[]  =
 
         // intermediary stage
-        let rowWiseDef = Cast0D.Bool.def false rowWiseDirection
+        let rowwise = Cast0D.Bool.def false rowWiseDirection
+        let replmethod = Cast0D.Stg.def "REPLACE" replaceMethod
+        let none = Cast0D.Stg.def "<none>" noneValue
+        let empty = Cast0D.Stg.def "<empty>" emptyValue
+        let defVal = Cast0D.Stg.def "-foo-" defaultValue
 
         // result
-        let o1D = Cast0D.O1D.to1D rowWiseDef range 
-        let i1D = Cast1D.Stg.def "foo" o1D
-        i1D |> Array.map box |> Cast1D.ofEmptyO "<empty>"
+        let o1D = Cast0D.to1D rowwise range 
+        match replmethod.ToUpper().Substring(0,1) with
+        | "F" -> let a1D = Cast1D.Stg.filter o1D
+                 a1D |> Cast1D.ofEmpty<string> empty
+        | "O" -> let a1D = Cast1D.Stg.defOpt None o1D
+                 a1D |> Cast1D.ofEmptyOpt<string> none empty
+        | _   -> let a1D = Cast1D.Stg.def defVal o1D 
+                 a1D |> Cast1D.ofEmpty<string> empty
 
-    [<ExcelFunction(Category="XL", Description="Cast range to int[].")>]
-    let cast_int1d
+    [<ExcelFunction(Category="XL", Description="Cast an xl-range to double[].")>]
+    let cast1d_dbl
         ([<ExcelArgument(Description= "Range.")>] range: obj)
+        ([<ExcelArgument(Description= "[Replacement method for non-double elements. \"Replace\", \"Optional\" (= replace with None) or \"Filter\". Default is \"Replace\".]")>] replaceMethod: obj)
+        ([<ExcelArgument(Description= "[Default Value. Default is 0.]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
+        ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
         ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
         : obj[]  =
 
         // intermediary stage
-        let rowWiseDef = Cast0D.Bool.def false rowWiseDirection
+        let rowwise = Cast0D.Bool.def false rowWiseDirection
+        let replmethod = Cast0D.Stg.def "REPLACE" replaceMethod
+        let none = Cast0D.Stg.def "<none>" noneValue
+        let empty = Cast0D.Stg.def "<empty>" emptyValue
+        let defVal = Cast0D.Dbl.def 0.0 defaultValue
 
         // result
-        let o1D = Cast0D.O1D.to1D rowWiseDef range 
-        let i1D = Cast1D.Intg.def 42 o1D
-        i1D |> Array.map box |> Cast1D.ofEmptyO "<empty>"
+        let o1D = Cast0D.to1D rowwise range 
+        match replmethod.ToUpper().Substring(0,1) with
+        | "F" -> let a1D = Cast1D.Dbl.filter o1D
+                 a1D |> Cast1D.ofEmpty<double> empty
+        | "O" -> let a1D = Cast1D.Dbl.defOpt None o1D
+                 a1D |> Cast1D.ofEmptyOpt<double> none empty
+        | _   -> let a1D = Cast1D.Dbl.def defVal o1D 
+                 a1D |> Cast1D.ofEmpty<double> empty
 
+    [<ExcelFunction(Category="XL", Description="Cast an xl-range to int[].")>]
+    let cast1d_int
+        ([<ExcelArgument(Description= "Range.")>] range: obj)
+        ([<ExcelArgument(Description= "[Replacement method for non-integer elements. \"Replace\", \"Optional\" (= replace with None) or \"Filter\". Default is \"Replace\".]")>] replaceMethod: obj)
+        ([<ExcelArgument(Description= "[Default Value. Default is 0.]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
+        ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
+        ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
+        : obj[]  =
 
+        // intermediary stage
+        let rowwise = Cast0D.Bool.def false rowWiseDirection
+        let replmethod = Cast0D.Stg.def "REPLACE" replaceMethod
+        let none = Cast0D.Stg.def "<none>" noneValue
+        let empty = Cast0D.Stg.def "<empty>" emptyValue
+        let defVal = Cast0D.Intg.def 0 defaultValue
+
+        // result
+        let o1D = Cast0D.to1D rowwise range 
+        match replmethod.ToUpper().Substring(0,1) with
+        | "F" -> let a1D = Cast1D.Intg.filter o1D
+                 a1D |> Cast1D.ofEmpty<int> empty
+        | "O" -> let a1D = Cast1D.Intg.defOpt None o1D
+                 a1D |> Cast1D.ofEmptyOpt<int> none empty
+        | _   -> let a1D = Cast1D.Intg.def defVal o1D 
+                 a1D |> Cast1D.ofEmpty<int> empty
+        
+    [<ExcelFunction(Category="XL", Description="Cast an xl-range to DateTime[].")>]
+    let cast1d_dte
+        ([<ExcelArgument(Description= "Range.")>] range: obj)
+        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Optional\" (= replace with None) or \"Filter\". Default is \"Replace\".]")>] replaceMethod: obj)
+        ([<ExcelArgument(Description= "[Default Value. Default is 1-Jan-2000.]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
+        ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
+        ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
+        : obj[]  =
+
+        // intermediary stage
+        let rowwise = Cast0D.Bool.def false rowWiseDirection
+        let replmethod = Cast0D.Stg.def "REPLACE" replaceMethod
+        let none = Cast0D.Stg.def "<none>" noneValue
+        let empty = Cast0D.Stg.def "<empty>" emptyValue
+        let defVal = Cast0D.Dte.def (DateTime(2000,1,1)) defaultValue
+
+        // result
+        let o1D = Cast0D.to1D rowwise range 
+        match replmethod.ToUpper().Substring(0,1) with
+        | "F" -> let a1D = Cast1D.Dte.filter o1D
+                 a1D |> Cast1D.ofEmpty<DateTime> empty
+        | "O" -> let a1D = Cast1D.Dte.defOpt None o1D
+                 a1D |> Cast1D.ofEmptyOpt<DateTime> none empty
+        | _   -> let a1D = Cast1D.Dte.def defVal o1D 
+                 a1D |> Cast1D.ofEmpty<DateTime> empty
 
 
 

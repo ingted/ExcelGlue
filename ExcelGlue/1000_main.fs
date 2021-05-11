@@ -1,48 +1,12 @@
 ﻿namespace ExcelGlue
 
-[<RequireQualifiedAccess>]
-module Output =
+
+//[<RequireQualifiedAccess>]
+module Excel =
     open System
     open ExcelDna.Integration
 
-    /// Replacement values to return to Excel instead of Double.NaN, None, and [||].
-    type ReplaceValues = { nan: obj; none: obj; empty: obj } with
-        static member def : ReplaceValues = { nan = ExcelError.ExcelErrorNA; none = "<none>"; empty = "<empty>" }
-
-    /// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
-    /// NaN elements are converted according to replaceValues.
-    let range<'a> (replaceValues: ReplaceValues) (a1D: 'a[]) : obj[] =
-        if a1D |> Array.isEmpty then
-            [| replaceValues.empty |]
-        else
-            if typeof<'a> = typeof<double> then
-                a1D |> Array.map (fun num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval)
-            else
-                a1D |> Array.map box
-
-    /// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
-    /// None and NaN elements are converted according to replaceValues.
-    let rangeOpt<'a> (replaceValues: ReplaceValues) (a1D: ('a option)[]) : obj[] =
-        if a1D |> Array.isEmpty then
-            [| replaceValues.empty |]
-        else
-            if typeof<'a> = typeof<double> then
-                a1D 
-                |> Array.map 
-                    (fun elem -> 
-                        match elem with 
-                        | None -> replaceValues.none 
-                        | Some num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval
-                    )
-            else
-                a1D |> Array.map (fun elem -> match elem with | None -> replaceValues.none | Some e -> box e)
-
-[<RequireQualifiedAccess>]
-module Cast0D =
-    open System
-    open ExcelDna.Integration
-
-    /// DU representing xl-value types.
+    /// DU representing the F# types of xl-values we want to capture from the spreadsheet.
     type Variant = | BOOL | BOOLOPT | STRING | STRINGOPT | DOUBLE | DOUBLEOPT | DOUBLENAN | DOUBLENANOPT | INT | INTOPT | DATE | DATEOPT | VAR | VAROPT | OBJ with
         static member isOptionalType (typeLabel: string) : bool = 
             typeLabel.IndexOf("#") >= 0
@@ -123,23 +87,117 @@ module Cast0D =
             let var = Variant.ofLabel typeLabel
             var.defVal
 
+    // FIXME better wording
     /// Indicates which xl-values are to be converted to special values (e.g. Double.NaN in 0D, [||] in 1D) :
     ///    - if OnlyErrorNA, only ExcelErrorNA values are converted.
     ///    - if AllErrors, all Excel error values are converted.
     ///    - if AllNonNumeric, any non-numeric xl-value are.
-    type EdgeCaseConversion = | OnlyErrorNA | AllErrors | AllNonNumeric | AllNonNumericAndNA | AllNonNumericAndErrors | NoConversion with
-        static member ofLabel (label: string) : EdgeCaseConversion =
-            match label.ToUpper() with
-            | "NA" -> OnlyErrorNA
-            | "ERR" | "ERROR" -> AllErrors
-            | "NN" | "NONNUM" | "NONNUMERIC" -> AllNonNumeric
-            | "NNNA" | "NN_NA" | "NN+NA" | "NONNUM_NA" | "NONNUM+NA" | "NONNUMERIC_NA" | "NONNUMERIC+NA" -> AllNonNumericAndNA
-            | "NNERR" | "NN_ERR" | "NN+ERR" | "NONNUM_ERR" | "NONNUM+ERR" | "NONNUMERIC_ERROR" | "NONNUMERIC+ERROR" -> AllNonNumericAndErrors
-            | _ -> NoConversion
 
-        static member labelGuide : (string*string) [] =
-            let labels = [| "NA"; "ERR"; "NN"; "NNNA"; "NNERR"; "NOCONVERSION"; "default" |]
-            labels |> Array.map (fun lbl -> (lbl, (EdgeCaseConversion.ofLabel lbl).ToString()))
+    /// Describes various convenient sets, "kinds", of xl-spreadsheet values.
+    type Kind = | Boolean | Numeric | Textual | NA | Error | Missing | Empty with
+        static member nonBoolean = [| Numeric; Textual |] |> Array.sort
+
+        static member nonNumeric = [| Boolean; Textual |] |> Array.sort
+        static member nonNumericAndNA = [| Boolean; Textual; NA |] |> Array.sort
+        static member nonNumericAndError = [| Boolean; Textual; NA; Error |] |> Array.sort
+
+        static member nonTextual = [| Boolean; Numeric |] |> Array.sort
+
+        static member onlyNA = [| NA |]
+        static member anyError = [| NA; Error |] |> Array.sort
+        static member none = [||]
+
+        static member ofLabel (label: string) : Kind[] =
+            match label.ToUpper() with
+            | "NA" -> Kind.onlyNA
+            | "ERR" | "ERROR" -> Kind.anyError
+            | "NN" | "NONNUM" | "NONNUMERIC" -> Kind.nonNumeric
+            | "NNNA" | "NN_NA" | "NN+NA" | "NONNUM_NA" | "NONNUM+NA" | "NONNUMERIC_NA" | "NONNUMERIC+NA" ->  Kind.nonNumericAndNA
+            | "NNERR" | "NN_ERR" | "NN+ERR" | "NONNUM_ERR" | "NONNUM+ERR" | "NONNUMERIC_ERROR" | "NONNUMERIC+ERROR" -> Kind.nonNumericAndError
+            | _ -> Kind.none
+
+        static member labelGuide : (string*string) [] =  // FIXME do better
+            let labels = [| "NA"; "ERR"; "NN"; "NNNA"; "NNERR"; "NONE"; "default" |]
+            labels |> Array.map (fun lbl -> (lbl, Kind.ofLabel lbl |> Array.map (fun kinds -> kinds.ToString()) |> (String.concat "|")))
+
+    module Kind =
+
+        /// Matches non-numeric, non-error variants, i.e. Bools and Strings.
+        let (|NonNumeric|_|) (xlKinds: Kind[]) (xlVal: obj) : bool option = 
+            match xlVal, xlKinds |> Array.sort with            
+            | :? string, k when k = Kind.nonNumeric -> Some true
+            | :? bool, k when k = Kind.nonNumeric -> Some true
+            | _ -> None
+
+        /// Matches non-numeric and #N/A variants, i.e. Bools, Strings and #N/A.
+        let (|NonNumericAndNA|_|) (xlKinds: Kind[]) (xlVal: obj) : bool option = 
+            match xlVal, xlKinds |> Array.sort with            
+            | :? string, k when k = Kind.nonNumericAndNA -> Some true
+            | :? bool, k when k = Kind.nonNumericAndNA -> Some true
+            | :? ExcelError as xlerr, k  when (xlerr = ExcelError.ExcelErrorNA) && (k = Kind.nonNumericAndNA) -> Some true
+            | _ -> None
+
+        /// Matches non-numeric and any error variants, i.e. Bools, Strings and errors.
+        let (|NonNumericAndError|_|) (xlKinds: Kind[]) (xlVal: obj) : bool option = 
+            match xlVal, xlKinds |> Array.sort with            
+            | :? string, k when k = Kind.nonNumericAndError -> Some true
+            | :? bool, k when k = Kind.nonNumericAndError -> Some true
+            | :? ExcelError, k when k = Kind.nonNumericAndError -> Some true
+            | _ -> None
+
+        /// Only matches #N/A variants.
+        let (|OnlyNA|_|) (xlKinds: Kind[]) (xlVal: obj) : bool option = 
+            match xlVal, xlKinds |> Array.sort with            
+            | :? ExcelError as xlerr, k  when (xlerr = ExcelError.ExcelErrorNA) && (k = Kind.onlyNA) -> Some true
+            | _ -> None
+
+        /// Matches any error variants, e.g. #N/A, #NUM, #REF...
+        let (|AnyError|_|) (xlKinds: Kind[]) (xlVal: obj) : bool option = 
+            match xlVal, xlKinds |> Array.sort with            
+            | :? ExcelError, k when k = Kind.anyError -> Some true
+            | _ -> None
+
+    [<RequireQualifiedAccess>]
+    module Out =
+
+        /// Replacement values to return to Excel instead of Double.NaN, None, and [||].
+        type ReplaceValues = { nan: obj; none: obj; empty: obj } with
+            static member def : ReplaceValues = { nan = ExcelError.ExcelErrorNA; none = "<none>"; empty = "<empty>" }
+
+        /// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
+        /// NaN elements are converted according to replaceValues.
+        let range<'a> (replaceValues: ReplaceValues) (a1D: 'a[]) : obj[] =
+            if a1D |> Array.isEmpty then
+                [| replaceValues.empty |]
+            else
+                if typeof<'a> = typeof<double> then
+                    a1D |> Array.map (fun num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval)
+                else
+                    a1D |> Array.map box
+
+        /// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
+        /// None and NaN elements are converted according to replaceValues.
+        let rangeOpt<'a> (replaceValues: ReplaceValues) (a1D: ('a option)[]) : obj[] =
+            if a1D |> Array.isEmpty then
+                [| replaceValues.empty |]
+            else
+                if typeof<'a> = typeof<double> then
+                    a1D 
+                    |> Array.map 
+                        (fun elem -> 
+                            match elem with 
+                            | None -> replaceValues.none 
+                            | Some num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval
+                        )
+                else
+                    a1D |> Array.map (fun elem -> match elem with | None -> replaceValues.none | Some e -> box e)
+
+[<RequireQualifiedAccess>]
+module Cast0D =
+    open System
+    open ExcelDna.Integration
+    open Excel
+    open Excel.Kind
 
     // ----------------
     // -- 0D functions
@@ -249,40 +307,32 @@ module Cast0D =
 
     [<RequireQualifiedAccess>]
     module Nan =
-        /// Converts xl-values to boxed Double.NaN in special cases.
-        let nanify (toNaN: EdgeCaseConversion) (xlVal: obj) : obj = 
-            match xlVal, toNaN with
-            | :? double, _ -> xlVal
-
-            | :? ExcelError as xlerr, OnlyErrorNA when xlerr = ExcelError.ExcelErrorNA -> box Double.NaN
-
-            | :? ExcelError as xlerr, AllNonNumericAndNA when xlerr = ExcelError.ExcelErrorNA -> box Double.NaN
-            | :? ExcelError, AllNonNumericAndNA -> xlVal
-            | _, AllNonNumericAndNA -> box Double.NaN
-
-            | :? ExcelError, AllNonNumeric -> xlVal
-            | _, AllNonNumeric -> box Double.NaN
-
-            | :? ExcelError, AllErrors -> box Double.NaN
-            | _, AllNonNumericAndErrors -> box Double.NaN
-
+        /// Converts xl-values to boxed Double.NaN in special cases, depending on xl-value's Kind.
+        let nanify (xlKinds: Kind[]) (xlVal: obj) : obj = 
+            match xlVal with
+            | :? double -> xlVal
+            | NonNumeric xlKinds _ -> box Double.NaN
+            | NonNumericAndNA xlKinds _ -> box Double.NaN
+            | NonNumericAndError xlKinds _ -> box Double.NaN
+            | OnlyNA xlKinds _ -> box Double.NaN
+            | AnyError xlKinds _ -> box Double.NaN
             | _ -> xlVal
 
         /// Casts an xl-value to double or fails, with some other non-double values potentially cast to Double.NaN.
-        let fail (toNaN: EdgeCaseConversion) (msg: string option) (xlVal: obj) = 
-            nanify toNaN xlVal |> fail<double> msg
+        let fail (xlKinds: Kind[]) (msg: string option) (xlVal: obj) = 
+            nanify xlKinds xlVal |> fail<double> msg
 
-        /// Casts an xl-value to double with a default-value, with some other non-double values potentially cast to Double.NaN.
-        let def (toNaN: EdgeCaseConversion) (defValue: double) (xlVal: obj) = 
-            nanify toNaN xlVal |> def<double> defValue
+        /// Casts an xl-value to double with a default-value, with some other non-double values potentially cast to Double.NaN. // FIXME - improve text
+        let def (xlKinds: Kind[]) (defValue: double) (xlVal: obj) = 
+            nanify xlKinds xlVal |> def<double> defValue
 
         /// Casts an xl-value to a double option type with a default-value, with some other non-double values potentially cast to Double.NaN.
-        let tryDV (toNaN: EdgeCaseConversion) (defValue: double option) (xlVal: obj) = 
-            nanify toNaN xlVal |> tryDV<double> defValue
+        let tryDV (xlKinds: Kind[]) (defValue: double option) (xlVal: obj) = 
+            nanify xlKinds xlVal |> tryDV<double> defValue
 
         /// Replaces an xl-value with a double default-value if it isn't a (boxed double) type (e.g. box 1.0), with some other non-double values potentially cast to Double.NaN.
-        let defO (toNaN: EdgeCaseConversion) (defValue: double) (xlVal: obj) = 
-            nanify toNaN xlVal |> defO<double> defValue
+        let defO (xlKinds: Kind[]) (defValue: double) (xlVal: obj) = 
+            nanify xlKinds xlVal |> defO<double> defValue
 
         /// Converts a boxed Double.NaN into an ExcelErrorNA.
         let ofNaN (xlVal: obj) : obj =
@@ -386,6 +436,9 @@ module Cast0D =
 [<RequireQualifiedAccess>]
 module Cast1D =
     open System
+    open Excel
+    open type Excel.Variant
+    // open type Out.ReplaceValues
 
     /// Converts an obj[] to a 'a[], given a typed default-value for elements which can't be cast to 'a.
     let def<'a> (defValue: 'a) (o1D: obj[]) : 'a[] =
@@ -451,20 +504,20 @@ module Cast1D =
     [<RequireQualifiedAccess>]
     module Nan =
         /// Converts an obj[] to a double[], given a default-value for non-double elements.
-        let def (toNaN: Cast0D.EdgeCaseConversion) (defValue: double) (o1D: obj[]) =
-            o1D |> Array.map (Cast0D.Nan.def toNaN defValue)
+        let def (xlKinds: Kind[]) (defValue: double) (o1D: obj[]) =
+            o1D |> Array.map (Cast0D.Nan.def xlKinds defValue)
 
         /// Converts an obj[] to a ('a option)[], given a default-value for non-double elements.
-        let defOpt (toNaN: Cast0D.EdgeCaseConversion) (defValue: double option) (o1D: obj[]) =
-            o1D |> Array.map (Cast0D.Nan.tryDV toNaN defValue)
+        let defOpt (xlKinds: Kind[]) (defValue: double option) (o1D: obj[]) =
+            o1D |> Array.map (Cast0D.Nan.tryDV xlKinds defValue)
 
         /// Converts an obj[] to a DateTime[], removing any non-double element.
-        let filter (toNaN: Cast0D.EdgeCaseConversion) (o1D: obj[]) =
-            o1D |> Array.choose (Cast0D.Nan.tryDV toNaN None)
+        let filter (xlKinds: Kind[]) (o1D: obj[]) =
+            o1D |> Array.choose (Cast0D.Nan.tryDV xlKinds None)
 
         /// Converts an obj[] to an optional 'a[]. All the elements must be double, otherwise defValue array is returned. 
-        let tryDV (toNaN: Cast0D.EdgeCaseConversion) (defValue: double[] option) (o1D: obj[])  =
-            let convert = defOpt toNaN None o1D
+        let tryDV (xlKinds: Kind[]) (defValue: double[] option) (o1D: obj[])  =
+            let convert = defOpt xlKinds None o1D
             match convert |> Array.tryFind Option.isNone with
             | None -> convert |> Array.map Option.get |> Some
             | Some _ -> defValue
@@ -518,82 +571,82 @@ module Cast1D =
             static member def<'A> (rowWiseDef: bool) (defValue: obj) (typeLabel: string) (xlValue: obj) : 'A[] = 
                 let o1D = Cast0D.to1D rowWiseDef xlValue
 
-                match typeLabel |> Cast0D.Variant.ofLabel with
-                | Cast0D.BOOL -> 
+                match typeLabel |> Excel.Variant.ofLabel with
+                | BOOL -> 
                     let defval = defValue :?> 'A
                     def<'A> defval o1D
-                | Cast0D.STRING -> 
+                | STRING -> 
                     let defval = defValue :?> string
                     let a1D = Stg.def defval o1D
                     a1D |> Array.map (fun x -> (box x) :?> 'A)
-                | Cast0D.DOUBLE -> 
+                | DOUBLE -> 
                     let defval = defValue :?> 'A
                     def<'A> defval o1D
-                | Cast0D.INT -> 
+                | INT -> 
                     let defval = defValue :?> double
                     let a1D = Intg.def ((int) defval) o1D
                     a1D |> Array.map (fun x -> (box x) :?> 'A)
-                | Cast0D.DATE -> 
+                | DATE -> 
                     let defval = defValue :?> double
                     let a1D = Dte.def (DateTime.FromOADate(defval)) o1D
                     a1D |> Array.map (fun x -> (box x) :?> 'A)
                 | _ -> [||]
         
             /// Same as Gen.def, but returns an obj[] instead of a 'a[].
-            static member defObj<'A> (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
+            static member defObj<'A> (rowWiseDef: bool) (replaceValues: Out.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
                 let a1D = Gen.def<'A> rowWiseDef defValue typeLabel xlValue
-                Output.range<'A> replaceValues a1D
+                Out.range<'A> replaceValues a1D
     
             /// Converts an xl-value to a ('A option)[], given an optional default-value for elements which can't be cast to 'A.
             static member defOpt<'A> (rowWiseDef: bool) (defValue: obj) (typeLabel: string) (xlValue: obj) : ('A option)[] = 
                 let o1D = Cast0D.to1D rowWiseDef xlValue
 
-                match typeLabel |> Cast0D.Variant.ofLabel with
-                | Cast0D.BOOLOPT -> 
+                match typeLabel |> Excel.Variant.ofLabel with
+                | BOOLOPT -> 
                     let defval = defValue :?> 'A option
                     defOpt<'A> defval o1D
-                | Cast0D.STRINGOPT -> 
+                | STRINGOPT -> 
                     let defval = defValue :?> string option
                     let a1D = Stg.defOpt defval o1D
                     a1D |> Array.map (fun x -> (box x) :?> 'A option)
-                | Cast0D.DOUBLEOPT -> 
+                | DOUBLEOPT -> 
                     let defval = defValue :?> 'A option
                     defOpt<'A> defval o1D
-                | Cast0D.INTOPT -> 
+                | INTOPT -> 
                     let defval = defValue :?> double option |> Option.map (int)
                     let a1D = Intg.defOpt defval o1D
                     a1D |> Array.map (fun x -> (box x) :?> 'A option)
-                | Cast0D.DATEOPT -> 
+                | DATEOPT -> 
                     let defval = defValue :?> double option |> Option.map (fun d -> DateTime.FromOADate(d))
                     let a1D = Dte.defOpt defval o1D
                     a1D |> Array.map (fun x -> (box x) :?> 'A option)
                 | _ -> [||]
 
-            static member defOptObj<'A> (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
+            static member defOptObj<'A> (rowWiseDef: bool) (replaceValues: Out.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
                 let a1D = Gen.defOpt<'A> rowWiseDef defValue typeLabel xlValue
-                Output.rangeOpt<'A> replaceValues a1D
+                Out.rangeOpt<'A> replaceValues a1D
 
             static member filter<'A> (rowWiseDef: bool) (typeLabel: string) (xlValue: obj) : 'A[] = 
                 let o1D = Cast0D.to1D rowWiseDef xlValue
 
-                match typeLabel |> Cast0D.Variant.ofLabel with
-                | Cast0D.BOOL -> filter<'A> o1D
-                | Cast0D.STRING -> 
+                match typeLabel |> Excel.Variant.ofLabel with
+                | BOOL -> filter<'A> o1D
+                | STRING -> 
                     let a1D = Stg.filter o1D
                     a1D |> Array.map (fun x -> (box x) :?> 'A)
-                | Cast0D.DOUBLE -> filter<'A> o1D
-                | Cast0D.INT -> 
+                | DOUBLE -> filter<'A> o1D
+                | INT -> 
                     let a1D = Intg.filter o1D
                     a1D |> Array.map (fun x -> (box x) :?> 'A)
-                | Cast0D.DATE -> 
+                | DATE -> 
                     let a1D = Dte.filter o1D
                     a1D |> Array.map (fun x -> (box x) :?> 'A)
                 | _ -> [||]
 
             /// Same as Gen.filter, but returns an obj[] instead of a 'a[].
-            static member filterObj<'A> (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (typeLabel: string) (xlValue: obj) : obj[] = 
+            static member filterObj<'A> (rowWiseDef: bool) (replaceValues: Out.ReplaceValues) (typeLabel: string) (xlValue: obj) : obj[] = 
                 let a1D = Gen.filter<'A> rowWiseDef typeLabel xlValue
-                Output.range<'A> replaceValues a1D
+                Out.range<'A> replaceValues a1D
 
         let private callMethod (methodnm: string) (genType: Type) (args: obj[]) : obj =
             let meth = typeof<Gen>.GetMethod(methodnm)
@@ -604,14 +657,14 @@ module Cast1D =
         /// Converts an xl-value to a 'a[], given a typed default-value for elements which can't be cast to 'a.
         /// 'a is determined by typeLabel.
         let def (rowWiseDef: bool) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj = 
-            let gentype = typeLabel.Replace("#", "") |> Cast0D.Variant.labelType
+            let gentype = typeLabel.Replace("#", "") |> Excel.Variant.labelType
             let args = [| box rowWiseDef; defValue; box typeLabel; xlValue |]
             let res = callMethod "def" gentype args
             res
 
         /// Same as def but returns a obj[], rather than a (boxed) 'a[].
-        let defObj (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
-            let gentype = typeLabel.Replace("#", "") |> Cast0D.Variant.labelType
+        let defObj (rowWiseDef: bool) (replaceValues: Out.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
+            let gentype = typeLabel.Replace("#", "") |> Excel.Variant.labelType
             let args : obj[] = [| rowWiseDef; replaceValues; defValue; typeLabel; xlValue |]
             let res = callMethod "defObj" gentype args
             res :?> obj[]
@@ -619,50 +672,50 @@ module Cast1D =
         /// Converts an xl-value to a ('a option)[], given an optional default-value for elements which can't be cast to 'a.
         /// 'a is determined by typeLabel.
         let defOpt (rowWiseDef: bool) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj = 
-            let gentype = typeLabel.Replace("#", "") |> Cast0D.Variant.labelType
+            let gentype = typeLabel.Replace("#", "") |> Excel.Variant.labelType
             let args = [| box rowWiseDef; box defValue; box typeLabel; xlValue |]
             let res = callMethod "defOpt" gentype args
             res
 
         /// Same as defOptObj but returns a obj[], rather than a (boxed) ('a option)[].
-        let defOptObj (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
-            let gentype = typeLabel.Replace("#", "") |> Cast0D.Variant.labelType
+        let defOptObj (rowWiseDef: bool) (replaceValues: Out.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
+            let gentype = typeLabel.Replace("#", "") |> Excel.Variant.labelType
             let args : obj[] = [| rowWiseDef; replaceValues; defValue; typeLabel; xlValue |]
             let res = callMethod "defOptObj" gentype args
             res :?> obj[]
 
         // Convenient, single function for def and defOpt.
         let defAllCases (rowWiseDef: bool) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj = 
-            let gentype = typeLabel.Replace("#", "") |> Cast0D.Variant.labelType
+            let gentype = typeLabel.Replace("#", "") |> Excel.Variant.labelType
             let args : obj[] = [| rowWiseDef; defValue; typeLabel; xlValue |]
 
             let res =
-                if typeLabel |> Cast0D.Variant.isOptionalType then
+                if typeLabel |> isOptionalType then
                     callMethod "def" gentype args
                 else
                     callMethod "defOpt" gentype args
             res
 
         /// Same as defOptObj but returns a obj[], rather than a (boxed) ('a option)[].
-        let defAllCasesObj (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
-            let gentype = typeLabel.Replace("#", "") |> Cast0D.Variant.labelType
+        let defAllCasesObj (rowWiseDef: bool) (replaceValues: Out.ReplaceValues) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj[] = 
+            let gentype = typeLabel.Replace("#", "") |> Excel.Variant.labelType
             let args : obj[] = [| rowWiseDef; replaceValues; defValue; typeLabel; xlValue |]
 
             let res =
-                if typeLabel |> Cast0D.Variant.isOptionalType then
+                if typeLabel |> isOptionalType then
                     callMethod "defOptObj" gentype args
                 else
                     callMethod "defObj" gentype args
             res :?> obj[]
 
         let filter (rowWiseDef: bool) (typeLabel: string) (xlValue: obj) : obj = 
-            let gentype = typeLabel |> Cast0D.Variant.labelType
+            let gentype = typeLabel |> Excel.Variant.labelType
             let args = [| box rowWiseDef; box typeLabel; xlValue |]
             let res = callMethod "filter" gentype args
             res
 
-        let filterObj (rowWiseDef: bool) (replaceValues: Output.ReplaceValues) (typeLabel: string) (xlValue: obj) : obj[] = 
-            let gentype = typeLabel |> Cast0D.Variant.labelType
+        let filterObj (rowWiseDef: bool) (replaceValues: Out.ReplaceValues) (typeLabel: string) (xlValue: obj) : obj[] = 
+            let gentype = typeLabel |> Excel.Variant.labelType
             let args = [| box rowWiseDef; box replaceValues; box typeLabel; xlValue |]
             let res = callMethod "filterObj" gentype args
             res :?> obj[]
@@ -670,18 +723,20 @@ module Cast1D =
 
     let _end = "here"
 
-
-
 module Cast_XL =
     open System
     open ExcelDna.Integration
+    open Excel
+    open type Excel.Variant
+    //open type Excel.Kind
+    open type Out.ReplaceValues
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to DateTime[].")>]
     let cast_edgeCases ()
         : obj[,]  =
 
         // result
-        let (lbls, dus) = Cast0D.EdgeCaseConversion.labelGuide |> Array.map (fun (lbl, du) -> (box lbl, box du)) |> Array.unzip
+        let (lbls, dus) = Kind.labelGuide |> Array.map (fun (lbl, du) -> (box lbl, box du)) |> Array.unzip
         [| lbls; dus |] |> array2D
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to obj[]")>]
@@ -712,17 +767,17 @@ module Cast_XL =
         let none = Cast0D.Stg.def "<none>" noneValue
         let empty = Cast0D.Stg.def "<empty>" emptyValue
         let defVal = Cast0D.Bool.def false defaultValue
-        let rplval = { Output.ReplaceValues.def with none = none; empty = empty }
+        let rplval = { def with none = none; empty = empty }
 
         // result
         let o1D = Cast0D.to1D rowwise range 
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = Cast1D.Bool.filter o1D
-                 a1D |> Output.range<bool> rplval
+                 a1D |> Out.range<bool> rplval
         | "O" -> let a1D = Cast1D.Bool.defOpt None o1D
-                 a1D |> Output.rangeOpt<bool> rplval
+                 a1D |> Out.rangeOpt<bool> rplval
         | _   -> let a1D = Cast1D.Bool.def defVal o1D 
-                 a1D |> Output.range<bool> rplval
+                 a1D |> Out.range<bool> rplval
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to string[].")>]
     let cast1d_stg
@@ -740,17 +795,17 @@ module Cast_XL =
         let none = Cast0D.Stg.def "<none>" noneValue
         let empty = Cast0D.Stg.def "<empty>" emptyValue
         let defVal = Cast0D.Stg.def "-foo-" defaultValue
-        let rplval = { Output.ReplaceValues.def with none = none; empty = empty }
+        let rplval = { def with none = none; empty = empty }
 
         // result
         let o1D = Cast0D.to1D rowwise range 
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = Cast1D.Stg.filter o1D
-                 a1D |> Output.range<string> rplval
+                 a1D |> Out.range<string> rplval
         | "O" -> let a1D = Cast1D.Stg.defOpt None o1D
-                 a1D |> Output.rangeOpt<string> rplval
+                 a1D |> Out.rangeOpt<string> rplval
         | _   -> let a1D = Cast1D.Stg.def defVal o1D 
-                 a1D |> Output.range<string> rplval
+                 a1D |> Out.range<string> rplval
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to double[].")>]
     let cast1d_dbl
@@ -768,23 +823,23 @@ module Cast_XL =
         let none = Cast0D.Stg.def "<none>" noneValue
         let empty = Cast0D.Stg.def "<empty>" emptyValue
         let defVal = Cast0D.Dbl.def 0.0 defaultValue
-        let rplval = { Output.ReplaceValues.def with none = none; empty = empty }
+        let rplval = { def with none = none; empty = empty }
 
         // result
         let o1D = Cast0D.to1D rowwise range 
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = Cast1D.Dbl.filter o1D
-                 a1D |> Output.range<double> rplval
+                 a1D |> Out.range<double> rplval
         | "O" -> let a1D = Cast1D.Dbl.defOpt None o1D
-                 a1D |> Output.rangeOpt<double> rplval
+                 a1D |> Out.rangeOpt<double> rplval
         | _   -> let a1D = Cast1D.Dbl.def defVal o1D 
-                 a1D |> Output.range<double> rplval
+                 a1D |> Out.range<double> rplval
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to an array of doubles (including NaNs).")>]
     let cast1d_dblNan
         ([<ExcelArgument(Description= "Range.")>] range: obj)
         ([<ExcelArgument(Description= "[Replacement method for non-double elements. \"Replace\", \"Optional\" (= replace with None) or \"Filter\". Default is \"Replace\".]")>] replaceMethod: obj)
-        ([<ExcelArgument(Description= "[Edge cases mode. Edge cases values are converted to Double.NaN. E.g. NA, ERR, NN, NNNA, NNERR, NONE. Default is NONE.]")>] edgeCase: obj)
+        ([<ExcelArgument(Description= "[Edge cases mode. Edge cases values are converted to Double.NaN. E.g. NA, ERR, NN, NNNA, NNERR, NONE. Default is NONE.]")>] xlKinds: obj)
         ([<ExcelArgument(Description= "[Default Value. Default is 0.]")>] defaultValue: obj)
         ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
         ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
@@ -796,19 +851,21 @@ module Cast_XL =
         let replmethod = Cast0D.Stg.def "REPLACE" replaceMethod
         let none = Cast0D.Stg.def "<none>" noneValue
         let empty = Cast0D.Stg.def "<empty>" emptyValue
-        let edgecase = Cast0D.Stg.def "NONE" edgeCase |> Cast0D.EdgeCaseConversion.ofLabel
+        //let edgecase = Cast0D.Stg.def "NONE" edgeCase |> Cast0D.EdgeCaseConversion.ofLabel
+        let xlkinds = Cast0D.Stg.def "NONE" xlKinds |> Kind.ofLabel
+
         let defVal = Cast0D.Dbl.def 0.0 defaultValue
-        let rplval = { Output.ReplaceValues.def with none = none; empty = empty }
+        let rplval = { def with none = none; empty = empty }
 
         // result
         let o1D = Cast0D.to1D rowwise range 
         match replmethod.ToUpper().Substring(0,1) with
-        | "F" -> let a1D = Cast1D.Nan.filter edgecase o1D
-                 a1D |> Output.range<double> rplval
-        | "O" -> let a1D = Cast1D.Nan.defOpt edgecase None o1D
-                 a1D |> Output.rangeOpt<double> rplval
-        | _   -> let a1D = Cast1D.Nan.def edgecase defVal o1D 
-                 a1D |> Output.range<double> rplval
+        | "F" -> let a1D = Cast1D.Nan.filter xlkinds o1D
+                 a1D |> Out.range<double> rplval
+        | "O" -> let a1D = Cast1D.Nan.defOpt xlkinds None o1D
+                 a1D |> Out.rangeOpt<double> rplval
+        | _   -> let a1D = Cast1D.Nan.def xlkinds defVal o1D 
+                 a1D |> Out.range<double> rplval
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to int[].")>]
     let cast1d_int
@@ -826,17 +883,17 @@ module Cast_XL =
         let none = Cast0D.Stg.def "<none>" noneValue
         let empty = Cast0D.Stg.def "<empty>" emptyValue
         let defVal = Cast0D.Intg.def 0 defaultValue
-        let rplval = { Output.ReplaceValues.def with none = none; empty = empty }
+        let rplval = { def with none = none; empty = empty }
 
         // result
         let o1D = Cast0D.to1D rowwise range 
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = Cast1D.Intg.filter o1D
-                 a1D |> Output.range<int> rplval
+                 a1D |> Out.range<int> rplval
         | "O" -> let a1D = Cast1D.Intg.defOpt None o1D
-                 a1D |> Output.rangeOpt<int> rplval
+                 a1D |> Out.rangeOpt<int> rplval
         | _   -> let a1D = Cast1D.Intg.def defVal o1D 
-                 a1D |> Output.range<int> rplval
+                 a1D |> Out.range<int> rplval
         
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to DateTime[].")>]
     let cast1d_dte
@@ -854,17 +911,17 @@ module Cast_XL =
         let none = Cast0D.Stg.def "<none>" noneValue
         let empty = Cast0D.Stg.def "<empty>" emptyValue
         let defVal = Cast0D.Dte.def (DateTime(2000,1,1)) defaultValue
-        let rplval = { Output.ReplaceValues.def with none = none; empty = empty }
+        let rplval = { def with none = none; empty = empty }
 
         // result
         let o1D = Cast0D.to1D rowwise range 
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = Cast1D.Dte.filter o1D
-                 a1D |> Output.range<DateTime> rplval
+                 a1D |> Out.range<DateTime> rplval
         | "O" -> let a1D = Cast1D.Dte.defOpt None o1D
-                 a1D |> Output.rangeOpt<DateTime> rplval
+                 a1D |> Out.rangeOpt<DateTime> rplval
         | _   -> let a1D = Cast1D.Dte.def defVal o1D 
-                 a1D |> Output.range<DateTime> rplval
+                 a1D |> Out.range<DateTime> rplval
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to a generic type array.")>]
     let cast1d_gen
@@ -882,13 +939,47 @@ module Cast_XL =
         let replmethod = Cast0D.Stg.def "REPLACE" replaceMethod
         let none = Cast0D.Stg.def "<none>" noneValue
         let empty = Cast0D.Stg.def "<empty>" emptyValue
-        let rplval = { Output.ReplaceValues.def with none = none; empty = empty }
-        let isoptional = Cast0D.Variant.isOptionalType typeLabel
+        let rplval = { def with none = none; empty = empty }
+        let isoptional = isOptionalType typeLabel
         let defVal = 
             match isoptional with
-            | false -> Cast0D.Missing.defO (Cast0D.Variant.labelDefVal typeLabel) defaultValue
-            | true ->  Cast0D.Variant.labelDefVal typeLabel // (tonone true) |> box // Cast0D.Missing.defO (Cast0D.Variant.labelDefVal typeLabel) defaultValue
+            | false -> Cast0D.Missing.defO (Excel.Variant.labelDefVal typeLabel) defaultValue
+            | true ->  Excel.Variant.labelDefVal typeLabel // (tonone true) |> box // Cast0D.Missing.defO (Cast0D.Variant.labelDefVal typeLabel) defaultValue
             
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> Cast1D.Gen.filterObj rowwise rplval typeLabel range
         | _ -> Cast1D.Gen.defAllCasesObj rowwise rplval defVal typeLabel range
+
+
+[<RequireQualifiedAccess>]
+module Registry =
+    open System
+    open System.Collections.Generic
+
+    let reg = Dictionary<string,IDisposable>()
+
+    let x2 = 1
+
+
+module Registry_XL =
+    open System
+    open ExcelDna.Integration
+
+    [<ExcelFunction(Category="XL", Description="Cast an xl-range to obj[]")>]
+    let cast1d_objTBD
+        ([<ExcelArgument(Description= "key.")>] key: string)
+        ([<ExcelArgument(Description= "key.")>] value: double)
+        ([<ExcelArgument(Description= "Dim.")>] dimension: double)
+        : obj  =
+
+        // intermediary stage
+        let len1, len2 = (int) dimension, (int) dimension
+        let arr = Array2D.create len1 len2 value
+        let arrdispo = arr //:> IDisposable
+
+        // result
+        // Registry.reg.Add(key, arrdispo) |> ignore
+        box "done"
+
+
+

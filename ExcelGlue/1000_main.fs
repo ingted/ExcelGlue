@@ -1,12 +1,161 @@
 ﻿namespace ExcelGlue
 
 
+module Registry =
+    open System
+    open System.Collections.Generic
+
+    type OReg() =
+        // 2 dictionaries to keep track of objects, and xl-cells references where they are located.
+        let reg = Dictionary<string, obj>()
+        let ref = Dictionary<string, string[]>()
+
+        // -----------------------------------
+        // -- Construction functions
+        // -----------------------------------
+
+        /// Removes all objects which are filed under the reference refKey.
+        member private this.removeReferenceObjects (refKey: string) = 
+            if ref.ContainsKey refKey then
+                for regKey in ref.Item(refKey) do reg.Remove(regKey) |> ignore
+                ref.Remove(refKey) |> ignore
+
+        /// Removes all objects and their xl-cell references from the Object Registry.
+        member this.clear = 
+            reg.Clear()
+            ref.Clear()
+
+        /// Adds a reference -> single registry key 
+        member private this.addReference (refKey: string) (regKey: string) = 
+            this.removeReferenceObjects refKey
+            ref.Add(refKey, [| regKey |])
+
+        /// Adds a a single registry key to a (possibly already existing) reference
+        member private this.appendRef (refKey: string) (regKey: string) =
+            if ref.ContainsKey refKey then
+                let regKeys = ref.Item(refKey)
+                ref.Remove(refKey) |> ignore
+                ref.Add(refKey, Array.append regKeys [| regKey |])
+            else
+                ref.Add(refKey, [| regKey |])
+
+        ///// Removes object and its xl-cell reference from the Object Registry.
+        //member this.remove (key: string) = 
+        //    reg.Remove(key) |> ignore
+        //    ref.Remove(key)
+
+        member this.register (refKey: string) (regObject: obj) : string = 
+            let regKey = (Guid.NewGuid()).ToString()
+            this.addReference refKey regKey
+            reg.Add(regKey, regObject)
+            regKey
+
+        // -----------------------------------
+        // -- Inspection functions
+        // -----------------------------------
+
+        // Returns the number of registry objects held.
+        member this.count = reg.Count
+
+        /// Returns a registry object, given its regKey.
+        member this.tryFind (regKey: string) : obj option =
+            if reg.ContainsKey regKey then
+                reg.Item(regKey) |> Some
+            else
+                None
+
+        /// Returns a reference, given a registry key.
+        /// There can be only one reference per object.
+        member private this.tryFindRef (regKey: string) : string option = 
+            if reg.ContainsKey regKey then
+                [| for kvp in ref -> if kvp.Value |> Array.contains regKey then [| kvp.Key |] else [||] |]
+                |> Array.concat
+                |> Array.head
+                |> Some
+            else
+                None
+
+        /// Returns a registry object's type, given its regKey.
+        member this.tryType (regKey: string) : Type option =
+            regKey |> this.tryFind |> Option.map (fun o -> o.GetType())
+
+        /// Checks equality on 2 registry objects, given their keys.
+        member this.equal (regKey1: string) (regKey2: string) : bool = 
+            match this.tryFind regKey1, this.tryFind regKey2 with
+            | Some o1, Some o2 -> o1 = o2 // should have an equality constraint?
+            | _ -> false
+
+        /// Returns the registry keys.
+        member this.keys : string[] = [| for kvp in reg -> kvp.Key |]
+
+        /// Returns the registry values.
+        member this.values : obj[] = [| for kvp in reg -> kvp.Value |]
+
+        /// Returns the registry key-value pairs.
+        member this.keyValuePairs : (string*obj)[] = [| for kvp in reg -> kvp.Key, kvp.Value |]
+
+
+        // -----------------------------------
+        // -- Extraction functions
+        // -----------------------------------
+
+        member this.tryExtractS<'a> (regKeyOrString: string) : 'a option =
+            match this.tryFind regKeyOrString with
+            | None -> if typeof<'a> = typeof<string> then Some (unbox (box regKeyOrString)) else None
+            | Some regObj -> 
+                match regObj with
+                | :? 'a as v -> Some v
+                | _ -> None
+
+        member this.tryExtract<'a> (xlValue: obj) : 'a option =
+            match xlValue with
+            | :? string as regKey ->
+                match this.tryFind regKey with
+                | None ->
+                    if typeof<'a> = typeof<string> then Some (unbox xlValue) else None
+                | Some regObj -> 
+                    match regObj with
+                    | :? 'a as v -> Some v
+                    | _ -> None
+            | :? 'a as v -> Some v
+            | _ -> None
+
+            
+        // -----------------------------------
+        // -- Pretty-print functions
+        // -----------------------------------
+
+        /// Pretty-prints a registry object, given its key.
+        member this.tryShow (key: string) : string option =
+            this.tryFind key |> Option.map (fun o -> sprintf "%A" o)
+
+        member this.tryString (key: string) : string option =
+            this.tryFind key |> Option.map (fun o -> o.ToString())
+
+        /// Pretty-prints a registry object, given its key.
+        member this.tryPPrint (key: string) : string option =
+            this.tryFind key |> Option.map (fun o -> sprintf "%A" o)
+
+    /// This is the main registry where all Registry Objects will be held.
+    let Registry = OReg()
+
+
 //[<RequireQualifiedAccess>]
+module ToolBox =
+    open System
+
+    [<RequireQualifiedAccess>]
+    module Type =    
+        let pPrint (toStringStyle: bool) (someType: Type) : string =             
+            let s = if toStringStyle then someType.ToString() else sprintf "%A" someType
+            let pp = s.Replace(someType.Namespace + ".","").Replace("System.", "")
+            pp
+
 module Excel =
     open System
     open ExcelDna.Integration
 
-    /// DU representing the F# types of xl-values we want to capture from the spreadsheet.
+    /// DU representing the F# types for the xl-spreadsheet values we want to capture.
     type Variant = | BOOL | BOOLOPT | STRING | STRINGOPT | DOUBLE | DOUBLEOPT | DOUBLENAN | DOUBLENANOPT | INT | INTOPT | DATE | DATEOPT | VAR | VAROPT | OBJ with
         static member isOptionalType (typeLabel: string) : bool = 
             typeLabel.IndexOf("#") >= 0
@@ -157,7 +306,6 @@ module Excel =
             | :? ExcelError, k when k = Kind.anyError -> Some true
             | _ -> None
 
-    [<RequireQualifiedAccess>]
     module Out =
 
         /// Replacement values to return to Excel instead of Double.NaN, None, and [||].
@@ -192,7 +340,16 @@ module Excel =
                 else
                     a1D |> Array.map (fun elem -> match elem with | None -> replaceValues.none | Some e -> box e)
 
-[<RequireQualifiedAccess>]
+        // -----------------------------------
+        // -- Convenience functions
+        // -----------------------------------
+
+        // default-output function
+        let out (defOutput: obj) (output: 'a option) = match output with None -> defOutput | Some value -> box value
+        let outNA<'a> : 'a option -> obj = out (box ExcelError.ExcelErrorNA)
+        let outStg<'a> (defString: string) : 'a option -> obj = out (box defString)
+        let outDbl<'a> (defNum: double) : 'a option -> obj = out (box defNum)
+
 module Cast0D =
     open System
     open ExcelDna.Integration
@@ -951,35 +1108,106 @@ module Cast_XL =
         | _ -> Cast1D.Gen.defAllCasesObj rowwise rplval defVal typeLabel range
 
 
-[<RequireQualifiedAccess>]
-module Registry =
-    open System
-    open System.Collections.Generic
-
-    let reg = Dictionary<string,IDisposable>()
-
-    let x2 = 1
 
 
 module Registry_XL =
     open System
+
+    open Excel
+    open Excel.Out
+    open Cast0D
+    open Registry
+
+    open type OReg
     open ExcelDna.Integration
 
-    [<ExcelFunction(Category="XL", Description="Cast an xl-range to obj[]")>]
-    let cast1d_objTBD
-        ([<ExcelArgument(Description= "key.")>] key: string)
-        ([<ExcelArgument(Description= "key.")>] value: double)
-        ([<ExcelArgument(Description= "Dim.")>] dimension: double)
-        : obj  =
+    [<ExcelFunction(Category="Registry", Description="Removes all objects from the Registry.")>]
+    let rg_free
+        ([<ExcelArgument(Description= "Dependency.")>] dependency: obj)
+        ([<ExcelArgument(Description= "[Collect. Default is false.]")>] collect: obj)
+        : double = 
 
         // intermediary stage
-        let len1, len2 = (int) dimension, (int) dimension
-        let arr = Array2D.create len1 len2 value
-        let arrdispo = arr //:> IDisposable
+        let collect = Bool.def false collect
 
         // result
-        // Registry.reg.Add(key, arrdispo) |> ignore
-        box "done"
+        Registry.clear
+        if collect then GC.Collect()
+        let timestamp = DateTime.Now in timestamp.ToOADate()
+
+    [<ExcelFunction(Category="Registry", Description="Removes all objects from the Registry.")>]
+    let rg_collect
+        ([<ExcelArgument(Description= "Dependency.")>] dependency: obj)
+        : double =
+
+        // result
+        GC.Collect()
+        let timestamp = DateTime.Now in timestamp.ToOADate()
+
+    // -----------------------------------
+    // -- Inspection functions
+    // -----------------------------------
+
+    [<ExcelFunction(Category="Registry", Description="Returns the Registry's count.")>]
+    let rg_count () : double = Registry.count |> double
+
+    [<ExcelFunction(Category="Registry", Description="Returns all Registry keys.")>]
+    let rg_keys () : obj[] = Registry.keys |> Array.map box
+
+    [<ExcelFunction(Category="Registry", Description="Shows the textual representation of a registry object.")>]
+    let rg_show 
+        ([<ExcelArgument(Description= "Reg. key.")>] regKey: string) 
+        : obj =
+        
+        // result
+        Registry.tryShow regKey |> outNA
+
+    [<ExcelFunction(Category="Registry", Description="Returns a registry object's type.")>]
+    let rg_type 
+        ([<ExcelArgument(Description= "Reg. key.")>] regKey: string)
+        ([<ExcelArgument(Description= "[ToString() style. Default is false.]")>] toStringStyle: obj)
+        : obj =
+
+        // intermediary stage
+        let tostringstyle = Bool.def false toStringStyle
+
+        // result
+        Registry.tryType regKey |> Option.map (ToolBox.Type.pPrint tostringstyle) |> outNA
+
+    [<ExcelFunction(Category="Registry", Description="Equality of registry objects.")>]
+    let rg_eq
+        ([<ExcelArgument(Description= "Reg. key1.")>] regKey1: obj)
+        ([<ExcelArgument(Description= "Reg. key2.")>] regKey2: obj)
+        : obj  =
+
+        match regKey1, regKey2 with
+        | (:? string as regkey1), (:? string as regkey2) -> (regkey1 = regkey2) || (Registry.equal regkey1 regkey2)
+        | _ -> regKey1 = regKey2
+        |> box
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

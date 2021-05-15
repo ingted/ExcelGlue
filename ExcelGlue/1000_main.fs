@@ -1,5 +1,5 @@
 ﻿namespace ExcelGlue
-
+// dummy change to check Git setup.
 open System
 open System.Collections.Generic
 open ExcelDna.Integration

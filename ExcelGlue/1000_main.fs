@@ -254,7 +254,7 @@ module Registry =
         | _                        -> ""
 
 //[<RequireQualifiedAccess>]
-module ToolBox =
+module Useful =
     //open System
 
     module Generics =    
@@ -648,101 +648,181 @@ module API =
                     | :? ExcelMissing -> None
                     | _ -> mapping xlVal
 
+
+            /// Convenience functions to cast default values according to typeLabel or context.
+            module private DefaultValue =
+                let ofType<'a> (typeLabel: string) (defValue: obj option) : 'a = 
+                    match defValue with
+                    | None -> Variant.labelDefVal typeLabel 
+                    | Some dv -> dv
+                    :?> 'a
+
+                let ofOptType<'a> (defValue: obj option) : 'a option = 
+                    match defValue with
+                    | None -> None
+                    | Some o ->
+                        match o with
+                        | :? 'a as a -> Some a
+                        | :? ('a option) as aopt -> aopt
+                        | _ -> None
+
+            type Gen =
+                /// Casts an xl-value to a 'A, with a default-value for when the casting fails.
+                static member def<'A> (defValue: obj option) (typeLabel: string) (xlValue: obj) : 'A = 
+
+                    match typeLabel |> Variant.ofLabel with
+                    | BOOL -> 
+                        let defval = DefaultValue.ofType<'A> typeLabel defValue
+                        def<'A> defval xlValue
+                    | STRING -> 
+                        let defval = DefaultValue.ofType<string> typeLabel defValue
+                        let a0D = Stg.def defval xlValue
+                        box a0D :?> 'A
+                    | DOUBLE -> 
+                        let defval = DefaultValue.ofType<'A> typeLabel defValue
+                        def<'A> defval xlValue
+                    | INT -> 
+                        let defval = DefaultValue.ofType<double> typeLabel defValue |> int
+                        let a0D = Intg.def defval xlValue
+                        box a0D :?> 'A
+                    | DATE -> 
+                        let defval = DateTime.FromOADate(DefaultValue.ofType<double> typeLabel defValue)
+                        let a0D = Dte.def defval xlValue
+                        box a0D :?> 'A
+                    | _ -> failwith "TO BE IMPLEMENTED WITH OTHER VARIANT TYPES" // TODO FIXME
+                    
+                // FIXME this should belong to OUT, not to IN world
+                /// Same as Gen.def, but returns an obj instead of a 'A.
+                static member defObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
+                    let a0D = Gen.def<'A> defValue typeLabel xlValue
+                    Out.cell<'A> replaceValues a0D
+    
+                /// Casts an xl-value to a 'A option, with a default-value for when the casting fails.
+                /// defValue is None, Some 'a or even Some (Some 'a).
+                static member tryDV<'A> (defValue: obj option) (typeLabel: string) (xlValue: obj) : 'A option = 
+                    match typeLabel |> Variant.ofLabel with
+                    | BOOLOPT -> 
+                        let defval : 'A option = DefaultValue.ofOptType<'A> defValue
+                        tryDV<'A> defval xlValue
+                    | STRINGOPT -> 
+                        let defval = DefaultValue.ofOptType<string> defValue
+                        let a0D = Stg.tryDV defval xlValue
+                        box a0D :?> 'A option
+                    | DOUBLEOPT -> 
+                        let defval : 'A option = DefaultValue.ofOptType<'A> defValue
+                        tryDV<'A> defval xlValue
+                    | INTOPT -> 
+                        let defval = DefaultValue.ofOptType<double> defValue |> Option.map (int)
+                        let a0D = Intg.tryDV defval xlValue
+                        box a0D :?> 'A option
+                    | DATEOPT -> 
+                        let defval = DefaultValue.ofOptType<double> defValue |> Option.map (fun d -> DateTime.FromOADate(d))
+                        let a0D = Dte.tryDV defval xlValue
+                        box a0D :?> 'A option
+                    | _ -> failwith "TO BE IMPLEMENTED WITH OTHER VARIANT TYPES" // TODO FIXME
+
+                // FIXME this should belong to OUT, not to IN world
+                /// Same as Gen.tryDV, but returns an obj instead of a 'A.
+                static member tryDVObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
+                    let a0D = Gen.tryDV<'A> defValue typeLabel xlValue
+                    Out.cellOpt<'A> replaceValues a0D
+
+
             [<RequireQualifiedAccess>]
             module Gen = 
-                /// Convenience functions to cast default values according to typeLabel or context.
-                module private DefaultValue =
-                    let ofType<'a> (typeLabel: string) (defValue: obj option) : 'a = 
-                        match defValue with
-                        | None -> Variant.labelDefVal typeLabel 
-                        | Some dv -> dv
-                        :?> 'a
+                ///// Convenience functions to cast default values according to typeLabel or context.
+                //module private DefaultValue =
+                //    let ofType<'a> (typeLabel: string) (defValue: obj option) : 'a = 
+                //        match defValue with
+                //        | None -> Variant.labelDefVal typeLabel 
+                //        | Some dv -> dv
+                //        :?> 'a
 
-                    let ofOptType<'a> (defValue: obj option) : 'a option = 
-                        match defValue with
-                        | None -> None
-                        | Some o ->
-                            match o with
-                            | :? 'a as a -> Some a
-                            | :? ('a option) as aopt -> aopt
-                            | _ -> None
+                //    let ofOptType<'a> (defValue: obj option) : 'a option = 
+                //        match defValue with
+                //        | None -> None
+                //        | Some o ->
+                //            match o with
+                //            | :? 'a as a -> Some a
+                //            | :? ('a option) as aopt -> aopt
+                //            | _ -> None
 
-                type Gen =
-                    /// Casts an xl-value to a 'A, with a default-value for when the casting fails.
-                    static member def<'A> (defValue: obj option) (typeLabel: string) (xlValue: obj) : 'A = 
+                //type Gen =
+                //    /// Casts an xl-value to a 'A, with a default-value for when the casting fails.
+                //    static member def<'A> (defValue: obj option) (typeLabel: string) (xlValue: obj) : 'A = 
 
-                        match typeLabel |> Variant.ofLabel with
-                        | BOOL -> 
-                            // let defval = defValue :?> 'A
-                            let defval = DefaultValue.ofType<'A> typeLabel defValue
-                            def<'A> defval xlValue
-                        | STRING -> 
-                            // let defval = defValue :?> string
-                            let defval = DefaultValue.ofType<string> typeLabel defValue
-                            let a0D = Stg.def defval xlValue
-                            box a0D :?> 'A
-                        | DOUBLE -> 
-                            // let defval = defValue :?> 'A
-                            let defval = DefaultValue.ofType<'A> typeLabel defValue
-                            def<'A> defval xlValue
-                        | INT -> 
-                            // let defval = defValue :?> double
-                            let defval = DefaultValue.ofType<double> typeLabel defValue |> int
-                            let a0D = Intg.def defval xlValue
-                            box a0D :?> 'A
-                        | DATE -> 
-                            // let defval = defValue :?> double
-                            let defval = DateTime.FromOADate(DefaultValue.ofType<double> typeLabel defValue)
-                            let a0D = Dte.def defval xlValue
-                            box a0D :?> 'A
-                        | _ -> failwith "TO BE IMPLEMENTED WITH OTHER VARIANT TYPES" // TODO FIXME
+                //        match typeLabel |> Variant.ofLabel with
+                //        | BOOL -> 
+                //            // let defval = defValue :?> 'A
+                //            let defval = DefaultValue.ofType<'A> typeLabel defValue
+                //            def<'A> defval xlValue
+                //        | STRING -> 
+                //            // let defval = defValue :?> string
+                //            let defval = DefaultValue.ofType<string> typeLabel defValue
+                //            let a0D = Stg.def defval xlValue
+                //            box a0D :?> 'A
+                //        | DOUBLE -> 
+                //            // let defval = defValue :?> 'A
+                //            let defval = DefaultValue.ofType<'A> typeLabel defValue
+                //            def<'A> defval xlValue
+                //        | INT -> 
+                //            // let defval = defValue :?> double
+                //            let defval = DefaultValue.ofType<double> typeLabel defValue |> int
+                //            let a0D = Intg.def defval xlValue
+                //            box a0D :?> 'A
+                //        | DATE -> 
+                //            // let defval = defValue :?> double
+                //            let defval = DateTime.FromOADate(DefaultValue.ofType<double> typeLabel defValue)
+                //            let a0D = Dte.def defval xlValue
+                //            box a0D :?> 'A
+                //        | _ -> failwith "TO BE IMPLEMENTED WITH OTHER VARIANT TYPES" // TODO FIXME
                     
-                    // FIXME this should belong to OUT, not to IN world
-                    /// Same as Gen.def, but returns an obj instead of a 'A.
-                    static member defObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
-                        let a0D = Gen.def<'A> defValue typeLabel xlValue
-                        Out.cell<'A> replaceValues a0D
+                //    // FIXME this should belong to OUT, not to IN world
+                //    /// Same as Gen.def, but returns an obj instead of a 'A.
+                //    static member defObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
+                //        let a0D = Gen.def<'A> defValue typeLabel xlValue
+                //        Out.cell<'A> replaceValues a0D
     
-                    /// Casts an xl-value to a 'A option, with a default-value for when the casting fails.
-                    /// defValue is None, Some 'a or even Some (Some 'a).
-                    static member tryDV<'A> (defValue: obj option) (typeLabel: string) (xlValue: obj) : 'A option = 
-                        match typeLabel |> Variant.ofLabel with
-                        | BOOLOPT -> 
-                            // let defval = defValue :?> 'A option
-                            let defval : 'A option = DefaultValue.ofOptType<'A> defValue
-                            tryDV<'A> defval xlValue
-                        | STRINGOPT -> 
-                            // let defval = defValue :?> string option
-                            let defval = DefaultValue.ofOptType<string> defValue
-                            let a0D = Stg.tryDV defval xlValue
-                            box a0D :?> 'A option
-                        | DOUBLEOPT -> 
-                            // let defval = defValue :?> 'A option
-                            let defval : 'A option = DefaultValue.ofOptType<'A> defValue
-                            tryDV<'A> defval xlValue
-                        | INTOPT -> 
-                            //let defval = defValue :?> double option |> Option.map (int)
-                            let defval = DefaultValue.ofOptType<double> defValue |> Option.map (int)
-                            let a0D = Intg.tryDV defval xlValue
-                            box a0D :?> 'A option
-                        | DATEOPT -> 
-                            // let defval = defValue :?> double option |> Option.map (fun d -> DateTime.FromOADate(d))
-                            let defval = DefaultValue.ofOptType<double> defValue |> Option.map (fun d -> DateTime.FromOADate(d))
-                            let a0D = Dte.tryDV defval xlValue
-                            box a0D :?> 'A option
-                        | _ -> failwith "TO BE IMPLEMENTED WITH OTHER VARIANT TYPES" // TODO FIXME
+                //    /// Casts an xl-value to a 'A option, with a default-value for when the casting fails.
+                //    /// defValue is None, Some 'a or even Some (Some 'a).
+                //    static member tryDV<'A> (defValue: obj option) (typeLabel: string) (xlValue: obj) : 'A option = 
+                //        match typeLabel |> Variant.ofLabel with
+                //        | BOOLOPT -> 
+                //            // let defval = defValue :?> 'A option
+                //            let defval : 'A option = DefaultValue.ofOptType<'A> defValue
+                //            tryDV<'A> defval xlValue
+                //        | STRINGOPT -> 
+                //            // let defval = defValue :?> string option
+                //            let defval = DefaultValue.ofOptType<string> defValue
+                //            let a0D = Stg.tryDV defval xlValue
+                //            box a0D :?> 'A option
+                //        | DOUBLEOPT -> 
+                //            // let defval = defValue :?> 'A option
+                //            let defval : 'A option = DefaultValue.ofOptType<'A> defValue
+                //            tryDV<'A> defval xlValue
+                //        | INTOPT -> 
+                //            //let defval = defValue :?> double option |> Option.map (int)
+                //            let defval = DefaultValue.ofOptType<double> defValue |> Option.map (int)
+                //            let a0D = Intg.tryDV defval xlValue
+                //            box a0D :?> 'A option
+                //        | DATEOPT -> 
+                //            // let defval = defValue :?> double option |> Option.map (fun d -> DateTime.FromOADate(d))
+                //            let defval = DefaultValue.ofOptType<double> defValue |> Option.map (fun d -> DateTime.FromOADate(d))
+                //            let a0D = Dte.tryDV defval xlValue
+                //            box a0D :?> 'A option
+                //        | _ -> failwith "TO BE IMPLEMENTED WITH OTHER VARIANT TYPES" // TODO FIXME
 
-                    // FIXME this should belong to OUT, not to IN world
-                    /// Same as Gen.tryDV, but returns an obj instead of a 'A.
-                    static member tryDVObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
-                        let a0D = Gen.tryDV<'A> defValue typeLabel xlValue
-                        Out.cellOpt<'A> replaceValues a0D
+                //    // FIXME this should belong to OUT, not to IN world
+                //    /// Same as Gen.tryDV, but returns an obj instead of a 'A.
+                //    static member tryDVObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
+                //        let a0D = Gen.tryDV<'A> defValue typeLabel xlValue
+                //        Out.cellOpt<'A> replaceValues a0D
 
-                let private callMethod (methodnm: string) (genType: Type) (args: obj[]) : obj =
-                    let meth = typeof<Gen>.GetMethod(methodnm)
-                    let genm = meth.MakeGenericMethod(genType)
-                    let res  = genm.Invoke(null, args)
-                    res
+                //let private callMethod (methodnm: string) (genType: Type) (args: obj[]) : obj =
+                //    let meth = typeof<Gen>.GetMethod(methodnm)
+                //    let genm = meth.MakeGenericMethod(genType)
+                //    let res  = genm.Invoke(null, args)
+                //    res
 
                 /// Casts an xl-value to a 'A, with a default-value for when the casting fails.
                 /// 'a is determined by typeLabel.
@@ -750,7 +830,8 @@ module API =
                     // let gentype = typeLabel.Replace("#", "") |> Variant.labelType
                     let gentype = typeLabel |> Variant.labelType true
                     let args : obj[] = [| defValue; typeLabel; xlValue |]
-                    let res = callMethod "def" gentype args
+                    // let res = callMethod "def" gentype args
+                    let res = Useful.Generics.apply<Gen> "def" [| gentype |] args
                     res
 
                 // FIXME this should belong to OUT, not to IN world
@@ -758,7 +839,8 @@ module API =
                 let defObj (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
                     let gentype = typeLabel |> Variant.labelType true
                     let args : obj[] = [| replaceValues; defValue; typeLabel; xlValue |]
-                    let res = callMethod "defObj" gentype args
+                    let res = Useful.Generics.apply<Gen> "defObj" [| gentype |] args
+                    // let res = callMethod "defObj" gentype args
                     res
 
                 /// Casts an xl-value to a 'a option, with a default-value for when the casting fails.
@@ -766,7 +848,8 @@ module API =
                 let tryDV (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
                     let gentype = typeLabel |> Variant.labelType true
                     let args : obj[] = [| defValue; typeLabel; xlValue |]
-                    let res = callMethod "tryDV" gentype args
+                    //let res = callMethod "tryDV" gentype args
+                    let res = Useful.Generics.apply<Gen> "tryDV" [| gentype |] args
                     res
 
                 // FIXME this should belong to OUT, not to IN world
@@ -774,7 +857,8 @@ module API =
                 let tryDVObj (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
                     let gentype = typeLabel |> Variant.labelType true
                     let args : obj[] = [| replaceValues; defValue; typeLabel; xlValue |]
-                    let res = callMethod "tryDVObj" gentype args
+                    // let res = callMethod "tryDVObj" gentype args
+                    let res = Useful.Generics.apply<Gen> "tryDVObj" [| gentype |] args
                     res
 
                 // Convenient, single function for def and tryDV according to typeLabel being optional or not.
@@ -784,9 +868,11 @@ module API =
 
                     let res =
                         if typeLabel |> isOptionalType then
-                            callMethod "def" gentype args
+                            // callMethod "def" gentype args
+                            Useful.Generics.apply<Gen> "tryDV" [| gentype |] args
                         else
-                            callMethod "tryDV" gentype args
+                            //callMethod "tryDV" gentype args
+                            Useful.Generics.apply<Gen> "def" [| gentype |] args
                     res
 
                 // FIXME this should belong to OUT, not to IN world
@@ -797,9 +883,11 @@ module API =
 
                     let res =
                         if typeLabel |> isOptionalType then
-                            callMethod "tryDVObj" gentype args
+                            //callMethod "tryDVObj" gentype args
+                            Useful.Generics.apply<Gen> "tryDVObj" [| gentype |] args
                         else
-                            callMethod "defObj" gentype args
+                            // callMethod "defObj" gentype args
+                            Useful.Generics.apply<Gen> "defObj" [| gentype |] args
                     res
 
         /// Obj[] input functions.
@@ -931,139 +1019,228 @@ module API =
                     | None -> convert |> Array.map Option.get |> Some
                     | Some _ -> defValue
     
+            /// Convenience functions to cast default values according to typeLabel or context.
+            module private DefaultValue =
+                let ofType<'a> (typeLabel: string) (defValue: obj option) : 'a = 
+                    match defValue with
+                    | None -> Variant.labelDefVal typeLabel 
+                    | Some dv -> dv
+                    :?> 'a
+
+                let ofOptType<'a> (defValue: obj option) : 'a option = 
+                    match defValue with
+                    | None -> None
+                    | Some o ->
+                        match o with
+                        | :? 'a as a -> Some a
+                        | :? ('a option) as aopt -> aopt
+                        | _ -> None
+
+            type Gen =
+                /// Converts an xl-value to a 'A[], given a typed default-value for elements which can't be cast to 'A.
+                static member def<'A> (rowWiseDef: bool option) (defValue: obj option) (typeLabel: string) (xlValue: obj) : 'A[] = 
+                    let o1D = D0.to1D (rowWiseDef |> Option.defaultValue false) xlValue
+
+                    match typeLabel |> Variant.ofLabel with
+                    | BOOL -> 
+                        let defval = DefaultValue.ofType<'A> typeLabel defValue
+                        def<'A> defval o1D
+                    | STRING -> 
+                        let defval = DefaultValue.ofType<string> typeLabel defValue
+                        let a1D = Stg.def defval o1D
+                        a1D |> Array.map (fun x -> (box x) :?> 'A)
+                    | DOUBLE -> 
+                        let defval = DefaultValue.ofType<'A> typeLabel defValue
+                        def<'A> defval o1D
+                    | INT -> 
+                        let defval = DefaultValue.ofType<double> typeLabel defValue |> int
+                        let a1D = Intg.def defval o1D
+                        a1D |> Array.map (fun x -> (box x) :?> 'A)
+                    | DATE -> 
+                        let defval = DateTime.FromOADate(DefaultValue.ofType<double> typeLabel defValue)
+                        let a1D = Dte.def defval o1D
+                        a1D |> Array.map (fun x -> (box x) :?> 'A)
+                    | _ -> [||]
+        
+                /// Same as Gen.def, but returns an obj[] instead of a 'a[].
+                static member defObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj[] = 
+                    let a1D = Gen.def<'A> rowWiseDef defValue typeLabel xlValue
+                    Out.range<'A> replaceValues a1D
+    
+                /// Converts an xl-value to a ('A option)[], given an optional default-value for elements which can't be cast to 'A.
+                static member defOpt<'A> (rowWiseDef: bool option) (defValue: obj option) (typeLabel: string) (xlValue: obj) : ('A option)[] = 
+                    let o1D = D0.to1D (rowWiseDef |> Option.defaultValue false) xlValue
+
+                    match typeLabel |> Variant.ofLabel with
+                    | BOOLOPT -> 
+                        let defval : 'A option = DefaultValue.ofOptType<'A> defValue
+                        defOpt<'A> defval o1D
+                    | STRINGOPT -> 
+                        let defval = DefaultValue.ofOptType<string> defValue
+                        let a1D = Stg.defOpt defval o1D
+                        a1D |> Array.map (fun x -> (box x) :?> 'A option)
+                    | DOUBLEOPT -> 
+                        let defval : 'A option = DefaultValue.ofOptType<'A> defValue
+                        defOpt<'A> defval o1D
+                    | INTOPT -> 
+                        let defval = DefaultValue.ofOptType<double> defValue |> Option.map (int)
+                        let a1D = Intg.defOpt defval o1D
+                        a1D |> Array.map (fun x -> (box x) :?> 'A option)
+                    | DATEOPT -> 
+                        let defval = DefaultValue.ofOptType<double> defValue |> Option.map (fun d -> DateTime.FromOADate(d))
+                        let a1D = Dte.defOpt defval o1D
+                        a1D |> Array.map (fun x -> (box x) :?> 'A option)
+                    | _ -> [||]
+                
+                // FIXME this belongs to OUT
+                static member defOptObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj[] = 
+                    let a1D = Gen.defOpt<'A> rowWiseDef defValue typeLabel xlValue
+                    Out.rangeOpt<'A> replaceValues a1D
+
+                static member filter<'A> (rowWiseDef: bool option) (typeLabel: string) (xlValue: obj) : 'A[] = 
+                    let o1D = D0.to1D (rowWiseDef |> Option.defaultValue false) xlValue
+
+                    match typeLabel |> Variant.ofLabel with
+                    | BOOL -> filter<'A> o1D
+                    | STRING -> 
+                        let a1D = Stg.filter o1D
+                        a1D |> Array.map (fun x -> (box x) :?> 'A)
+                    | DOUBLE -> filter<'A> o1D
+                    | INT -> 
+                        let a1D = Intg.filter o1D
+                        a1D |> Array.map (fun x -> (box x) :?> 'A)
+                    | DATE -> 
+                        let a1D = Dte.filter o1D
+                        a1D |> Array.map (fun x -> (box x) :?> 'A)
+                    | _ -> [||]
+
+                /// Same as Gen.filter, but returns an obj[] instead of a 'a[].
+                static member filterObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (typeLabel: string) (xlValue: obj) : obj[] = 
+                    let a1D = Gen.filter<'A> rowWiseDef typeLabel xlValue
+                    Out.range<'A> replaceValues a1D
+
             [<RequireQualifiedAccess>]
             module Gen =
-                /// Convenience functions to cast default values according to typeLabel or context.
-                module private DefaultValue =
-                    let ofType<'a> (typeLabel: string) (defValue: obj option) : 'a = 
-                        match defValue with
-                        | None -> Variant.labelDefVal typeLabel 
-                        | Some dv -> dv
-                        :?> 'a
+                ///// Convenience functions to cast default values according to typeLabel or context.
+                //module private DefaultValue =
+                //    let ofType<'a> (typeLabel: string) (defValue: obj option) : 'a = 
+                //        match defValue with
+                //        | None -> Variant.labelDefVal typeLabel 
+                //        | Some dv -> dv
+                //        :?> 'a
 
-                    let ofOptType<'a> (defValue: obj option) : 'a option = 
-                        match defValue with
-                        | None -> None
-                        | Some o ->
-                            match o with
-                            | :? 'a as a -> Some a
-                            | :? ('a option) as aopt -> aopt
-                            | _ -> None
+                //    let ofOptType<'a> (defValue: obj option) : 'a option = 
+                //        match defValue with
+                //        | None -> None
+                //        | Some o ->
+                //            match o with
+                //            | :? 'a as a -> Some a
+                //            | :? ('a option) as aopt -> aopt
+                //            | _ -> None
 
-                type Gen =
-                    /// Converts an xl-value to a 'A[], given a typed default-value for elements which can't be cast to 'A.
-                    static member def<'A> (rowWiseDef: bool option) (defValue: obj option) (typeLabel: string) (xlValue: obj) : 'A[] = 
-                        let o1D = D0.to1D (rowWiseDef |> Option.defaultValue false) xlValue
+                //type Gen =
+                //    /// Converts an xl-value to a 'A[], given a typed default-value for elements which can't be cast to 'A.
+                //    static member def<'A> (rowWiseDef: bool option) (defValue: obj option) (typeLabel: string) (xlValue: obj) : 'A[] = 
+                //        let o1D = D0.to1D (rowWiseDef |> Option.defaultValue false) xlValue
 
-                        match typeLabel |> Variant.ofLabel with
-                        | BOOL -> 
-                            // let defval = (match defValue with | None -> Variant.labelDefVal typeLabel | Some o -> o) :?> 'A
-                            let defval = DefaultValue.ofType<'A> typeLabel defValue
-                            def<'A> defval o1D
-                        | STRING -> 
-                            //let defval = defValue :?> string
-                            // let defval = (match defValue with | None -> Variant.labelDefVal typeLabel | Some o -> o) :?> string
-                            let defval = DefaultValue.ofType<string> typeLabel defValue
-                            let a1D = Stg.def defval o1D
-                            a1D |> Array.map (fun x -> (box x) :?> 'A)
-                        | DOUBLE -> 
-                            // let defval = (match defValue with | None -> Variant.labelDefVal typeLabel | Some o -> o) :?> 'A
-                            let defval = DefaultValue.ofType<'A> typeLabel defValue
-                            def<'A> defval o1D
-                        | INT -> 
-                            // let defval = defValue :?> double
-                            // let defval = (match defValue with | None -> Variant.labelDefVal typeLabel | Some o -> o) :?> double
-                            let defval = DefaultValue.ofType<double> typeLabel defValue |> int
-                            let a1D = Intg.def defval o1D
-                            a1D |> Array.map (fun x -> (box x) :?> 'A)
-                        | DATE -> 
-                            //let defval = defValue :?> double
-                            // let defval = (match defValue with | None -> Variant.labelDefVal typeLabel | Some o -> o) :?> double
-                            let defval = DateTime.FromOADate(DefaultValue.ofType<double> typeLabel defValue)
-                            let a1D = Dte.def defval o1D
-                            a1D |> Array.map (fun x -> (box x) :?> 'A)
-                        | _ -> [||]
+                //        match typeLabel |> Variant.ofLabel with
+                //        | BOOL -> 
+                //            let defval = DefaultValue.ofType<'A> typeLabel defValue
+                //            def<'A> defval o1D
+                //        | STRING -> 
+                //            let defval = DefaultValue.ofType<string> typeLabel defValue
+                //            let a1D = Stg.def defval o1D
+                //            a1D |> Array.map (fun x -> (box x) :?> 'A)
+                //        | DOUBLE -> 
+                //            let defval = DefaultValue.ofType<'A> typeLabel defValue
+                //            def<'A> defval o1D
+                //        | INT -> 
+                //            let defval = DefaultValue.ofType<double> typeLabel defValue |> int
+                //            let a1D = Intg.def defval o1D
+                //            a1D |> Array.map (fun x -> (box x) :?> 'A)
+                //        | DATE -> 
+                //            let defval = DateTime.FromOADate(DefaultValue.ofType<double> typeLabel defValue)
+                //            let a1D = Dte.def defval o1D
+                //            a1D |> Array.map (fun x -> (box x) :?> 'A)
+                //        | _ -> [||]
         
-                    /// Same as Gen.def, but returns an obj[] instead of a 'a[].
-                    static member defObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj[] = 
-                        let a1D = Gen.def<'A> rowWiseDef defValue typeLabel xlValue
-                        Out.range<'A> replaceValues a1D
+                //    /// Same as Gen.def, but returns an obj[] instead of a 'a[].
+                //    static member defObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj[] = 
+                //        let a1D = Gen.def<'A> rowWiseDef defValue typeLabel xlValue
+                //        Out.range<'A> replaceValues a1D
     
-                    /// Converts an xl-value to a ('A option)[], given an optional default-value for elements which can't be cast to 'A.
-                    static member defOpt<'A> (rowWiseDef: bool option) (defValue: obj option) (typeLabel: string) (xlValue: obj) : ('A option)[] = 
-                        let o1D = D0.to1D (rowWiseDef |> Option.defaultValue false) xlValue
+                //    /// Converts an xl-value to a ('A option)[], given an optional default-value for elements which can't be cast to 'A.
+                //    static member defOpt<'A> (rowWiseDef: bool option) (defValue: obj option) (typeLabel: string) (xlValue: obj) : ('A option)[] = 
+                //        let o1D = D0.to1D (rowWiseDef |> Option.defaultValue false) xlValue
 
-                        match typeLabel |> Variant.ofLabel with
-                        | BOOLOPT -> 
-                            //let defval : 'A option = match defValue with | None -> None | Some o -> match o with | :? 'A as a -> Some a | :? ('A option) as aopt -> aopt | _ -> None
-                            let defval : 'A option = DefaultValue.ofOptType<'A> defValue
-                            defOpt<'A> defval o1D
-                        | STRINGOPT -> 
-                            // let defval = defValue :?> string option
-                            let defval = DefaultValue.ofOptType<string> defValue
-                            let a1D = Stg.defOpt defval o1D
-                            a1D |> Array.map (fun x -> (box x) :?> 'A option)
-                        | DOUBLEOPT -> 
-                            // let defval = defValue :?> 'A option
-                            let defval : 'A option = DefaultValue.ofOptType<'A> defValue
-                            defOpt<'A> defval o1D
-                        | INTOPT -> 
-                            // let defval = defValue :?> double option |> Option.map (int)
-                            let defval = DefaultValue.ofOptType<double> defValue |> Option.map (int)
-                            let a1D = Intg.defOpt defval o1D
-                            a1D |> Array.map (fun x -> (box x) :?> 'A option)
-                        | DATEOPT -> 
-                            // let defval = defValue :?> double option |> Option.map (fun d -> DateTime.FromOADate(d))
-                            let defval = DefaultValue.ofOptType<double> defValue |> Option.map (fun d -> DateTime.FromOADate(d))
-                            let a1D = Dte.defOpt defval o1D
-                            a1D |> Array.map (fun x -> (box x) :?> 'A option)
-                        | _ -> [||]
+                //        match typeLabel |> Variant.ofLabel with
+                //        | BOOLOPT -> 
+                //            let defval : 'A option = DefaultValue.ofOptType<'A> defValue
+                //            defOpt<'A> defval o1D
+                //        | STRINGOPT -> 
+                //            let defval = DefaultValue.ofOptType<string> defValue
+                //            let a1D = Stg.defOpt defval o1D
+                //            a1D |> Array.map (fun x -> (box x) :?> 'A option)
+                //        | DOUBLEOPT -> 
+                //            let defval : 'A option = DefaultValue.ofOptType<'A> defValue
+                //            defOpt<'A> defval o1D
+                //        | INTOPT -> 
+                //            let defval = DefaultValue.ofOptType<double> defValue |> Option.map (int)
+                //            let a1D = Intg.defOpt defval o1D
+                //            a1D |> Array.map (fun x -> (box x) :?> 'A option)
+                //        | DATEOPT -> 
+                //            let defval = DefaultValue.ofOptType<double> defValue |> Option.map (fun d -> DateTime.FromOADate(d))
+                //            let a1D = Dte.defOpt defval o1D
+                //            a1D |> Array.map (fun x -> (box x) :?> 'A option)
+                //        | _ -> [||]
 
-                    static member defOptObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj[] = 
-                        let a1D = Gen.defOpt<'A> rowWiseDef defValue typeLabel xlValue
-                        Out.rangeOpt<'A> replaceValues a1D
+                //    static member defOptObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj[] = 
+                //        let a1D = Gen.defOpt<'A> rowWiseDef defValue typeLabel xlValue
+                //        Out.rangeOpt<'A> replaceValues a1D
 
-                    static member filter<'A> (rowWiseDef: bool option) (typeLabel: string) (xlValue: obj) : 'A[] = 
-                        let o1D = D0.to1D (rowWiseDef |> Option.defaultValue false) xlValue
+                //    static member filter<'A> (rowWiseDef: bool option) (typeLabel: string) (xlValue: obj) : 'A[] = 
+                //        let o1D = D0.to1D (rowWiseDef |> Option.defaultValue false) xlValue
 
-                        match typeLabel |> Variant.ofLabel with
-                        | BOOL -> filter<'A> o1D
-                        | STRING -> 
-                            let a1D = Stg.filter o1D
-                            a1D |> Array.map (fun x -> (box x) :?> 'A)
-                        | DOUBLE -> filter<'A> o1D
-                        | INT -> 
-                            let a1D = Intg.filter o1D
-                            a1D |> Array.map (fun x -> (box x) :?> 'A)
-                        | DATE -> 
-                            let a1D = Dte.filter o1D
-                            a1D |> Array.map (fun x -> (box x) :?> 'A)
-                        | _ -> [||]
+                //        match typeLabel |> Variant.ofLabel with
+                //        | BOOL -> filter<'A> o1D
+                //        | STRING -> 
+                //            let a1D = Stg.filter o1D
+                //            a1D |> Array.map (fun x -> (box x) :?> 'A)
+                //        | DOUBLE -> filter<'A> o1D
+                //        | INT -> 
+                //            let a1D = Intg.filter o1D
+                //            a1D |> Array.map (fun x -> (box x) :?> 'A)
+                //        | DATE -> 
+                //            let a1D = Dte.filter o1D
+                //            a1D |> Array.map (fun x -> (box x) :?> 'A)
+                //        | _ -> [||]
 
-                    /// Same as Gen.filter, but returns an obj[] instead of a 'a[].
-                    static member filterObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (typeLabel: string) (xlValue: obj) : obj[] = 
-                        let a1D = Gen.filter<'A> rowWiseDef typeLabel xlValue
-                        Out.range<'A> replaceValues a1D
+                //    /// Same as Gen.filter, but returns an obj[] instead of a 'a[].
+                //    static member filterObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (typeLabel: string) (xlValue: obj) : obj[] = 
+                //        let a1D = Gen.filter<'A> rowWiseDef typeLabel xlValue
+                //        Out.range<'A> replaceValues a1D
 
-                let private callMethod (methodnm: string) (genType: Type) (args: obj[]) : obj =
-                    let meth = typeof<Gen>.GetMethod(methodnm)
-                    let genm = meth.MakeGenericMethod(genType)
-                    let res  = genm.Invoke(null, args)
-                    res
+                //let private callMethod (methodnm: string) (genType: Type) (args: obj[]) : obj =
+                //    let meth = typeof<Gen>.GetMethod(methodnm)
+                //    let genm = meth.MakeGenericMethod(genType)
+                //    let res  = genm.Invoke(null, args)
+                //    res
 
                 /// Converts an xl-value to a 'a[], given a typed default-value for elements which can't be cast to 'a.
                 /// 'a is determined by typeLabel.
                 let def (rowWiseDef: bool option) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
                     let gentype = typeLabel |> Variant.labelType true
                     let args : obj[] = [| rowWiseDef; defValue; typeLabel; xlValue |]
-                    let res = callMethod "def" gentype args
+                    //let res = callMethod "def" gentype args
+                    let res = Useful.Generics.apply<Gen> "def" [| gentype |] args
                     res
 
                 /// Same as def but returns a obj[], rather than a (boxed) 'a[].
                 let defObj (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj[] = 
                     let gentype = typeLabel |> Variant.labelType true
                     let args : obj[] = [| rowWiseDef; replaceValues; defValue; typeLabel; xlValue |]
-                    let res = callMethod "defObj" gentype args
+                    // let res = callMethod "defObj" gentype args
+                    let res = Useful.Generics.apply<Gen> "defObj" [| gentype |] args
                     res :?> obj[]
 
                 /// Converts an xl-value to a ('a option)[], given an optional default-value for elements which can't be cast to 'a.
@@ -1071,14 +1248,16 @@ module API =
                 let defOpt (rowWiseDef: bool option) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
                     let gentype = typeLabel |> Variant.labelType true
                     let args : obj[] = [| rowWiseDef; defValue; typeLabel; xlValue |]
-                    let res = callMethod "defOpt" gentype args
+                    //let res = callMethod "defOpt" gentype args
+                    let res = Useful.Generics.apply<Gen> "defOpt" [| gentype |] args
                     res
 
                 /// Same as defOptObj but returns a obj[], rather than a (boxed) ('a option)[].
                 let defOptObj (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj[] = 
                     let gentype = typeLabel |> Variant.labelType true
                     let args : obj[] = [| rowWiseDef; replaceValues; defValue; typeLabel; xlValue |]
-                    let res = callMethod "defOptObj" gentype args
+                    //let res = callMethod "defOptObj" gentype args
+                    let res = Useful.Generics.apply<Gen> "defOptObj" [| gentype |] args
                     res :?> obj[]
 
                 // Convenient, single function for def and defOpt.
@@ -1088,9 +1267,11 @@ module API =
 
                     let res =
                         if typeLabel |> isOptionalType then
-                            callMethod "def" gentype args
+                            // callMethod "def" gentype args
+                            Useful.Generics.apply<Gen> "defOpt" [| gentype |] args
                         else
-                            callMethod "defOpt" gentype args
+                            //callMethod "defOpt" gentype args
+                            Useful.Generics.apply<Gen> "def" [| gentype |] args
                     res
 
                 /// Same as defOptObj but returns a obj[], rather than a (boxed) ('a option)[].
@@ -1100,21 +1281,25 @@ module API =
 
                     let res =
                         if typeLabel |> isOptionalType then
-                            callMethod "defOptObj" gentype args
+                            // callMethod "defOptObj" gentype args
+                            Useful.Generics.apply<Gen> "defOptObj" [| gentype |] args
                         else
-                            callMethod "defObj" gentype args
+                            //callMethod "defObj" gentype args
+                            Useful.Generics.apply<Gen> "defObj" [| gentype |] args
                     res :?> obj[]
 
                 let filter (rowWiseDef: bool option) (typeLabel: string) (xlValue: obj) : obj = 
                     let gentype = typeLabel |> Variant.labelType false
                     let args : obj[] = [| rowWiseDef; typeLabel; xlValue |]
-                    let res = callMethod "filter" gentype args
+                    //let res = callMethod "filter" gentype args
+                    let res = Useful.Generics.apply<Gen> "filter" [| gentype |] args
                     res
 
                 let filterObj (rowWiseDef: bool option) (replaceValues: ReplaceValues) (typeLabel: string) (xlValue: obj) : obj[] = 
                     let gentype = typeLabel |> Variant.labelType false
                     let args : obj[] = [| rowWiseDef; replaceValues; typeLabel; xlValue |]
-                    let res = callMethod "filterObj" gentype args
+                    //let res = callMethod "filterObj" gentype args
+                    let res = Useful.Generics.apply<Gen> "filterObj" [| gentype |] args
                     res :?> obj[]
 
 
@@ -1419,8 +1604,8 @@ module A1D_XL =
 
 /// Simple template
 module Mtrx =
-    open ToolBox.Generics
-
+    open Useful.Generics
+    open API
     // some typed creation functions
     let create0D<'a> (size: int) (a0D: 'a) : MTRX<'a> = Array2D.create size size a0D
     let create1D<'a> (size: int) (a1D: 'a[]) = [| for i in 0 .. (size - 1) -> a1D |] |> array2D
@@ -1428,11 +1613,11 @@ module Mtrx =
     // reflection functions
     type Gen =
         member this.mtrx0D<'A> (defValue: obj option) (typeLabel: string) (size: int) (xlValue: obj) : MTRX<'A> =
-            let a0D = API.In.D0.Gen.Gen.def defValue typeLabel xlValue
+            let a0D = In.D0.Gen.def defValue typeLabel xlValue
             a0D |> create0D size
 
-        member this.mtrx1D<'A> (rowWiseDef: bool option) (defValue: obj option) (typeLabel: string) (size: int) (xlValue: obj) : MTRX<'A> =
-            let a1D = API.In.D1.Gen.Gen.def rowWiseDef defValue typeLabel xlValue
+        member this.mtrx1D<'A> (defValue: obj option) (typeLabel: string) (size: int) (xlValue: obj) : MTRX<'A> =
+            let a1D = In.D1.Gen.def None defValue typeLabel xlValue
             a1D |> create1D size
 
     // xl-values functions
@@ -1446,9 +1631,9 @@ module Mtrx =
 
     /// FIXME
     /// 'a is determined by typeLabel.
-    let mtrx1D (rowWiseDef: bool) (defValue: obj) (typeLabel: string) (xlValue: obj) : obj = 
+    let mtrx1D (defValue: obj) (typeLabel: string) (xlValue: obj) : obj = 
         let gentype = typeLabel |> Variant.labelType true
-        let args : obj[] = [| rowWiseDef; defValue; typeLabel; xlValue |]
+        let args : obj[] = [| defValue; typeLabel; xlValue |]
         let res = apply<Gen> "mtrx1D" [| gentype |] args
         res
 
@@ -1588,7 +1773,7 @@ module Registry_XL =
         let tostringstyle = Bool.def false toStringStyle
 
         // result
-        MRegistry.tryType regKey |> Option.map (ToolBox.Type.pPrint tostringstyle) |> outNA
+        MRegistry.tryType regKey |> Option.map (Useful.Type.pPrint tostringstyle) |> outNA
 
     [<ExcelFunction(Category="Registry", Description="Equality of registry objects.")>]
     let rg_eq

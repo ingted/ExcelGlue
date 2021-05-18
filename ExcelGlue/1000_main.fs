@@ -127,10 +127,23 @@ type Registry() =
         | :? 'a as v -> Some v
         | _ -> None
 
+    member this.tryExtract1D (xlValue: string) : (Type*obj) option = 
+        match this.tryFind xlValue with
+        | None -> None
+        | Some regObj ->
+            let ty = regObj.GetType()
+
+            if not ty.IsArray then
+                None
+            else
+                let genty = ty.GetElementType()
+                (genty, regObj) 
+                |> Some
+
     // https://docs.microsoft.com/en-us/dotnet/framework/reflection-and-codedom/how-to-examine-and-instantiate-generic-types-with-reflection
     // https://docs.microsoft.com/en-us/dotnet/api/system.type.getgenerictypedefinition?view=net-5.0
     /// targetGenType is the expected generic type, e.g. targetGenType: typeof<GenMTRX<_>>
-    member this.tryExtractOfTargetType' (targetGenType: Type) (xlValue: string) : obj option = 
+    member this.tryExtractGen' (targetGenType: Type) (xlValue: string) : obj option = 
         if not targetGenType.IsGenericType then
             None
         else
@@ -146,10 +159,10 @@ type Registry() =
                 else
                     None
 
-    /// Same as tryExtractOfTargetType, but also return the generic types array.
+    /// Same as tryExtractGen, but also return the generic types array.
     /// targetGenType is the expected generic type, e.g. targetGenType: typeof<GenMTRX<_>>
-    member this.tryExtractOfTargetType (targetType: Type) (xlValue: string) : ((Type[])*obj) option =
-        this.tryExtractOfTargetType' targetType xlValue
+    member this.tryExtractGen (targetType: Type) (xlValue: string) : ((Type[])*obj) option =
+        this.tryExtractGen' targetType xlValue
         |> Option.map (fun o -> ((o.GetType().GetGenericArguments()), o))
 
     // -----------------------------------
@@ -293,29 +306,41 @@ module Useful =
     module Option =   
         /// NONE should always precede SOME in active patterns.
         let (|SOME|_|) : obj -> obj option =
-            let ty = typedefof<option<_>>
+            let tyOpt = typedefof<option<_>>
             fun (a:obj) ->
                 let aty = a.GetType()
                 let v = aty.GetProperty("Value")
-                if aty.IsGenericType && aty.GetGenericTypeDefinition() = ty then
+                if aty.IsGenericType && aty.GetGenericTypeDefinition() = tyOpt then
                     if a = null then None else Some(v.GetValue(a, [| |]))
                 else None
 
         /// NONE should always precede SOME in active patterns.
         let (|NONE|_|) : obj -> obj option =
-          fun (a:obj) -> if a = null then Some (box "xxx") else None
+          fun (a:obj) -> if a = null then Some (box "None detected here") else None
 
         let unbox (o: obj) : obj option =   
             match o with    
             | NONE(_) -> None  // NONE first
             | SOME(x) -> Some x // SOME second
-            | _ -> failwith "Invalid type."
-
+            | _ -> failwith "Not an optional type."
+        
+        /// Returns none for None values, or map non-optional and Some values.
+        /// Useful for mapping optional and non-optional values alike back to Excel.
         let map (none: obj) (mapping: obj -> obj) (o: obj) : obj =   
             match o with    
             | NONE(_) -> none
             | SOME(x) -> mapping x
             | _ -> mapping o
+        
+        /// Returns the underlying value's type for an optional type.
+        /// I.e. typeof<int option> returns typeof<int> |> Some.
+        /// None otherwise.
+        let uType (aType: Type) : Type option =
+            let tyOpt = typedefof<option<_>>
+            if aType.IsGenericType && aType.GetGenericTypeDefinition() = tyOpt then
+                aType.GenericTypeArguments |> Array.head |> Some
+            else
+                None
 
     module Generics =    
         let invoke<'gen> (methodName: string) (methodTypes: Type[]) (methodArguments: obj[]) : obj =
@@ -329,7 +354,25 @@ module Useful =
             invoke<'gen> methodName gentys ([| otherArgumentsLeft; [| robj |];  otherArgumentsRight |] |> Array.concat)
 
     [<RequireQualifiedAccess>]
-    module Type =    
+    module Type =
+        /// Determines whether an object is of an (extended) primitive type.
+        let isPrimitive' (includeObject: bool) (o: obj) : bool =
+            (includeObject && (o.GetType().Name = "Object")) ||
+            match o with
+            | :? double -> true
+            | :? string -> true
+            | :? DateTime -> true
+            | :? int -> true
+            | :? bool -> true
+            | :? Decimal -> true
+            | :? Byte -> true
+            | _ -> false
+
+        /// Same as isPrimitive' but via a Type argument.
+        let isPrimitive (includeObject: bool) (aType: Type) =
+            (includeObject && (aType.Name = "Object")) ||
+            (aType.Name = "String") || (aType.Name = "DateTime") || (aType.Name = "Byte") || (aType.Name = "Decimal")
+
         let pPrint (toStringStyle: bool) (someType: Type) : string =             
             let s = if toStringStyle then someType.ToString() else sprintf "%A" someType
             let pp = s.Replace(someType.Namespace + ".","").Replace("System.", "")
@@ -981,7 +1024,7 @@ module API =
                     | _ -> [||]
 
             [<RequireQualifiedAccess>]
-            module Gen =
+            module GenM =
 
                 /// Converts an xl-value to a 'a[], given a typed default-value for elements which can't be cast to 'a.
                 /// 'a is determined by typeLabel.
@@ -1044,18 +1087,17 @@ module API =
         [<RequireQualifiedAccess>]
         /// Outputs primitive types.
         module Prm = 
+            /// Returns sensible Excel values for primitive types.
             let out (replaceValues: ReplaceValues) (o0D: obj) : obj =
                 match o0D with
-                | :? bool as b -> box b
-                | :? string as s -> box s
                 | :? double as d -> Dbl.out replaceValues d
-                | :? int as i -> box i
-                | :? DateTime as dte -> box dte // box (dte.ToOADate())
-                | :? ExcelError as e -> box e
-                | _ -> box "YOU SHOULD NOT SEE THAT!!!"
+                | _ -> o0D
 
             [<RequireQualifiedAccess>]
-            /// Outputs optional and non-optional primitive types
+            /// Outputs optional and non-optional primitive types.
+            /// option on primitive types will return as follow : 
+            ///    - None will return replaceValues.none
+            ///    - Some x will return (Prm.out x)
             module Opt = 
                 let out (replaceValues: ReplaceValues) (o0D: obj) : obj =
                     o0D |> Useful.Option.map replaceValues.none (out replaceValues)
@@ -1063,12 +1105,20 @@ module API =
         [<RequireQualifiedAccess>]
         /// Outputs primitives types directly to Excel, but stores non-primitive types in the Registry.
         module Reg = 
-            let out (refKey: String) (replaceValues: ReplaceValues) (o0D: obj) : obj =
-                o0D |> Useful.Option.map replaceValues.none (Prm.Opt.out replaceValues) // TODO : do we want to see all as regobj or a mixed of R-obj, "none"s or variants
+            /// Output to Excel:
+                ///    - Primitives-type: Returns values directly to Excel.
+                ///    - R-object : Returns a Registry keys and stores values in the Registry.
+            let out<'a> (refKey: String) (replaceValues: ReplaceValues) (o0D: obj) : obj =
+                let ty = typeof<'a> |> Useful.Option.uType |> Option.defaultValue typeof<'a>
+                
+                if ty |> Useful.Type.isPrimitive true then
+                    o0D |> Useful.Option.map replaceValues.none (Prm.Opt.out replaceValues)
+                else    
+                    o0D |> Useful.Option.map replaceValues.none (Registry.MRegistry.append refKey >> box)
 
         /// Returns an xl-Value from a typed value. 
         /// NaN elements are converted according to replaceValues.
-        let cell<'a> (replaceValues: ReplaceValues) (a0D: 'a) : obj =
+        let cellTBD<'a> (replaceValues: ReplaceValues) (a0D: 'a) : obj =
             let xlval = box a0D
             if typeof<'a> = typeof<double> then
                 if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval
@@ -1078,10 +1128,10 @@ module API =
         /// Returns an xl-Value from a typed value. 
         /// None and NaN elements are converted according to replaceValues.
         /// Some 'a elements will be output as would 'a.
-        let cellOpt<'a> (replaceValues: ReplaceValues) (a0D: 'a option) : obj =
+        let cellOptTBD<'a> (replaceValues: ReplaceValues) (a0D: 'a option) : obj =
             match a0D with
             | None -> replaceValues.none
-            | Some a0d -> cell<'a> replaceValues a0d
+            | Some a0d -> cellTBD<'a> replaceValues a0d
 
         /// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
         /// NaN elements are converted according to replaceValues.
@@ -1113,35 +1163,60 @@ module API =
 
         /// Obj input functions.
         module D0 =
-            type Gen =                    
-                // FIXME this should belong to OUT, not to IN world
+            [<RequireQualifiedAccess>]
+            module Dbl =
+                let out (replaceValues: ReplaceValues) (d: double) : obj =
+                    if Double.IsNaN(d) then
+                        replaceValues.nan
+                    else    
+                        d |> box
+        
+            [<RequireQualifiedAccess>]
+            /// Outputs primitive types.
+            module Prm = 
+                /// Returns sensible Excel values for primitive types.
+                let out (replaceValues: ReplaceValues) (o0D: obj) : obj =
+                    match o0D with
+                    | :? double as d -> Dbl.out replaceValues d
+                    | _ -> o0D
+
+                [<RequireQualifiedAccess>]
+                /// Outputs optional and non-optional primitive types.
+                /// option on primitive types will return as follow : 
+                ///    - None will return replaceValues.none
+                ///    - Some x will return (Prm.out x)
+                module Opt = 
+                    let out (replaceValues: ReplaceValues) (o0D: obj) : obj =
+                        o0D |> Useful.Option.map replaceValues.none (out replaceValues)
+
+            type GenFn =                    
                 /// Same as In.D0.Gen.def, but returns an obj instead of a 'A.
                 static member defObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
                     let a0D = In.D0.Gen.def<'A> defValue typeLabel xlValue
-                    cell<'A> replaceValues a0D
+                    Prm.out replaceValues (box a0D)
 
-                // FIXME this should belong to OUT, not to IN world
                 /// Same as In.D0.Gen.tryDV, but returns an obj instead of a 'A.
                 static member tryDVObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
                     let a0D = In.D0.Gen.tryDV<'A> defValue typeLabel xlValue
-                    cellOpt<'A> replaceValues a0D
+                    // cellOpt<'A> replaceValues a0D
+                    Prm.Opt.out replaceValues a0D
 
             [<RequireQualifiedAccess>]
-            module GenM = 
+            module Gen = 
                 /// Same as In.D0.Gen.def, but returns an obj instead of a 'a.
                 // TODO: for OUT there might not be a need for defValue (?)
                 // TODO: xlValue for OUT?!?
                 let defObj (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
                     let gentype = typeLabel |> Variant.labelType true
                     let args : obj[] = [| replaceValues; defValue; typeLabel; xlValue |]
-                    let res = Useful.Generics.invoke<Gen> "defObj" [| gentype |] args
+                    let res = Useful.Generics.invoke<GenFn> "defObj" [| gentype |] args
                     res
 
                 /// Same as In.D0.Gen.tryDV, but returns an obj instead of a 'a.
                 let tryDVObj (replaceValues: ReplaceValues) (defValue: obj option) (typeLabel: string) (xlValue: obj) : obj = 
                     let gentype = typeLabel |> Variant.labelType true
                     let args : obj[] = [| replaceValues; defValue; typeLabel; xlValue |]
-                    let res = Useful.Generics.invoke<Gen> "tryDVObj" [| gentype |] args
+                    let res = Useful.Generics.invoke<GenFn> "tryDVObj" [| gentype |] args
                     res
 
                 /// Same as In.D0.Gen.defAllCases but returns a obj instead of 'a.
@@ -1151,15 +1226,34 @@ module API =
 
                     let res =
                         if typeLabel |> isOptionalType then
-                            Useful.Generics.invoke<Gen> "tryDVObj" [| gentype |] args
+                            Useful.Generics.invoke<GenFn> "tryDVObj" [| gentype |] args
                         else
-                            Useful.Generics.invoke<Gen> "defObj" [| gentype |] args
+                            Useful.Generics.invoke<GenFn> "defObj" [| gentype |] args
                     res
 
-            module Obj =
-                let cell (o0D: obj) : obj =
-                    match a0D with
-                    | :? double as d -> box 1
+            [<RequireQualifiedAccess>]
+            /// Outputs primitives types directly to Excel, but stores non-primitive types in the Registry.
+            module Reg = 
+                /// Output to Excel:
+                    ///    - Primitives-type: Returns values directly to Excel.
+                    ///    - R-object : Returns a Registry keys and stores values in the Registry.
+                let out<'a> (refKey: String) (replaceValues: ReplaceValues) (o0D: obj) : obj =
+                    let ty = typeof<'a> |> Useful.Option.uType |> Option.defaultValue typeof<'a>
+                
+                    if ty |> Useful.Type.isPrimitive true then
+                        o0D |> Useful.Option.map replaceValues.none (Prm.Opt.out replaceValues)
+                    else    
+                        o0D |> Useful.Option.map replaceValues.none (Registry.MRegistry.append refKey >> box)
+
+
+
+            //[<RequireQualifiedAccess>]
+            //module Reg = 
+            //    /// Output to Excel:
+            //    ///    - Primitives-type: Returns values directly to Excel.
+            //    ///    - R-object : Returns a Registry keys and stores values in the Registry.
+            //    let out<'A> (refKey: String) (replaceValues: ReplaceValues) (xlValue: obj) : obj = 
+            //        Reg.out<'A> refKey replaceValues xlValue
 
         /// Obj[] input functions.
         module D1 =
@@ -1461,16 +1555,16 @@ module Cast_XL =
         ([<ExcelArgument(Description= "xl-value.")>] xlValue: obj)
         ([<ExcelArgument(Description= "Type label.")>] typeLabel: string)
         ([<ExcelArgument(Description= "[Default Value (only for non-optional types). Must be of the appropriate type. Default \"<default>\" (which will fail for non-string types).]")>] defaultValue: obj)
-        ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
+        ([<ExcelArgument(Description= "[None indicator. Default is \"<none>\".]")>] noneIndicator: obj)
         : obj  =
 
         // intermediary stage
-        let none = In.D0.Stg.def "<none>" noneValue
+        let none = In.D0.Stg.def "<none>" noneIndicator
         let rplval = { def with none = none }
         let defVal = In.D0.Missing.tryO defaultValue
 
         // result
-        let res = Out.D0.GenM.defAllCasesObj rplval defVal typeLabel xlValue
+        let res = Out.D0.Gen.defAllCasesObj rplval defVal typeLabel xlValue
         res
 
 module A1D_XL =
@@ -1504,18 +1598,18 @@ module A1D_XL =
         let rfid = MRegistry.refID
 
         match replmethod.ToUpper().Substring(0,1) with
-        | "F" -> let ooo = (In.D1.Gen.filter rowwise typeLabel range)
+        | "F" -> let ooo = (In.D1.GenM.filter rowwise typeLabel range)
                  let res = ooo |> MRegistry.register rfid 
                  res |> box
         | _ -> let res = (Out.D1.GenM.defAllCasesObj rowwise rplval defVal typeLabel range)  |> MRegistry.register rfid // FIXME should not register any value with replacement values in it
                res |> box
 
-
     [<ExcelFunction(Category="Array1D", Description="Creates an array of a reg. object.")>]
     let a1_toRng
-        ([<ExcelArgument(Description= "1D array reg. object.")>] rgA1D: string) 
+        ([<ExcelArgument(Description= "1D array R-object.")>] rgA1D: string)
         ([<ExcelArgument(Description= "[None indicator. Default is \"<none>\".]")>] noneIndicator: obj)
         ([<ExcelArgument(Description= "[Empty array indicator. Default is \"<empty>\".]")>] emptyIndicator: obj)
+        // TODO: add nan indicator?
         : obj[] = 
 
         // intermediary stage
@@ -1523,10 +1617,18 @@ module A1D_XL =
         let empty = In.D0.Stg.def "<empty>" emptyIndicator
         let rplval = { def with none = none; empty = empty }
 
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
         // result
         match MRegistry.tryExtract rgA1D with
-        | None -> [| "bof" |]
-        | Some a1d -> a1d |> Out.range rplval
+        | None -> [| box ExcelError.ExcelErrorNA |]
+        | Some a1d -> 
+            if a1d |> Array.isEmpty then
+                [| rplval.empty |]
+            else
+                let res = a1d |> Array.map (Out.D0.Reg.out rfid rplval)
+                res
 
     [<ExcelFunction(Category="Array1D", Description="Returns the size of r.o. array.")>]
     let a1_count
@@ -1567,7 +1669,7 @@ module GenMtrx =
     let create1D<'a> (size: int) (a1D: 'a[]) : GenMTRX<'a> = failwith "NIY"  // [| for i in 0 .. (size - 1) -> a1D |] |> array2D
 
     // == reflection functions ==
-    type GenX =
+    type GenFn =
         static member mtrx0D<'A> (defValue: obj option) (typeLabel: string) (size: int) (xlValue: obj) : GenMTRX<'A> =
             // let a0Dx = In.D0.Gen.def defValue typeLabel xlValue
             let a0D = In.D0.Gen.defAllCases defValue typeLabel xlValue :?> 'A
@@ -1586,19 +1688,19 @@ module GenMtrx =
             let mtrx0D (defValue: obj option) (typeLabel: string) (size: int) (xlValue: obj) : obj = 
                 let gentype = typeLabel |> Variant.labelType false
                 let args : obj[] = [| defValue; typeLabel; size; xlValue |]
-                let res = invoke<GenX> "mtrx0D" [| gentype |] args
+                let res = invoke<GenFn> "mtrx0D" [| gentype |] args
                 res
 
         module Out =
             let size (xlValue: string) : obj option =
                 let methodNm = "size"
-                MRegistry.tryExtractOfTargetType genType xlValue
-                |> Option.map (apply<GenX> methodNm [||] [||])
+                MRegistry.tryExtractGen genType xlValue
+                |> Option.map (apply<GenFn> methodNm [||] [||])
 
             let elem (row: int) (col: int) (xlValue: string) : obj option =
                 let methodNm = "elem"
-                MRegistry.tryExtractOfTargetType genType xlValue
-                |> Option.map (apply<GenX> methodNm [||] [| row; col |])
+                MRegistry.tryExtractGen genType xlValue
+                |> Option.map (apply<GenFn> methodNm [||] [| row; col |])
 
     // == xl-values functions ==
 
@@ -1616,7 +1718,7 @@ module Mtrx =
     let create1D<'a> (size: int) (a1D: 'a[]) = [| for i in 0 .. (size - 1) -> a1D |] |> array2D
 
     // == reflection functions ==
-    type Gen =
+    type GenFn =
         static member mtrx0D<'A> (defValue: obj option) (typeLabel: string) (size: int) (xlValue: obj) : MTRX<'A> =
             let a0D = In.D0.Gen.def defValue typeLabel xlValue
             a0D |> create0D size
@@ -1646,7 +1748,7 @@ module Mtrx =
                 | None -> box "should NOT be here"
                 | Some omtrx ->
                     let args : obj[] = [| omtrx |]
-                    let res = invoke<Gen> "size" getGenTy args
+                    let res = invoke<GenFn> "size" getGenTy args
                     res
             else
                 box "failed"
@@ -1661,7 +1763,7 @@ module Mtrx =
     let mtrx0D (defValue: obj) (typeLabel: string) (xlValue: obj) : obj = 
         let gentype = typeLabel |> Variant.labelType true
         let args : obj[] = [| defValue; typeLabel; xlValue |]
-        let res = invoke<Gen> "mtrx0D" [| gentype |] args
+        let res = invoke<GenFn> "mtrx0D" [| gentype |] args
         res
 
     /// FIXME
@@ -1669,7 +1771,7 @@ module Mtrx =
     let mtrx1D (defValue: obj) (typeLabel: string) (xlValue: obj) : obj = 
         let gentype = typeLabel |> Variant.labelType true
         let args : obj[] = [| defValue; typeLabel; xlValue |]
-        let res = invoke<Gen> "mtrx1D" [| gentype |] args
+        let res = invoke<GenFn> "mtrx1D" [| gentype |] args
         res
 
 module TEST_XL =
@@ -1711,7 +1813,7 @@ module TEST_XL =
 
         // result
         let xxx  = Reg.Out.elem row col rgMtrx
-        xxx |> Option.map Out.cellOpt def
+        xxx |> (Out.cellOptTBD ReplaceValues.def) // TODO FIXME
 
     [<ExcelFunction(Category="EXAMPLE", Description="Returns Mtrx size.")>]
     let mtrxGen_size

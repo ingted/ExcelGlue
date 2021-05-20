@@ -286,6 +286,13 @@ type ReplaceValues = { nan: obj; none: obj; empty: obj } with
 type MTRXD = double[,]
 type MTRX<'a> = 'a[,]
 
+module Test =
+    
+    type myType = 
+        static member myMember1<'T> (arg1: obj) : 'T[] = [||]
+        static member myMember2<'T> (arg2: obj) : 'T[,] = [|[||]|] |> array2D
+
+
 module Registry =
     /// Master registry where all registered objects are held.
     let MRegistry = Registry()
@@ -460,6 +467,53 @@ module API =
 
     /// Intput functions.
     module In =
+
+        module Cast =
+            /// Slices xl-ranges into 1D arrays.
+            /// 1-row or 1-column xl-ranges are directly converted to their corresponding 1D array.
+            /// For 2D xl-range, the 1st row is returned if rowWiseDef is true, and the 1st column otherwise.
+            let slice2D (rowWiseDef: bool) (o2D: obj[,]) : obj[] = 
+                // column-wise slice
+                if Array2D.length2 o2D = 1 then
+                    o2D.[*, Array2D.base2 o2D]
+                // row-wise slice
+                elif rowWiseDef || (Array2D.length1 o2D = 1) then
+                    o2D.[Array2D.base1 o2D, *]
+                // column-wise slice as default for fat 2D arrays
+                else 
+                    o2D.[*, Array2D.base2 o2D]
+        
+            /// Converts an xl-value to a 2D array.
+            /// (Use to2D rather than try2D when the obj argument is an xl-value).
+            let to2D (xlVal: obj) : obj[,] =
+                match xlVal with
+                | :? (obj[,]) as o2D -> o2D
+                | :? (obj[]) as o1D -> [| o1D |] |> array2D // FIXME - transpose // THIS CASE SHD NOT OCCUR if xlVal is an excel arg
+                | o0D -> Array2D.create 1 1 o0D
+        
+            /// Converts an obj to a 2D array option.
+            /// (Use try2D rather than to2D when the obj argument is not an xl-value).
+            let try2D (o: obj) : obj[,] option =
+                match o with
+                | :? (obj[,]) as o2D -> o2D |> Some
+                | :? (obj[]) as o1D -> [| o1D |] |> array2D |> Some // TODO - transpose
+                | _ -> None
+
+            /// Converts an xl-value to a 1D array.
+            /// (Use to1D rather than try1D when the obj argument is an xl-value).
+            let to1D (rowWiseDef: bool) (xlVal: obj) : obj[] =
+                match xlVal with
+                | :? (obj[,]) as o2D -> slice2D rowWiseDef o2D
+                | :? (obj[]) as o1D -> o1D
+                | o0D -> [| o0D |]
+        
+            /// Converts an obj to a 1D array option.
+            /// (Use try1D rather than to1D when the obj argument is not an xl-value).
+            let try1D (rowWiseDef: bool) (o: obj) : obj[] option =
+                match o with
+                | :? (obj[,]) as o2D -> slice2D rowWiseDef o2D |> Some
+                | :? (obj[]) as o1D -> Some o1D
+                | _ -> None
         
         /// Obj input functions.
         module D0 =
@@ -485,6 +539,7 @@ module API =
                 | :? 'a as v -> v
                 | _ -> defValue
 
+            // Optional-type default FIXX FIXME wording
             module Opt =
                 /// Casts an obj to an option on generic type with typed default-value.
                 let def<'a> (defValue: 'a option) (o: obj) : 'a option =
@@ -492,47 +547,63 @@ module API =
                     | :? 'a as v -> Some v
                     | _ -> defValue
 
-            let map<'a> (mapping: obj -> 'a) (o: obj) : 'a = mapping o // TODO remove?
-
-            /// Replaces an obj with typed default-value if it isn't of given generic type 'a.
-            let defOX<'a> (defValue: obj) (o: obj) : obj =
-                match o with
-                | :? 'a -> o
-                | _ -> defValue
+            /// Object substitution, based on type.
+            module Obj =
+                /// Substitutes an object for another one, if it isn't of the specified generic type 'a.
+                let subst<'a> (defValue: obj) (o: obj) : obj =
+                    match o with
+                    | :? 'a -> o
+                    | _ -> defValue
                 
-            // ----------------
-            // -- 1D functions
-            // ----------------
+            //// ----------------
+            //// -- 1D functions
+            //// ----------------
 
-            /// Slices xl-ranges into 1D arrays.
-            /// 1-row or 1-column xl-ranges are directly converted to their corresponding 1D array.
-            /// For 2D xl-range, the 1st row is returned if rowWiseDef is true, and the 1st column otherwise.
-            let slice2D (rowWiseDef: bool) (o2D: obj[,]) : obj[] = 
-                // column-wise slice
-                if Array2D.length2 o2D = 1 then
-                    o2D.[*, Array2D.base2 o2D]
-                // row-wise slice
-                elif rowWiseDef || (Array2D.length1 o2D = 1) then
-                    o2D.[Array2D.base1 o2D, *]
-                // column-wise slice as default
-                else 
-                    o2D.[*, Array2D.base2 o2D]
+            ///// Slices xl-ranges into 1D arrays.
+            ///// 1-row or 1-column xl-ranges are directly converted to their corresponding 1D array.
+            ///// For 2D xl-range, the 1st row is returned if rowWiseDef is true, and the 1st column otherwise.
+            //let slice2D (rowWiseDef: bool) (o2D: obj[,]) : obj[] = 
+            //    // column-wise slice
+            //    if Array2D.length2 o2D = 1 then
+            //        o2D.[*, Array2D.base2 o2D]
+            //    // row-wise slice
+            //    elif rowWiseDef || (Array2D.length1 o2D = 1) then
+            //        o2D.[Array2D.base1 o2D, *]
+            //    // column-wise slice as default for fat 2D arrays
+            //    else 
+            //        o2D.[*, Array2D.base2 o2D]
         
-            /// Converts an xl-value to a 1D array.
-            /// (Use to1D rather than try1D when the obj argument is an xl-value).
-            let to1D (rowWiseDef: bool) (xlVal: obj) : obj[] =
-                match xlVal with
-                | :? (obj[,]) as o2D -> slice2D rowWiseDef o2D
-                | :? (obj[]) as o1D -> o1D
-                | o0D -> [| o0D |]
+            ///// Converts an xl-value to a 2D array.
+            ///// (Use to2D rather than try2D when the obj argument is an xl-value).
+            //let to2D (rowWise: bool) (xlVal: obj) : obj[,] =
+            //    match xlVal with
+            //    | :? (obj[,]) as o2D -> o2D
+            //    | :? (obj[]) as o1D -> [| o1D |] |> array2D // FIXME - transpose // THIS CASE SHD NOT OCCUR if xlVal is an excel arg
+            //    | o0D -> Array2D.create 1 1 o0D
         
-            /// Converts an obj to a 1D array option.
-            /// (Use try1D rather than to1D when the obj argument is not an xl-value).
-            let try1D (rowWiseDef: bool) (o: obj) : obj[] option =
-                match o with
-                | :? (obj[,]) as o2D -> slice2D rowWiseDef o2D |> Some
-                | :? (obj[]) as o1D -> Some o1D
-                | _ -> None
+            ///// Converts an obj to a 2D array option.
+            ///// (Use try2D rather than to2D when the obj argument is not an xl-value).
+            //let try2D (rowWise: bool) (o: obj) : obj[,] option =
+            //    match o with
+            //    | :? (obj[,]) as o2D -> o2D |> Some
+            //    | :? (obj[]) as o1D -> [| o1D |] |> array2D |> Some // FIXME - transpose
+            //    | _ -> None
+
+            ///// Converts an xl-value to a 1D array.
+            ///// (Use to1D rather than try1D when the obj argument is an xl-value).
+            //let to1D (rowWiseDef: bool) (xlVal: obj) : obj[] =
+            //    match xlVal with
+            //    | :? (obj[,]) as o2D -> slice2D rowWiseDef o2D
+            //    | :? (obj[]) as o1D -> o1D
+            //    | o0D -> [| o0D |]
+        
+            ///// Converts an obj to a 1D array option.
+            ///// (Use try1D rather than to1D when the obj argument is not an xl-value).
+            //let try1D (rowWiseDef: bool) (o: obj) : obj[] option =
+            //    match o with
+            //    | :? (obj[,]) as o2D -> slice2D rowWiseDef o2D |> Some
+            //    | :? (obj[]) as o1D -> Some o1D
+            //    | _ -> None
 
             [<RequireQualifiedAccess>]
             module Bool =
@@ -542,11 +613,15 @@ module API =
                 /// Casts an xl-value to bool with a default-value.
                 let def (defValue: bool) (xlVal: obj) = def<bool> defValue xlVal
 
-                /// Casts an xl-value to a bool option type with a default-value.
-                let tryDV (defValue: bool option) (xlVal: obj) = Opt.def<bool> defValue xlVal
+                // optional-type default FIXX
+                module Opt =
+                    /// Casts an xl-value to a bool option type with a default-value.
+                    let def (defValue: bool option) (xlVal: obj) = Opt.def<bool> defValue xlVal
 
-                /// Replaces an xl-value with a (boxed bool) default-value if it isn't a (boxed bool) type (e.g. box true).
-                let defOX (defValue: bool) (xlVal: obj) = defOX<bool> defValue xlVal
+                /// Object substitution, based on type.
+                module Obj =
+                    /// Substitutes an object for another one, if it isn't a (boxed) bool (e.g. box false).
+                    let subst (defValue: obj) (xlVal: obj) : obj = Obj.subst<bool> defValue xlVal
 
             [<RequireQualifiedAccess>]
             module Stg =
@@ -556,11 +631,15 @@ module API =
                 /// Casts an xl-value to string with a default-value.
                 let def (defValue: string) (xlVal: obj) = def<string> defValue xlVal
 
-                /// Casts an xl-value to a string option type with a default-value.
-                let tryDV (defValue: string option) (xlVal: obj) = Opt.def<string> defValue xlVal
+                // optional-type default FIXX
+                module Opt =
+                    /// Casts an xl-value to a string option type with a default-value.
+                    let def (defValue: string option) (xlVal: obj) = Opt.def<string> defValue xlVal
 
-                /// Replaces an xl-value with a (boxed string) default-value if it isn't a (boxed string) type (e.g. box "foo").
-                let defOX (defValue: string) (xlVal: obj) = defOX<string> defValue xlVal
+                /// Object substitution, based on type.
+                module Obj =
+                    /// Substitutes an object for another one, if it isn't a (boxed) string (e.g. box "foo").
+                    let subst (defValue: obj) (xlVal: obj) = Obj.subst<string> defValue xlVal
 
             [<RequireQualifiedAccess>]
             module Dbl =
@@ -570,11 +649,15 @@ module API =
                 /// Casts an xl-value to double with a default-value.
                 let def (defValue: double) (xlVal: obj) = def<double> defValue xlVal
 
-                /// Casts an xl-value to a double option type with a default-value.
-                let tryDV (defValue: double option) (xlVal: obj) = Opt.def<double> defValue xlVal
+                // optional-type default FIXX
+                module Opt =
+                    /// Casts an xl-value to a double option type with a default-value.
+                    let def (defValue: double option) (xlVal: obj) = Opt.def<double> defValue xlVal
 
-                /// Replaces an xl-value with a (boxed double) default-value if it isn't a (boxed double) type (e.g. box 1.0).
-                let defOX (defValue: double) (xlVal: obj) = defOX<double> defValue xlVal  // TODO FIXME defValue type is obj not double
+                /// Object substitution, based on type.
+                module Obj =
+                    /// Substitutes an object for another one, if it isn't a (boxed) double (e.g. box 1.0).
+                    let subst (defValue: obj) (xlVal: obj) = Obj.subst<double> defValue xlVal
 
             [<RequireQualifiedAccess>]
             module Nan =
@@ -589,6 +672,19 @@ module API =
                     | AnyError xlKinds _ -> box Double.NaN
                     | _ -> xlVal
 
+                /// Converts a boxed ExcelErrorNA into a Double.NaN.
+                /// Similar to nanify function, but simpler.
+                let ofNA (xlVal: obj) : obj =
+                    match xlVal with
+                    | :? ExcelError as err when err = ExcelError.ExcelErrorNA -> Double.NaN |> box
+                    | _ -> xlVal
+
+                /// Converts a boxed Double.NaN into an ExcelErrorNA. // FIXME - should be OUT?
+                let ofNaN (xlVal: obj) : obj =
+                    match xlVal with
+                    | :? double as d -> if Double.IsNaN d then ExcelError.ExcelErrorNA |> box else box d
+                    | _ -> xlVal
+
                 /// Casts an xl-value to double or fails, with some other non-double values potentially cast to Double.NaN.
                 let fail (xlKinds: Kind[]) (msg: string option) (xlVal: obj) = 
                     nanify xlKinds xlVal |> fail<double> msg
@@ -597,19 +693,31 @@ module API =
                 let def (xlKinds: Kind[]) (defValue: double) (xlVal: obj) = 
                     nanify xlKinds xlVal |> def<double> defValue
 
-                /// Casts an xl-value to a double option type with a default-value, with some other non-double values potentially cast to Double.NaN.
-                let tryDV (xlKinds: Kind[]) (defValue: double option) (xlVal: obj) = 
-                    nanify xlKinds xlVal |> Opt.def<double> defValue
+                // optional-type default FIXX
+                module Opt =
+                    /// Casts an xl-value to a double option type with a default-value, with some other non-double values potentially cast to Double.NaN.
+                    let def (xlKinds: Kind[]) (defValue: double option) (xlVal: obj) = 
+                        nanify xlKinds xlVal |> Opt.def<double> defValue
 
-                /// Replaces an xl-value with a double default-value if it isn't a (boxed double) type (e.g. box 1.0), with some other non-double values potentially cast to Double.NaN.
-                let defOX (xlKinds: Kind[]) (defValue: double) (xlVal: obj) = 
-                    nanify xlKinds xlVal |> defOX<double> defValue
+                /// Object substitution, based on type.
+                module Obj =
+                    /// Substitutes an object for another one, if it isn't a (boxed) double (e.g. box 1.0).
+                    /// Replaces an xl-value with a double default-value if it isn't a (boxed double) type (e.g. box 1.0), with some other non-double values potentially cast to Double.NaN.
+                    let subst (xlKinds: Kind[]) (defValue: obj) (xlVal: obj) = 
+                        nanify xlKinds xlVal |> Obj.subst<double> defValue
 
-                /// Converts a boxed Double.NaN into an ExcelErrorNA.
-                let ofNaN (xlVal: obj) : obj =
-                    match xlVal with
-                    | :? double as d -> if Double.IsNaN d then ExcelError.ExcelErrorNA |> box else box d
-                    | _ -> xlVal
+                    /// Converts a boxed ExcelErrorNA into a Double.NaN.
+                    /// Similar to nanify function, but lighter.
+                    let ofNA (xlVal: obj) : obj =
+                        match xlVal with
+                        | :? ExcelError as err when err = ExcelError.ExcelErrorNA -> Double.NaN |> box
+                        | _ -> xlVal
+
+                    /// Converts a boxed Double.NaN into an ExcelErrorNA. // FIXME - should be OUT?
+                    let ofNaN (xlVal: obj) : obj =
+                        match xlVal with
+                        | :? double as d -> if Double.IsNaN d then ExcelError.ExcelErrorNA |> box else box d
+                        | _ -> xlVal
 
             [<RequireQualifiedAccess>]
             module Intg =
@@ -631,17 +739,21 @@ module API =
                     | :? double as d -> ofDouble d |> Option.defaultValue defValue
                     | _ -> defValue
 
-                /// Casts an xl-value to a int option type with a default-value.
-                let tryDV (defValue: int option) (xlVal: obj) =
-                    match xlVal with
-                    | :? double as d -> match ofDouble d with | None -> defValue | Some i -> Some i
-                    | _ -> defValue
+                // optional-type default FIXX
+                module Opt =
+                    /// Casts an xl-value to a int option type with a default-value.
+                    let def (defValue: int option) (xlVal: obj) =
+                        match xlVal with
+                        | :? double as d -> match ofDouble d with | None -> defValue | Some i -> Some i
+                        | _ -> defValue
 
-                /// Replaces an xl-value with a (boxed int) default-value if it isn't a (boxed int) type (e.g. box 42).
-                let defOX (defValue: obj) (xlVal: obj) =
-                    match xlVal with
-                    | :? double as d -> match ofDouble d with | None -> defValue | Some i -> box i
-                    | _ -> defValue
+                /// Object substitution, based on type.
+                module Obj =
+                    /// Substitutes an object for another one, if it isn't a (boxed) int (e.g. box 1).
+                    let subst (defValue: obj) (xlVal: obj) : obj =
+                        match xlVal with
+                        | :? double as d -> match ofDouble d with | None -> defValue | Some i -> box i
+                        | _ -> defValue
 
             [<RequireQualifiedAccess>]
             module Dte =
@@ -657,17 +769,21 @@ module API =
                     | :? double as d -> DateTime.FromOADate d
                     | _ -> defValue
 
-                /// Casts an xl-value to a DateTime option type with a default-value.
-                let tryDV (defValue: DateTime option) (xlVal: obj) =
-                    match xlVal with
-                    | :? double as d -> DateTime.FromOADate d |> Some
-                    | _ -> defValue
+                // optional-type default FIXX
+                module Opt =
+                    /// Casts an xl-value to a DateTime option type with a default-value.
+                    let def (defValue: DateTime option) (xlVal: obj) =
+                        match xlVal with
+                        | :? double as d -> DateTime.FromOADate d |> Some
+                        | _ -> defValue
 
-                /// Replaces an xl-value with a default-value if it isn't a (boxed DateTime) type (e.g. box 36526.0).
-                let defOX (defValue: obj) (xlVal: obj) =
-                    match xlVal with
-                    | :? double as d -> xlVal
-                    | _ -> defValue
+                /// Object substitution, based on type.
+                module Obj =
+                    /// Substitutes an object for another one, if it isn't a (boxed) DateTime (e.g. box 36526.0).
+                    let subst (defValue: obj) (xlVal: obj) : obj =
+                        match xlVal with
+                        | :? double as d -> xlVal
+                        | _ -> defValue
 
             [<RequireQualifiedAccess>]
             module Missing = // TODO add empty case
@@ -747,9 +863,8 @@ module API =
                         let defval = DefaultValue.ofTag<'A> typeTag defValue
                         def<'A> defval xlValue
                     | STRING -> 
-                        let defval = DefaultValue.ofTag<string> typeTag defValue
-                        let a0D = Stg.def defval xlValue
-                        box a0D :?> 'A
+                        let defval = DefaultValue.ofTag<'A> typeTag defValue
+                        def<'A> defval xlValue
                     | DOUBLE -> 
                         let defval = DefaultValue.ofTag<'A> typeTag defValue
                         def<'A> defval xlValue
@@ -765,25 +880,24 @@ module API =
     
                 /// Casts an xl-value to a 'A option, with a default-value for when the casting fails.
                 /// defValue is None, Some 'a or even Some (Some 'a).
-                static member tryDV<'A> (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A option = 
+                static member defOpt<'A> (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A option = 
                     match typeTag |> Variant.ofTag with
                     | BOOLOPT -> 
                         let defval : 'A option = DefaultValue.Opt.ofTag<'A> defValue
                         Opt.def<'A> defval xlValue
                     | STRINGOPT -> 
-                        let defval = DefaultValue.Opt.ofTag<string> defValue
-                        let a0D = Stg.tryDV defval xlValue
-                        box a0D :?> 'A option
+                        let defval : 'A option = DefaultValue.Opt.ofTag<'A> defValue
+                        Opt.def<'A> defval xlValue
                     | DOUBLEOPT -> 
                         let defval : 'A option = DefaultValue.Opt.ofTag<'A> defValue
                         Opt.def<'A> defval xlValue
                     | INTOPT -> 
                         let defval = DefaultValue.Opt.ofTag<double> defValue |> Option.map (int)
-                        let a0D = Intg.tryDV defval xlValue
+                        let a0D = Intg.Opt.def defval xlValue
                         box a0D :?> 'A option
                     | DATEOPT -> 
                         let defval = DefaultValue.Opt.ofTag<double> defValue |> Option.map (fun d -> DateTime.FromOADate(d))
-                        let a0D = Dte.tryDV defval xlValue
+                        let a0D = Dte.Opt.def defval xlValue
                         box a0D :?> 'A option
                     | _ -> failwith "TO BE IMPLEMENTED WITH OTHER VARIANT TYPES" // TODO FIXME
 
@@ -798,25 +912,32 @@ module API =
                     let res = Useful.Generics.invoke<GenFn> "def" [| gentype |] args
                     res
 
-                /// Casts an xl-value to a 'a option, with a default-value for when the casting fails.
-                /// 'a is determined by typeTag.
-                let tryDV (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
-                    let gentype = typeTag |> Variant.labelType true
-                    let args : obj[] = [| defValue; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<GenFn> "tryDV" [| gentype |] args
-                    res
+                // optional-type default FIXX
+                module Opt =
+                    /// Casts an xl-value to a 'a option, with a default-value for when the casting fails.
+                    /// 'a is determined by typeTag.
+                    let def (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                        let gentype = typeTag |> Variant.labelType true
+                        let args : obj[] = [| defValue; typeTag; xlValue |]
+                        let res = Useful.Generics.invoke<GenFn> "defOpt" [| gentype |] args
+                        res
 
-                // Convenient, single function for def and tryDV according to typeTag being optional or not.
-                let defAllCases (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
-                    let gentype = typeTag |> Variant.labelType true
-                    let args : obj[] = [| defValue; typeTag; xlValue |]
+                /// For when the type-tag is either optional, e.g. "#string", or not, e.g. "string".
+                module Any =
+                    /// Convenient, single function covering def and Opt.def cases.
+                    /// The returned (boxed) value might be either a 'a or a ('a option), depending on wether the type-tag is optional or not.
+                    let def (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                        let gentype = typeTag |> Variant.labelType true
+                        let args : obj[] = [| defValue; typeTag; xlValue |]
 
-                    let res =
-                        if typeTag |> isOptionalType then
-                            Useful.Generics.invoke<GenFn> "tryDV" [| gentype |] args
-                        else
-                            Useful.Generics.invoke<GenFn> "def" [| gentype |] args
-                    res
+                        let res =
+                            if typeTag |> isOptionalType then
+                                Useful.Generics.invoke<GenFn> "defOpt" [| gentype |] args
+                            else
+                                Useful.Generics.invoke<GenFn> "def" [| gentype |] args
+                        res
+
+
 
         /// Obj[] input functions.
         module D1 =
@@ -864,7 +985,7 @@ module API =
             [<RequireQualifiedAccess>]
             module Stg =
                 /// Converts an obj[] to a string[], given a default-value for non-string elements.
-                let def (defValue: string) (o1D: obj[]) = def defValue o1D
+                let def (defValue: string) (o1D: obj[]) = def<string> defValue o1D  // TODO add <string> everywhere!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
                 /// optional-type default
                 module Opt = 
@@ -903,11 +1024,11 @@ module API =
                 module Opt = 
                     /// Converts an obj[] to a ('a option)[], given a default-value for non-double elements.
                     let def (xlKinds: Kind[]) (defValue: double option) (o1D: obj[]) =
-                        o1D |> Array.map (D0.Nan.tryDV xlKinds defValue)
+                        o1D |> Array.map (D0.Nan.Opt.def xlKinds defValue)
 
                 /// Converts an obj[] to a DateTime[], removing any non-double element.
                 let filter (xlKinds: Kind[]) (o1D: obj[]) =
-                    o1D |> Array.choose (D0.Nan.tryDV xlKinds None)
+                    o1D |> Array.choose (D0.Nan.Opt.def xlKinds None)
 
                 /// Converts an obj[] to an optional 'a[]. All the elements must be double, otherwise defValue array is returned. 
                 let tryDV (xlKinds: Kind[]) (defValue: double[] option) (o1D: obj[])  =
@@ -926,11 +1047,11 @@ module API =
                 module Opt = 
                     /// Converts an obj[] to a ('a option)[], given a default-value for non-int elements.
                     let def (defValue: int option) (o1D: obj[]) =
-                        o1D |> Array.map (D0.Intg.tryDV defValue)
+                        o1D |> Array.map (D0.Intg.Opt.def defValue)
 
                 /// Converts an obj[] to a int[], removing any non-int element.
                 let filter (o1D: obj[]) =
-                    o1D |> Array.choose (D0.Intg.tryDV None)
+                    o1D |> Array.choose (D0.Intg.Opt.def None)
 
                 /// Converts an obj[] to an optional 'a[]. All the elements must be int, otherwise defValue array is returned. 
                 let tryDV (defValue: int[] option) (o1D: obj[])  =
@@ -949,11 +1070,11 @@ module API =
                 module Opt = 
                     /// Converts an obj[] to a ('a option)[], given a default-value for non-DateTime elements.
                     let def (defValue: DateTime option) (o1D: obj[]) =
-                        o1D |> Array.map (D0.Dte.tryDV defValue)
+                        o1D |> Array.map (D0.Dte.Opt.def defValue)
 
                 /// Converts an obj[] to a DateTime[], removing any non-DateTime element.
                 let filter (o1D: obj[]) =
-                    o1D |> Array.choose (D0.Dte.tryDV None)
+                    o1D |> Array.choose (D0.Dte.Opt.def None)
 
                 /// Converts an obj[] to an optional 'a[]. All the elements must be DateTime, otherwise defValue array is returned. 
                 let tryDV (defValue: DateTime[] option) (o1D: obj[])  =
@@ -990,16 +1111,15 @@ module API =
             type GenFn =
                 /// Converts an xl-value to a 'A[], given a typed default-value for elements which can't be cast to 'A.
                 static member def<'A> (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A[] = 
-                    let o1D = D0.to1D (rowWiseDef |> Option.defaultValue false) xlValue
+                    let o1D = Cast.to1D (rowWiseDef |> Option.defaultValue false) xlValue
 
                     match typeTag |> Variant.ofTag with
                     | BOOL -> 
                         let defval = DefaultValue.ofTag<'A> typeTag defValue
                         def<'A> defval o1D
                     | STRING -> 
-                        let defval = DefaultValue.ofTag<string> typeTag defValue
-                        let a1D = Stg.def defval o1D
-                        a1D |> Array.map (fun x -> (box x) :?> 'A)
+                        let defval = DefaultValue.ofTag<'A> typeTag defValue
+                        def<'A> defval o1D
                     | DOUBLE -> 
                         let defval = DefaultValue.ofTag<'A> typeTag defValue
                         def<'A> defval o1D
@@ -1015,16 +1135,15 @@ module API =
         
                 /// Converts an xl-value to a ('A option)[], given an optional default-value for elements which can't be cast to 'A.
                 static member defOpt<'A> (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : ('A option)[] = 
-                    let o1D = D0.to1D (rowWiseDef |> Option.defaultValue false) xlValue
+                    let o1D = Cast.to1D (rowWiseDef |> Option.defaultValue false) xlValue
 
                     match typeTag |> Variant.ofTag with
                     | BOOLOPT -> 
                         let defval : 'A option = DefaultValue.Opt.ofTag<'A> defValue
                         Opt.def<'A> defval o1D
                     | STRINGOPT -> 
-                        let defval = DefaultValue.Opt.ofTag<string> defValue
-                        let a1D = Stg.Opt.def defval o1D
-                        a1D |> Array.map (fun x -> (box x) :?> 'A option)
+                        let defval : 'A option = DefaultValue.Opt.ofTag<'A> defValue
+                        Opt.def<'A> defval o1D
                     | DOUBLEOPT -> 
                         let defval : 'A option = DefaultValue.Opt.ofTag<'A> defValue
                         Opt.def<'A> defval o1D
@@ -1039,7 +1158,7 @@ module API =
                     | _ -> [||]
                 
                 static member filter<'A> (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : 'A[] = 
-                    let o1D = D0.to1D (rowWiseDef |> Option.defaultValue false) xlValue
+                    let o1D = Cast.to1D (rowWiseDef |> Option.defaultValue false) xlValue
 
                     match typeTag |> Variant.ofTag with
                     | BOOL -> filter<'A> o1D
@@ -1078,7 +1197,7 @@ module API =
 
                 /// For when the type-tag is either optional, e.g. "#string", or not, e.g. "string".
                 module Any =
-                    /// Convenient, single function for def and Opt.def.
+                    /// Convenient, single function covering def and Opt.def cases.
                     /// The returned (boxed) array might be either a 'a[] or a ('a option)[], depending on wether the type-tag is optional or not.
                     let def (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                         let gentype = typeTag |> Variant.labelType true
@@ -1097,49 +1216,262 @@ module API =
                     let res = Useful.Generics.invoke<GenFn> "filter" [| gentype |] args
                     res
 
+
+        /// Obj[] input functions.
+        module D2 =
+            open Excel
+            open type Variant
+
+            let empty2D<'a> : 'a[,] = [|[||]|] |> array2D
+            let isEmpty (a2D: 'a[,]) : bool = a2D |> Array2D.length1 = 0 // is this the right way?
+            let singleton<'a> (a: 'a) = Array2D.create 1 1 a
+
+            // non-optional-type default
+            /// Converts an obj[,] to a 'a[,], given a typed default-value for elements which can't be cast to 'a.
+            let def<'a> (defValue: 'a) (o2D: obj[,]) : 'a[,] =
+                o2D |> Array2D.map (D0.def<'a> defValue)
+
+            // optional-type default
+            module Opt =
+                /// Converts an obj[,] to a ('a option)[,], given an optional default-value for elements which can't be cast to 'a.
+                let def<'a> (defValue: 'a option) (o2D: obj[,]) : ('a option)[,] =
+                    o2D |> Array2D.map (D0.Opt.def<'a> defValue)
+
+            /// Converts an obj[,] to a 'a[,], removing either row or column where any element can't be cast to 'a.
+            let filter<'a> (rowWise: bool) (o2D: obj[,]) : 'a[,] =
+                let len1, len2 = o2D |> Array2D.length1, o2D |> Array2D.length2
+                
+                if rowWise then
+                    [| for i in 0 .. (len1 - 1) -> 
+                        match D1.tryDV<'a> None o2D.[i,*] with
+                        | None -> [||]
+                        | Some row1D -> row1D
+                    |]
+                else
+                    // FIXME needs to be transposed !!!!!!!!!!
+                    [| for j in 0 .. (len2 - 1) -> 
+                        match D1.tryDV<'a> None o2D.[*,j] with
+                        | None -> [||]
+                        | Some col1D -> col1D
+                    |]
+                |> Array.filter (fun a1D -> a1D |> Array.isEmpty |> not)
+                |> array2D
+
+            /// Converts an obj[,] to an optional 'a[,]. All the elements must match the given type, otherwise defValue array is returned. 
+            let tryDV<'a> (defValue: 'a[,] option) (o2D: obj[,]) : 'a[,] option =
+                let len1 = o2D |> Array2D.length1
+                let convert = Opt.def None o2D
+
+                let hasNones = 
+                    [| for i in 0 .. (len1 - 1) ->
+                        convert.[i,*] |> Array.filter Option.isNone
+                    |]
+                    |> Array.filter (fun o1D -> o1D |> Array.isEmpty |> not)
+
+                if hasNones |> Array.isEmpty then
+                    convert |> Array2D.map Option.get |> Some
+                else defValue
+
+            [<RequireQualifiedAccess>]
+            module Bool =
+                /// Converts an obj[,] to a bool[,], given a bool default-value for when casting to bool fails.
+                let def (defValue: bool) (o2D: obj[,]) : bool[,] = def<bool> defValue o2D
+
+                // optional-type default
+                module Opt =
+                    /// Converts an obj[,] to a (bool option)[,], given a bool default-value for when casting to bool fails.
+                    let def (defValue: bool option) (o2D: obj[,]) : (bool option)[,] = Opt.def defValue o2D
+
+                /// Converts an obj[,] to a bool[,], removing either row or column where any element isn't a (boxed) bool.
+                let filter (rowWise: bool) (o2D: obj[,]) : bool[,] = filter<bool> rowWise o2D
+
+                /// Converts an obj[,] to an optional 'a[,]. All the elements must be bools, otherwise defValue array is returned. 
+                let tryDV (defValue: bool[,] option) (o2D: obj[,]) : bool[,] option = tryDV<bool> defValue o2D
+
+            [<RequireQualifiedAccess>]
+            module Stg =
+                /// Converts an obj[,] to a bool[,], given a bool default-value for when casting to string fails.
+                let def (defValue: string) (o2D: obj[,]) : string[,] = def<string> defValue o2D
+
+                // optional-type default
+                module Opt =
+                    /// Converts an obj[,] to a (bool option)[,], given a bool default-value for when casting to string fails.
+                    let def (defValue: string option) (o2D: obj[,]) : (string option)[,] = Opt.def defValue o2D
+
+                /// Converts an obj[,] to a bool[,], removing either row or column where any element isn't a (boxed) string.
+                let filter (rowWise: bool) (o2D: obj[,]) : string[,] = filter<string> rowWise o2D
+
+                /// Converts an obj[,] to an optional 'a[,]. All the elements must be strings, otherwise defValue array is returned. 
+                let tryDV (defValue: string[,] option) (o2D: obj[,]) : string[,] option = tryDV<string> defValue o2D
+
+            [<RequireQualifiedAccess>]
+            module Dbl =
+                /// Converts an obj[,] to a bool[,], given a bool default-value for when casting to double fails.
+                let def (defValue: double) (o2D: obj[,]) : double[,] = def<double> defValue o2D
+
+                // optional-type default
+                module Opt =
+                    /// Converts an obj[,] to a (bool option)[,], given a bool default-value for when casting to double fails.
+                    let def (defValue: double option) (o2D: obj[,]) : (double option)[,] = Opt.def defValue o2D
+
+                /// Converts an obj[,] to a bool[,], removing either row or column where any element isn't a (boxed) string.
+                let filter (rowWise: bool) (o2D: obj[,]) : double[,] = filter<double> rowWise o2D
+
+                /// Converts an obj[,] to an optional 'a[,]. All the elements must be doubles, otherwise defValue array is returned. 
+                let tryDV (defValue: double[,] option) (o2D: obj[,]) : double[,] option = tryDV<double> defValue o2D
+
+            // TODO : ADD ME
+            [<RequireQualifiedAccess>]
+            module Nan = 
+                let x1 = 0
+
+            // TODO : ADD ME
+            [<RequireQualifiedAccess>]
+            module Intg = 
+                let x1 = 0
+
+            // TODO : ADD ME
+            [<RequireQualifiedAccess>]
+            module Dte = 
+                let x1 = 0
+
+            /// Convenience functions to cast default xl-values, given a type-tag.
+            module private DefaultValue =
+                /// Returns a typed-value given an optional xl-value and a type-tag.
+                /// If present, the xl-value must be compatible with the type-tag.
+                /// If no xl-value is provided, returns the type-tag's default value.
+                let ofTag<'a> (typeTag: string) (xlValue: obj option) : 'a = 
+                    match xlValue with
+                    | None -> Variant.labelDefVal typeTag 
+                    | Some xlval -> xlval
+                    :?> 'a
+                
+                /// Returns an optional typed-value given an optional xl-value and a type-tag.
+                /// If present, the xl-value must be compatible with type-tag.
+                module Opt = 
+                    let ofTag<'a> (xlValue: obj option) : 'a option = 
+                        match xlValue with
+                        | None -> None
+                        | Some xlval ->
+                            match xlval with
+                            | :? 'a as a -> Some a
+                            | :? ('a option) as aopt -> aopt
+                            | _ -> None
+
+            /// Useful functions for casting xl-arrays, given a type-tag (e.g. "int", "date", "double", "string"...)
+            /// Use module Gen functions for their untyped versions.
+            type GenFn =
+                /// Converts an xl-value to a 'A[], given a typed default-value for elements which can't be cast to 'A.
+                static member def<'A> (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A [,] = 
+                    let o2D = Cast.to2D xlValue
+
+                    match typeTag |> Variant.ofTag with
+                    | BOOL -> 
+                        let defval = DefaultValue.ofTag<'A> typeTag defValue
+                        def<'A> defval o2D
+                    | STRING -> 
+                        let defval = DefaultValue.ofTag<'A> typeTag defValue
+                        def<'A> defval o2D
+                    | DOUBLE -> 
+                        let defval = DefaultValue.ofTag<'A> typeTag defValue
+                        def<'A> defval o2D
+                        // FIXME RESTORE !!!!!!!!!!!
+                    //| INT -> 
+                    //    let defval = DefaultValue.ofTag<double> typeTag defValue |> int
+                    //    let a2D = Intg.def defval o2D
+                    //    a2D |> Array.map (fun x -> (box x) :?> 'A)
+                    //| DATE -> 
+                    //    let defval = DateTime.FromOADate(DefaultValue.ofTag<double> typeTag defValue)
+                    //    let a2D = Dte.def defval o2D
+                    //    a2D |> Array.map (fun x -> (box x) :?> 'A)
+                    | _ -> empty2D<'A>
+        
+                /// Converts an xl-value to a ('A option)[], given an optional default-value for elements which can't be cast to 'A.
+                static member defOpt<'A> (defValue: obj option) (typeTag: string) (xlValue: obj) : ('A option)[,] = 
+                    let o2D = Cast.to2D xlValue
+
+                    match typeTag |> Variant.ofTag with
+                    | BOOLOPT -> 
+                        let defval : 'A option = DefaultValue.Opt.ofTag<'A> defValue
+                        Opt.def<'A> defval o2D
+                    | STRINGOPT -> 
+                        let defval : 'A option = DefaultValue.Opt.ofTag<'A> defValue
+                        Opt.def<'A> defval o2D
+                    | DOUBLEOPT -> 
+                        let defval : 'A option = DefaultValue.Opt.ofTag<'A> defValue
+                        Opt.def<'A> defval o2D
+                    | INTOPT -> 
+                        empty2D<'A option>
+                        //let defval = DefaultValue.Opt.ofTag<double> defValue |> Option.map (int)
+                        //let a2D = Intg.Opt.def defval o2D
+                        //a2D |> Array.map (fun x -> (box x) :?> 'A option)
+                    | DATEOPT -> 
+                        empty2D<'A option>
+                        //let defval = DefaultValue.Opt.ofTag<double> defValue |> Option.map (fun d -> DateTime.FromOADate(d))
+                        //let a2D = Dte.Opt.def defval o2D
+                        //a2D |> Array.map (fun x -> (box x) :?> 'A option)
+                    | _ -> empty2D<'A option>
+                
+                static member filter<'A> (rowWise: bool option) (typeTag: string) (xlValue: obj) : 'A[,] = 
+                    let o2D = Cast.to2D xlValue
+
+                    match typeTag |> Variant.ofTag with
+                    | BOOL -> filter<'A> (rowWise |> Option.defaultValue true) o2D
+                    | STRING -> filter<'A> (rowWise |> Option.defaultValue true) o2D
+                    | DOUBLE -> filter<'A> (rowWise |> Option.defaultValue true) o2D
+                    //| INT -> 
+                    //    let a2D = Intg.filter o2D
+                    //    a2D |> Array.map (fun x -> (box x) :?> 'A)
+                    //| DATE -> 
+                    //    let a2D = Dte.filter o2D
+                    //    a2D |> Array.map (fun x -> (box x) :?> 'A)
+                    | _ -> empty2D<'A>
+
+            /// Useful functions for casting xl-arrays, given a type-tag (e.g. "int", "date", "double", "string"...)
+            /// Use type GenFn functions for their typed versions.
+            [<RequireQualifiedAccess>]
+            module Gen =
+                /// Converts an xl-value to a 'a[], given a type-tag and a compatible default-value for when casting to 'a fails.
+                /// The type-tag determines 'a. Only works for non-optional type-tags, e.g. "string".
+                let def (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                    let gentype = typeTag |> Variant.labelType true
+                    let args : obj[] = [| defValue; typeTag; xlValue |]
+                    let res = Useful.Generics.invoke<GenFn> "def" [| gentype |] args
+                    res
+
+                module Opt =
+                    /// Converts an xl-value to a ('a option)[], given a type-tag and a compatible default-value for when casting to 'a fails.
+                    /// The type-tag determines 'a. Only works for optional type-tags, e.g. "#string".
+                    let def (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                        let gentype = typeTag |> Variant.labelType true
+                        let args : obj[] = [| defValue; typeTag; xlValue |]
+                        let res = Useful.Generics.invoke<GenFn> "defOpt" [| gentype |] args
+                        res
+
+                /// For when the type-tag is either optional, e.g. "#string", or not, e.g. "string".
+                module Any =
+                    /// Convenient, single function covering def and Opt.def cases.
+                    /// The returned (boxed) array might be either a 'a[] or a ('a option)[], depending on wether the type-tag is optional or not.
+                    let def (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                        let gentype = typeTag |> Variant.labelType true
+                        let args : obj[] = [| defValue; typeTag; xlValue |]
+
+                        let res =
+                            if typeTag |> isOptionalType then
+                                Useful.Generics.invoke<GenFn> "defOpt" [| gentype |] args
+                            else
+                                Useful.Generics.invoke<GenFn> "def" [| gentype |] args
+                        res
+
+                let filter (rowWise: bool option) (typeTag: string) (xlValue: obj) : obj = 
+                    let gentype = typeTag |> Variant.labelType false
+                    let args : obj[] = [| rowWise; typeTag; xlValue |]
+                    let res = Useful.Generics.invoke<GenFn> "filter" [| gentype |] args
+                    res
+
     /// Output functions.
     module Out =
         open type Variant
-
-        //[<RequireQualifiedAccess>]
-        //module Dbl =
-        //    let out (replaceValues: ReplaceValues) (d: double) : obj =
-        //        if Double.IsNaN(d) then
-        //            replaceValues.nan
-        //        else    
-        //            d |> box
-        
-        //[<RequireQualifiedAccess>]
-        ///// Outputs primitive types.
-        //module Prm = 
-        //    /// Returns sensible Excel values for primitive types.
-        //    let out (replaceValues: ReplaceValues) (o0D: obj) : obj =
-        //        match o0D with
-        //        | :? double as d -> Dbl.out replaceValues d
-        //        | _ -> o0D
-
-        //    [<RequireQualifiedAccess>]
-        //    /// Outputs optional and non-optional primitive types.
-        //    /// option on primitive types will return as follow : 
-        //    ///    - None will return replaceValues.none
-        //    ///    - Some x will return (Prm.out x)
-        //    module Opt = 
-        //        let out (replaceValues: ReplaceValues) (o0D: obj) : obj =
-        //            o0D |> Useful.Option.map replaceValues.none (out replaceValues)
-
-        //[<RequireQualifiedAccess>]
-        ///// Outputs primitives types directly to Excel, but stores non-primitive types in the Registry.
-        //module Reg = 
-        //    /// Output to Excel:
-        //        ///    - Primitives-type: Returns values directly to Excel.
-        //        ///    - R-object : Returns a Registry keys and stores values in the Registry.
-        //    let out<'a> (refKey: String) (replaceValues: ReplaceValues) (o0D: obj) : obj =
-        //        let ty = typeof<'a> |> Useful.Option.uType |> Option.defaultValue typeof<'a>
-                
-        //        if ty |> Useful.Type.isPrimitive true then
-        //            o0D |> Useful.Option.map replaceValues.none (Prm.Opt.out replaceValues)
-        //        else    
-        //            o0D |> Useful.Option.map replaceValues.none (Registry.MRegistry.append refKey >> box)
 
         /// Returns an xl-Value from a typed value. 
         /// NaN elements are converted according to replaceValues.
@@ -1160,7 +1492,7 @@ module API =
 
         /// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
         /// NaN elements are converted according to replaceValues.
-        let range<'a> (replaceValues: ReplaceValues) (a1D: 'a[]) : obj[] =
+        let range1D<'a> (replaceValues: ReplaceValues) (a1D: 'a[]) : obj[] =
             if a1D |> Array.isEmpty then
                 [| replaceValues.empty |]
             else
@@ -1171,7 +1503,7 @@ module API =
 
         /// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
         /// None and NaN elements are converted according to replaceValues.
-        let rangeOpt<'a> (replaceValues: ReplaceValues) (a1D: ('a option)[]) : obj[] =
+        let range1DOpt<'a> (replaceValues: ReplaceValues) (a1D: ('a option)[]) : obj[] =
             if a1D |> Array.isEmpty then
                 [| replaceValues.empty |]
             else
@@ -1186,8 +1518,11 @@ module API =
                 else
                     a1D |> Array.map (fun elem -> match elem with | None -> replaceValues.none | Some e -> box e)
 
+
+
         /// Obj input functions.
         module D0 =
+            /// Outputs doubles.
             [<RequireQualifiedAccess>]
             module Dbl =
                 let out (replaceValues: ReplaceValues) (d: double) : obj =
@@ -1195,36 +1530,25 @@ module API =
                         replaceValues.nan
                     else    
                         d |> box
-        
-            [<RequireQualifiedAccess>]
+
             /// Outputs primitive types.
-            module Prm = 
+            [<RequireQualifiedAccess>]
+            module Prm =  // TODO : change name to Var(iant) rather than Primitive?
                 /// Returns sensible Excel values for primitive types.
                 let out (replaceValues: ReplaceValues) (o0D: obj) : obj =
                     match o0D with
                     | :? double as d -> Dbl.out replaceValues d
-                    | _ -> o0D
+                    | _ -> o0D  // FIXME - will fail for non primitive types
 
                 [<RequireQualifiedAccess>]
                 /// Outputs optional and non-optional primitive types.
-                /// option on primitive types will return as follow : 
+                /// Option on primitive types will return as follow : 
                 ///    - None will return replaceValues.none
                 ///    - Some x will return (Prm.out x)
-                module Opt = 
+                module Any = 
                     let out (replaceValues: ReplaceValues) (o0D: obj) : obj =
                         o0D |> Useful.Option.map replaceValues.none (out replaceValues)
 
-            type GenFn =                    
-                /// Same as In.D0.Gen.def, but returns an obj instead of a 'A.
-                static member defObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
-                    let a0D = In.D0.GenFn.def<'A> defValue typeTag xlValue
-                    Prm.out replaceValues (box a0D)
-
-                /// Same as In.D0.Gen.tryDV, but returns an obj instead of a 'A.
-                static member tryDVObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
-                    let a0D = In.D0.GenFn.tryDV<'A> defValue typeTag xlValue
-                    // cellOpt<'A> replaceValues a0D
-                    Prm.Opt.out replaceValues a0D
 
             [<RequireQualifiedAccess>]
             /// Outputs primitives types directly to Excel, but stores non-primitive types in the Registry.
@@ -1236,9 +1560,22 @@ module API =
                     let ty = typeof<'a> |> Useful.Option.uType |> Option.defaultValue typeof<'a>
                 
                     if ty |> Useful.Type.isPrimitive true then
-                        o0D |> Useful.Option.map replaceValues.none (Prm.Opt.out replaceValues)
+                        o0D |> Useful.Option.map replaceValues.none (Prm.Any.out replaceValues)
                     else    
                         o0D |> Useful.Option.map replaceValues.none (Registry.MRegistry.append refKey >> box)
+
+            type GenFn =                    
+                /// Same as In.D0.Gen.def, but returns an obj instead of a 'A.
+                static member defObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                    let a0D = In.D0.GenFn.def<'A> defValue typeTag xlValue
+                    Prm.out replaceValues (box a0D)
+
+                /// Same as In.D0.Gen.tryDV, but returns an obj instead of a 'A. // FIXME change name?!
+                static member tryDVObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                    let a0D = In.D0.GenFn.defOpt<'A> defValue typeTag xlValue
+                    // cellOpt<'A> replaceValues a0D
+                    Prm.Any.out replaceValues a0D
+
 
             // DO WE NEED THESE? check out cast_gen
             [<RequireQualifiedAccess>]
@@ -1276,6 +1613,22 @@ module API =
             open Excel
             open type Variant
 
+            /// Outputs primitive types.
+            [<RequireQualifiedAccess>]
+            module Prm =  // TODO : change name to Var(iant) rather than Primitive?
+                /// Returns sensible Excel values for primitive types.  // TODO adapt wording to arrays
+                let out (replaceValues: ReplaceValues) (o1D: obj[]) : obj[] =
+                    o1D |> Array.map (D0.Prm.out replaceValues)
+
+                [<RequireQualifiedAccess>]
+                /// Outputs optional and non-optional primitive types.  // TODO adapt wording to arrays
+                /// Option on primitive types will return as follow : 
+                ///    - None will return replaceValues.none
+                ///    - Some x will return (Prm.out x)
+                module Any = 
+                    let out (replaceValues: ReplaceValues) (o1D: obj[]) : obj[] =
+                        o1D |> Array.map (D0.Prm.Any.out replaceValues)
+
             /// Outputs primitives types directly to Excel, but stores non-primitive types in the Registry.
             [<RequireQualifiedAccess>]
             module Reg = 
@@ -1289,25 +1642,42 @@ module API =
                         o1D |> Array.map (D0.Reg.out refKey replaceValues)
 
             type GenFn =
+                static member unboxO1D<'A> (a1D: 'A[]) : obj[] = a1D |> Array.map box
+
+
                 // TODO DO WE NEED THESE FUNCTIONS?
 
                 /// Same as Gen.def, but returns an obj[] instead of a 'a[].
                 static member defObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
                     let a1D = In.D1.GenFn.def<'A> rowWiseDef defValue typeTag xlValue
-                    range<'A> replaceValues a1D
+                    range1D<'A> replaceValues a1D
                     
                 // FIXME
                 static member defOptObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
                     let a1D = In.D1.GenFn.defOpt<'A> rowWiseDef defValue typeTag xlValue
-                    rangeOpt<'A> replaceValues a1D
+                    range1DOpt<'A> replaceValues a1D
 
                 /// Same as In.D1.Gen.filter, but returns an obj[] instead of a 'a[].
                 static member filterObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (typeTag: string) (xlValue: obj) : obj[] = 
                     let a1D = In.D1.GenFn.filter<'A> rowWiseDef typeTag xlValue
-                    range<'A> replaceValues a1D
+                    range1D<'A> replaceValues a1D
+            
+            /// Unbox a (boxed 'a[]) into a (boxed 'a)[].
+            /// or in other words, a (box 'a[]) into a obj[].
+            [<RequireQualifiedAccess>]
+            module Unbox =
+                let o1D (boxedArray: obj) : obj[] option = 
+                    let ty = boxedArray.GetType()
+                    if not ty.IsArray then
+                        None
+                    else
+                        let res = Useful.Generics.invoke<GenFn> "unboxO1D" [| ty.GetElementType() |] [| boxedArray |]
+                        res :?> obj[]
+                        |> Some
 
             [<RequireQualifiedAccess>]
             module Gen =
+
                 // TODO DO WE NEED THESE FUNCTIONS? SHOULD THESE FUNCTIONS BE IN IN!!!   FIXX ME
                 // maybe useful for testing / inspection. E.g. take an xl-range and apply these functions, see the result directly into Excel. (direct from xl to xl...)
                 // ???
@@ -1325,6 +1695,7 @@ module API =
                     let res = Useful.Generics.invoke<GenFn> "defOptObj" [| gentype |] args
                     res :?> obj[]
 
+                // TODO change name to Any.def
                 /// Same as In.D1.Gen.defAllCases but returns a obj[], rather than a (boxed) ('a option)[].
                 let defAllCasesObj (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
                     let gentype = typeTag |> Variant.labelType true
@@ -1356,6 +1727,111 @@ module API =
         let outDbl<'a> (defNum: double) : 'a option -> obj = out (box defNum)
 
         let outOpt<'a> (defNum: double) : 'a option -> obj = out (box defNum)
+
+
+        /// Obj[,] output functions.
+        module D2 =
+            open Excel
+            open type Variant
+
+            /// Returns an xl 2D-range, or a default-singleton instead of an empty array. 
+            /// NaN elements are converted according to replaceValues.
+            let range2D<'a> (replaceValues: ReplaceValues) (a2D: 'a[,]) : obj[,] =
+                if a2D |> In.D2.isEmpty then
+                    In.D2.singleton replaceValues.empty
+                else
+                    if typeof<'a> = typeof<double> then
+                        a2D |> Array2D.map (fun num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval)
+                    else
+                        a2D |> Array2D.map box
+
+            /// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
+            /// None and NaN elements are converted according to replaceValues.
+            let range2DOpt<'a> (replaceValues: ReplaceValues) (a2D: ('a option)[,]) : obj[,] =
+                if a2D |> In.D2.isEmpty then
+                    In.D2.singleton replaceValues.empty
+                else
+                    if typeof<'a> = typeof<double> then
+                        a2D 
+                        |> Array2D.map 
+                            (fun elem -> 
+                                match elem with 
+                                | None -> replaceValues.none 
+                                | Some num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval
+                            )
+                    else
+                        a2D |> Array2D.map (fun elem -> match elem with | None -> replaceValues.none | Some e -> box e)
+
+            /// Outputs primitives types directly to Excel, but stores non-primitive types in the Registry.
+            [<RequireQualifiedAccess>]
+            module Reg = 
+                /// Outputs to Excel: FIXME check wording
+                ///    - Primitives-type: Returns values directly to Excel.
+                ///    - R-object : Returns a Registry keys and stores values in the Registry.
+                let out<'a> (refKey: String) (replaceValues: ReplaceValues) (o2D: obj[,]) : obj[,] =
+                    if o2D |> Array2D.length1 = 0 then  // TODO : what's the best way to check o2D is empty??????
+                        Array2D.create 1 1 replaceValues.empty
+                    else
+                        o2D |> Array2D.map (D0.Reg.out refKey replaceValues)
+
+            type GenFn =
+                // TODO DO WE NEED THESE FUNCTIONS? yes checj cast2d_gen illustration purposes
+
+                /// Same as Gen.def, but returns an obj[] instead of a 'a[].
+                static member defObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[,] = 
+                    let a2D = In.D2.GenFn.def<'A> defValue typeTag xlValue
+                    range2D<'A> replaceValues a2D
+                    
+                // FIXME
+                static member defOptObj<'A> (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[,] = 
+                    let a2D = In.D2.GenFn.defOpt<'A> defValue typeTag xlValue
+                    range2DOpt<'A> replaceValues a2D
+
+                /// Same as In.D1.Gen.filter, but returns an obj[] instead of a 'a[].
+                static member filterObj<'A> (rowWise: bool option) (replaceValues: ReplaceValues) (typeTag: string) (xlValue: obj) : obj[,] = 
+                    let a2D = In.D2.GenFn.filter<'A> rowWise typeTag xlValue
+                    range2D<'A> replaceValues a2D
+
+            [<RequireQualifiedAccess>]
+            module Gen =
+                // TODO DO WE NEED THESE FUNCTIONS? SHOULD THESE FUNCTIONS BE IN IN!!!   FIXX ME
+                // maybe useful for testing / inspection. E.g. take an xl-range and apply these functions, see the result directly into Excel. (direct from xl to xl...)
+                // ???
+                /// Same as In.D1.Gen.def but returns a obj[], rather than a (boxed) 'a[].
+                let defObj (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[,] = 
+                    let gentype = typeTag |> Variant.labelType true
+                    let args : obj[] = [| replaceValues; defValue; typeTag; xlValue |]
+                    let res = Useful.Generics.invoke<GenFn> "defObj" [| gentype |] args
+                    res :?> obj[,]
+
+                /// Same as In.D1.Gen.defOpt but returns a obj[], rather than a (boxed) ('a option)[].
+                let defOptObj (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[,] = 
+                    let gentype = typeTag |> Variant.labelType true
+                    let args : obj[] = [| replaceValues; defValue; typeTag; xlValue |]
+                    let res = Useful.Generics.invoke<GenFn> "defOptObj" [| gentype |] args
+                    res :?> obj[,]
+
+                // TODO change name to Any.def
+                /// Same as In.D1.Gen.defAllCases but returns a obj[], rather than a (boxed) ('a option)[].
+                let defAllCasesObj (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[,] = 
+                    let gentype = typeTag |> Variant.labelType true
+                    let args : obj[] = [| replaceValues; defValue; typeTag; xlValue |]
+                    let res =
+                        if typeTag |> isOptionalType then
+                            Useful.Generics.invoke<GenFn> "defOptObj" [| gentype |] args
+                        else
+                            Useful.Generics.invoke<GenFn> "defObj" [| gentype |] args
+                    res :?> obj[,]
+
+                /// Same as In.D1.Gen.filter.
+                let filterObj (rowWise: bool option) (replaceValues: ReplaceValues) (typeTag: string) (xlValue: obj) : obj[,] = 
+                    let gentype = typeTag |> Variant.labelType false
+                    let args : obj[] = [| rowWise; replaceValues; typeTag; xlValue |]
+                    //let res = callMethod "filterObj" gentype args
+                    let res = Useful.Generics.invoke<GenFn> "filterObj" [| gentype |] args
+                    res :?> obj[,]
+
+
 
 module A1D = 
     open type Registry
@@ -1472,6 +1948,38 @@ module Cast_XL =
     open type Variant
     open type ReplaceValues
 
+
+
+    [<ExcelFunction(Category="TEST", Description="test2d")>]
+    let test2D ([<ExcelArgument(Description= "Range.")>] range: obj)
+        : obj  =
+
+        let xxx : int =
+            match range with
+            | :? (obj[,]) as o2D -> 2
+            | :? (obj[]) as o1D -> 1
+            | o0D -> 0
+
+        // result
+        box xxx
+
+    [<ExcelFunction(Category="TEST", Description="test2d")>]
+    let test2D2 
+        ([<ExcelArgument(Description= "Range.")>] range: obj)
+        ([<ExcelArgument(Description= "Rowwise.")>] rowwise: bool)
+        : obj[,]  =
+
+        let to2D (xlVal: obj) : obj[,] =
+            match xlVal with
+            | :? (obj[,]) as o2D -> o2D
+            | :? (obj[]) as o1D -> if rowwise then [| o1D |] |> array2D  else Array2D.create 1 1 (box 42)
+            | o0D -> Array2D.create 1 1 o0D
+
+        let xxx = to2D range
+
+        // result
+        xxx
+
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to DateTime[].")>]
     let cast_edgeCases ()
         : obj[,]  =
@@ -1490,7 +1998,7 @@ module Cast_XL =
         let rowWiseDef = In.D0.Bool.def false rowWiseDirection
 
         // result
-        In.D0.to1D rowWiseDef range
+        In.Cast.to1D rowWiseDef range // FIXME - should not use to1D but another In.D1.x function
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to bool[].")>]
     let cast1d_bool
@@ -1511,14 +2019,14 @@ module Cast_XL =
         let rplval = { def with none = none; empty = empty }
 
         // result
-        let o1D = In.D0.to1D rowwise range 
+        let o1D = In.Cast.to1D rowwise range  // FIXME - should not use to1D but another In.D1.x function
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = In.D1.Bool.filter o1D
-                 a1D |> Out.range<bool> rplval
+                 a1D |> Out.range1D<bool> rplval // FIXME should not use range1D?
         | "O" -> let a1D = In.D1.Bool.Opt.def None o1D
-                 a1D |> Out.rangeOpt<bool> rplval
+                 a1D |> Out.range1DOpt<bool> rplval
         | _   -> let a1D = In.D1.Bool.def defVal o1D 
-                 a1D |> Out.range<bool> rplval
+                 a1D |> Out.range1D<bool> rplval
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to string[].")>]
     let cast1d_stg
@@ -1539,14 +2047,14 @@ module Cast_XL =
         let rplval = { def with none = none; empty = empty }
 
         // result
-        let o1D = In.D0.to1D rowwise range 
+        let o1D = In.Cast.to1D rowwise range  // FIXME - should not use to1D but another In.D1.x function
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = In.D1.Stg.filter o1D
-                 a1D |> Out.range<string> rplval
+                 a1D |> Out.range1D<string> rplval // FIXME - should not use to1D but another In.D1.x function
         | "O" -> let a1D = In.D1.Stg.Opt.def None o1D
-                 a1D |> Out.rangeOpt<string> rplval
+                 a1D |> Out.range1DOpt<string> rplval
         | _   -> let a1D = In.D1.Stg.def defVal o1D 
-                 a1D |> Out.range<string> rplval
+                 a1D |> Out.range1D<string> rplval
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to double[].")>]
     let cast1d_dbl
@@ -1567,14 +2075,14 @@ module Cast_XL =
         let rplval = { def with none = none; empty = empty }
 
         // result
-        let o1D = In.D0.to1D rowwise range 
+        let o1D = In.Cast.to1D rowwise range  // FIXME - should not use to1D but another In.D1.x function
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = In.D1.Dbl.filter o1D
-                 a1D |> Out.range<double> rplval
+                 a1D |> Out.range1D<double> rplval // FIXME - should not use to1D but another In.D1.x function
         | "O" -> let a1D = In.D1.Dbl.Opt.def None o1D
-                 a1D |> Out.rangeOpt<double> rplval
+                 a1D |> Out.range1DOpt<double> rplval
         | _   -> let a1D = In.D1.Dbl.def defVal o1D 
-                 a1D |> Out.range<double> rplval
+                 a1D |> Out.range1D<double> rplval
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to an array of doubles (including NaNs).")>]
     let cast1d_dblNan
@@ -1599,14 +2107,14 @@ module Cast_XL =
         let rplval = { def with none = none; empty = empty }
 
         // result
-        let o1D = In.D0.to1D rowwise range 
+        let o1D = In.Cast.to1D rowwise range  // FIXME - should not use to1D but another In.D1.x function
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = In.D1.Nan.filter xlkinds o1D
-                 a1D |> Out.range<double> rplval
-        | "O" -> let a1D = In.D1.Nan.Opt.def xlkinds None o1D
-                 a1D |> Out.rangeOpt<double> rplval
+                 a1D |> Out.range1D<double> rplval // FIXME - should not use to1D but another In.D1.x function
+        | "O" -> let a1D = In.D1.Nan.Opt.def xlkinds None o1D 
+                 a1D |> Out.range1DOpt<double> rplval
         | _   -> let a1D = In.D1.Nan.def xlkinds defVal o1D 
-                 a1D |> Out.range<double> rplval
+                 a1D |> Out.range1D<double> rplval
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to int[].")>]
     let cast1d_int
@@ -1627,14 +2135,14 @@ module Cast_XL =
         let rplval = { def with none = none; empty = empty }
 
         // result
-        let o1D = In.D0.to1D rowwise range 
+        let o1D = In.Cast.to1D rowwise range  // FIXME - should not use to1D but another In.D1.x function
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = In.D1.Intg.filter o1D
-                 a1D |> Out.range<int> rplval
+                 a1D |> Out.range1D<int> rplval // FIXME - should not use to1D but another In.D1.x function
         | "O" -> let a1D = In.D1.Intg.Opt.def None o1D
-                 a1D |> Out.rangeOpt<int> rplval
+                 a1D |> Out.range1DOpt<int> rplval
         | _   -> let a1D = In.D1.Intg.def defVal o1D 
-                 a1D |> Out.range<int> rplval
+                 a1D |> Out.range1D<int> rplval
         
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to DateTime[].")>]
     let cast1d_dte
@@ -1655,38 +2163,14 @@ module Cast_XL =
         let rplval = { def with none = none; empty = empty }
 
         // result
-        let o1D = In.D0.to1D rowwise range 
+        let o1D = In.Cast.to1D rowwise range  // FIXME - should not use to1D but another In.D1.x function
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = In.D1.Dte.filter o1D
-                 a1D |> Out.range<DateTime> rplval
+                 a1D |> Out.range1D<DateTime> rplval // FIXME - should not use to1D but another In.D1.x function
         | "O" -> let a1D = In.D1.Dte.Opt.def None o1D
-                 a1D |> Out.rangeOpt<DateTime> rplval
+                 a1D |> Out.range1DOpt<DateTime> rplval
         | _   -> let a1D = In.D1.Dte.def defVal o1D 
-                 a1D |> Out.range<DateTime> rplval
-
-    [<ExcelFunction(Category="XL", Description="Cast a 1D-slice of an xl-range to a generic type array.")>]
-    let cast1d_gen
-        ([<ExcelArgument(Description= "1D xl-range.")>] range: obj)
-        ([<ExcelArgument(Description= "Type label.")>] typeLabel: string)
-        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Optional\" (= replace with None) or \"Filter\". Default is \"Replace\".]")>] replaceMethod: obj)
-        ([<ExcelArgument(Description= "[Default Value (only for non-optional types). Must be of the appropriate type. Default \"<default>\" (which will fail for non-string types).]")>] defaultValue: obj)
-        ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
-        ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
-        ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
-        : obj[]  =
-
-        // intermediary stage
-        let rowwise = In.D0.Bool.tryDV None rowWiseDirection
-        let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
-        let none = In.D0.Stg.def "<none>" noneValue
-        let empty = In.D0.Stg.def "<empty>" emptyValue
-        let rplval = { def with none = none; empty = empty }
-//        let isoptional = isOptionalType typeLabel
-        let defVal = In.D0.Missing.tryO defaultValue
-            
-        match replmethod.ToUpper().Substring(0,1) with
-        | "F" -> Out.D1.Gen.filterObj rowwise rplval typeLabel range
-        | _ -> Out.D1.Gen.defAllCasesObj rowwise rplval defVal typeLabel range
+                 a1D |> Out.range1D<DateTime> rplval
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-value to a generic type.")>]
     let cast_gen
@@ -1705,6 +2189,83 @@ module Cast_XL =
         let res = Out.D0.Gen.defAllCasesObj rplval defVal typeLabel xlValue
         res
 
+    [<ExcelFunction(Category="XL", Description="Cast a 1D-slice of an xl-range to a generic type 1D array.")>]
+    let cast1d_gen
+        ([<ExcelArgument(Description= "1D xl-range.")>] range: obj)
+        ([<ExcelArgument(Description= "Type label.")>] typeLabel: string)
+        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Optional\" (= replace with None) or \"Filter\". Default is \"Replace\".]")>] replaceMethod: obj)
+        ([<ExcelArgument(Description= "[Default Value (only for non-optional types). Must be of the appropriate type. Default \"<default>\" (which will fail for non-string types).]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
+        ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
+        ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
+        : obj[]  =
+
+        // intermediary stage
+        let rowwise = In.D0.Bool.Opt.def None rowWiseDirection
+        let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
+        let none = In.D0.Stg.def "<none>" noneValue
+        let empty = In.D0.Stg.def "<empty>" emptyValue
+        let rplval = { def with none = none; empty = empty }
+//        let isoptional = isOptionalType typeLabel
+        let defVal = In.D0.Missing.tryO defaultValue
+            
+        match replmethod.ToUpper().Substring(0,1) with
+        | "F" -> Out.D1.Gen.filterObj rowwise rplval typeLabel range
+        | _ -> Out.D1.Gen.defAllCasesObj rowwise rplval defVal typeLabel range
+
+    [<ExcelFunction(Category="XL", Description="Cast a 1D-slice of an xl-range to a generic type 1D array.")>]
+    let cast1d_genNEW
+        ([<ExcelArgument(Description= "1D xl-range.")>] range: obj)
+        ([<ExcelArgument(Description= "Type label.")>] typeLabel: string)
+        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Optional\" (= replace with None) or \"Filter\". Default is \"Replace\".]")>] replaceMethod: obj)
+        ([<ExcelArgument(Description= "[Default Value (only for non-optional types). Must be of the appropriate type. Default \"<default>\" (which will fail for non-string types).]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
+        ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
+        ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
+        : obj[]  =
+
+        // intermediary stage
+        let rowwise = In.D0.Bool.Opt.def None rowWiseDirection
+        let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
+        let none = In.D0.Stg.def "<none>" noneValue
+        let empty = In.D0.Stg.def "<empty>" emptyValue
+        let rplval = { def with none = none; empty = empty }
+        //let isoptional = isOptionalType typeLabel
+        let defVal = In.D0.Missing.tryO defaultValue
+            
+        match replmethod.ToUpper().Substring(0,1) with
+        | "F" -> Out.D1.Gen.filterObj rowwise rplval typeLabel range
+        | _ -> 
+            let o = In.D1.Gen.Any.def rowwise defVal typeLabel range 
+            match o |> Out.D1.Unbox.o1D with
+            | None -> [| box ExcelError.ExcelErrorNA |]
+            | Some o1D ->
+                Out.D1.Prm.Any.out rplval o1D
+
+    [<ExcelFunction(Category="XL", Description="Cast a 2D xl-range to a generic type 2D array.")>]
+    let cast2d_gen
+        ([<ExcelArgument(Description= "2D xl-range.")>] range: obj)
+        ([<ExcelArgument(Description= "Type label.")>] typeLabel: string)
+        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Optional\" (= replace with None) or \"Filter\". Default is \"Replace\".]")>] replaceMethod: obj)
+        ([<ExcelArgument(Description= "[Default Value (only for non-optional types). Must be of the appropriate type. Default \"<default>\" (which will fail for non-string types).]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
+        ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
+        ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
+        : obj[,]  =
+
+        // intermediary stage
+        let rowwise = In.D0.Bool.Opt.def None rowWiseDirection
+        let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
+        let none = In.D0.Stg.def "<none>" noneValue
+        let empty = In.D0.Stg.def "<empty>" emptyValue
+        let rplval = { def with none = none; empty = empty }
+        let defVal = In.D0.Missing.tryO defaultValue
+            
+        match replmethod.ToUpper().Substring(0,1) with
+        | "F" -> Out.D2.Gen.filterObj rowwise rplval typeLabel range
+        | _ -> Out.D2.Gen.defAllCasesObj rplval defVal typeLabel range
+
+
 module A1D_XL =
     open type Registry
     open Registry
@@ -1712,6 +2273,8 @@ module A1D_XL =
     open API
     open type Variant
     open type ReplaceValues
+
+    // open API.In.D0
 
     [<ExcelFunction(Category="XL", Description="Cast a 1D-slice of an xl-range to a generic type array.")>]
     let a1_ofRng
@@ -1723,7 +2286,7 @@ module A1D_XL =
         : obj  =
 
         // intermediary stage
-        let rowwise = In.D0.Bool.tryDV None rowWiseDirection
+        let rowwise = In.D0.Bool.Opt.def None rowWiseDirection
         let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
         let defVal = In.D0.Missing.tryO defaultValue
         
@@ -1804,8 +2367,8 @@ module A1D_XL =
         : obj = 
 
         // intermediary stage
-        let count = In.D0.Intg.tryDV None subCount
-        let start = In.D0.Intg.tryDV None startIndex
+        let count = In.D0.Intg.Opt.def None subCount
+        let start = In.D0.Intg.Opt.def None startIndex
 
         // caller cell's reference ID
         let rfid = MRegistry.refID
@@ -1823,7 +2386,7 @@ module A1D_XL =
         : obj = 
 
         // intermediary stage
-        let rO3 = In.D0.Stg.tryDV None rgA1D3
+        let rO3 = In.D0.Stg.Opt.def None rgA1D3
 
         // caller cell's reference ID
         let rfid = MRegistry.refID
@@ -1864,7 +2427,7 @@ module GenMtrx =
     type GenFn =
         static member mtrx0D<'A> (defValue: obj option) (typeLabel: string) (size: int) (xlValue: obj) : GenMTRX<'A> =
             // let a0Dx = In.D0.Gen.def defValue typeLabel xlValue
-            let a0D = In.D0.Gen.defAllCases defValue typeLabel xlValue :?> 'A
+            let a0D = In.D0.Gen.Any.def defValue typeLabel xlValue :?> 'A
             a0D |> create0D size
 
         static member mtrx1D<'A> (defValue: obj option) (typeLabel: string) (size: int) (xlValue: obj) : GenMTRX<'A> =

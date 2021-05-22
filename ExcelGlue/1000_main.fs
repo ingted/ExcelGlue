@@ -279,9 +279,9 @@ type Variant = | BOOL | BOOLOPT | STRING | STRINGOPT | DOUBLE | DOUBLEOPT | DOUB
     //    | Some dv -> dv
     //    :?> 'a
 
-/// Replacement values to return to Excel instead of Double.NaN, None, and [||].
-type ReplaceValues = { nan: obj; none: obj; empty: obj; object: obj } with
-    static member def : ReplaceValues = { nan = ExcelError.ExcelErrorNA; none = "<none>"; empty = "<empty>"; object = "<obj>" }
+/// Replacement values to return to Excel instead of Double.NaN, None, and [||]. TODO : wording, description of each element
+type ReplaceValues = { nan: obj; none: obj; empty: obj; object: obj; error: obj } with
+    static member def : ReplaceValues = { nan = ExcelError.ExcelErrorNA; none = "<none>"; empty = "<empty>"; object = "<obj>"; error = box ExcelError.ExcelErrorNA }
 
 
 type MTRXD = double[,]
@@ -1212,7 +1212,8 @@ module API =
                             else
                                 Useful.Generics.invoke<GenFn> "def" [| gentype |] args
                         res
-
+                
+                /// TODO: wording here. Mentioning the output is a (boxed) 'a[] where 'a is determined by the type tag
                 let filter (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype = typeTag |> Variant.labelType false
                     let args : obj[] = [| rowWiseDef; typeTag; xlValue |]
@@ -1476,50 +1477,50 @@ module API =
     module Out =
         open type Variant
 
-        /// Returns an xl-Value from a typed value. 
-        /// NaN elements are converted according to replaceValues.
-        let cellTBD<'a> (replaceValues: ReplaceValues) (a0D: 'a) : obj =
-            let xlval = box a0D
-            if typeof<'a> = typeof<double> then
-                if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval
-            else
-                xlval
+        ///// Returns an xl-Value from a typed value. 
+        ///// NaN elements are converted according to replaceValues.
+        //let cellTBD<'a> (replaceValues: ReplaceValues) (a0D: 'a) : obj =
+        //    let xlval = box a0D
+        //    if typeof<'a> = typeof<double> then
+        //        if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval
+        //    else
+        //        xlval
 
-        /// Returns an xl-Value from a typed value. 
-        /// None and NaN elements are converted according to replaceValues.
-        /// Some 'a elements will be output as would 'a.
-        let cellOptTBD<'a> (replaceValues: ReplaceValues) (a0D: 'a option) : obj =
-            match a0D with
-            | None -> replaceValues.none
-            | Some a0d -> cellTBD<'a> replaceValues a0d
+        ///// Returns an xl-Value from a typed value. 
+        ///// None and NaN elements are converted according to replaceValues.
+        ///// Some 'a elements will be output as would 'a.
+        //let cellOptTBD<'a> (replaceValues: ReplaceValues) (a0D: 'a option) : obj =
+        //    match a0D with
+        //    | None -> replaceValues.none
+        //    | Some a0d -> cellTBD<'a> replaceValues a0d
 
-        /// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
-        /// NaN elements are converted according to replaceValues.
-        let range1D<'a> (replaceValues: ReplaceValues) (a1D: 'a[]) : obj[] =
-            if a1D |> Array.isEmpty then
-                [| replaceValues.empty |]
-            else
-                if typeof<'a> = typeof<double> then
-                    a1D |> Array.map (fun num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval)
-                else
-                    a1D |> Array.map box
+        ///// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
+        ///// NaN elements are converted according to replaceValues.
+        //let range1D<'a> (replaceValues: ReplaceValues) (a1D: 'a[]) : obj[] =
+        //    if a1D |> Array.isEmpty then
+        //        [| replaceValues.empty |]
+        //    else
+        //        if typeof<'a> = typeof<double> then
+        //            a1D |> Array.map (fun num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval)
+        //        else
+        //            a1D |> Array.map box
 
-        /// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
-        /// None and NaN elements are converted according to replaceValues.
-        let range1DOpt<'a> (replaceValues: ReplaceValues) (a1D: ('a option)[]) : obj[] =
-            if a1D |> Array.isEmpty then
-                [| replaceValues.empty |]
-            else
-                if typeof<'a> = typeof<double> then
-                    a1D 
-                    |> Array.map 
-                        (fun elem -> 
-                            match elem with 
-                            | None -> replaceValues.none 
-                            | Some num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval
-                        )
-                else
-                    a1D |> Array.map (fun elem -> match elem with | None -> replaceValues.none | Some e -> box e)
+        ///// Returns an xl 1D-range, or a default-singleton instead of an empty array. 
+        ///// None and NaN elements are converted according to replaceValues.
+        //let range1DOpt<'a> (replaceValues: ReplaceValues) (a1D: ('a option)[]) : obj[] =
+        //    if a1D |> Array.isEmpty then
+        //        [| replaceValues.empty |]
+        //    else
+        //        if typeof<'a> = typeof<double> then
+        //            a1D 
+        //            |> Array.map 
+        //                (fun elem -> 
+        //                    match elem with 
+        //                    | None -> replaceValues.none 
+        //                    | Some num -> let xlval = box num in if Double.IsNaN(xlval :?> double) then replaceValues.nan else xlval
+        //                )
+        //        else
+        //            a1D |> Array.map (fun elem -> match elem with | None -> replaceValues.none | Some e -> box e)
 
 
 
@@ -1547,10 +1548,20 @@ module API =
                     | _ -> replaceValues.object
 
                 [<RequireQualifiedAccess>]
-                /// Outputs optional and non-optional primitive types.
-                /// Option on primitive types (boxed) will return as follow : 
+                /// Outputs optional primitive types:
                 ///    - None will return replaceValues.none
-                ///    - Some x will return (Prm.out x)
+                ///    - Some x will return (Bxd.out x)
+                module Opt = 
+                    let out (replaceValues: ReplaceValues) (o0D: obj option) : obj =
+                        match o0D with
+                        | None -> replaceValues.none
+                        | Some o0d -> o0d |> out replaceValues
+
+                [<RequireQualifiedAccess>]
+                /// Outputs optional and non-optional primitive types.
+                /// Option on primitive types (boxed) will return as follow: 
+                ///    - None will return replaceValues.none
+                ///    - Some x will return (Bxd.out x)
                 module Any = 
                     let out (replaceValues: ReplaceValues) (o0D: obj) : obj =
                         o0D |> Useful.Option.map replaceValues.none (out replaceValues)
@@ -1676,81 +1687,90 @@ module API =
                         o1D |> Array.map (D0.Reg.out refKey replaceValues)
 
             type UnboxFn =
-                static member unboxO1D<'A> (a1D: 'A[]) : obj[] = a1D |> Array.map box
+                static member unbox<'A> (a1D: 'A[]) : obj[] = a1D |> Array.map box
 
-            /// Unbox a (boxed 'a[]) into a (boxed 'a)[].
-            /// or in other words, a (box 'a[]) into a obj[].
             [<RequireQualifiedAccess>]
-            module Unbox =
+            module Unbox = 
+                /// Unboxes a (boxed 'a[]) into a (boxed 'a)[].
+                /// In other words, unboxes a obj = box ('a[]) into a obj[].
+                /// Returns None if the unboxing fails.
                 let o1D (boxedArray: obj) : obj[] option = 
                     let ty = boxedArray.GetType()
                     if not ty.IsArray then
                         None
                     else
-                        let res = Useful.Generics.invoke<UnboxFn> "unboxO1D" [| ty.GetElementType() |] [| boxedArray |]
+                        let res = Useful.Generics.invoke<UnboxFn> "unbox" [| ty.GetElementType() |] [| boxedArray |]
                         res :?> obj[]
                         |> Some
 
-            type GenFn =
-                static member unboxO1D<'A> (a1D: 'A[]) : obj[] = a1D |> Array.map box
+                /// Convenience function, similar to o1D but :
+                ///    - returns [| replaceValues.error |] if the unboxing fails.
+                ///    - applies a mapping function to each element after the unboxing.
+                let apply (replaceValues: ReplaceValues) (fn: obj[] -> obj[]) (boxedArray: obj) : obj[] = 
+                    match boxedArray |> o1D with
+                    | None -> [| replaceValues.error |]
+                    | Some o1D -> fn o1D
 
-                // TODO DO WE NEED THESE FUNCTIONS?
+            //type GenFnTBD =
+            //    static member unboxO1D<'A> (a1D: 'A[]) : obj[] = a1D |> Array.map box
 
-                /// Same as Gen.def, but returns an obj[] instead of a 'a[].
-                static member defObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
-                    let a1D = In.D1.GenFn.def<'A> rowWiseDef defValue typeTag xlValue
-                    range1D<'A> replaceValues a1D
+            //    // TODO DO WE NEED THESE FUNCTIONS?
+
+            //    /// Same as Gen.def, but returns an obj[] instead of a 'a[].
+            //    static member defObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
+            //        let a1D = In.D1.GenFn.def<'A> rowWiseDef defValue typeTag xlValue
+            //        range1D<'A> replaceValues a1D
                     
-                // FIXME
-                static member defOptObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
-                    let a1D = In.D1.GenFn.defOpt<'A> rowWiseDef defValue typeTag xlValue
-                    range1DOpt<'A> replaceValues a1D
+            //    // FIXME
+            //    static member defOptObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
+            //        let a1D = In.D1.GenFn.defOpt<'A> rowWiseDef defValue typeTag xlValue
+            //        range1DOpt<'A> replaceValues a1D
 
-                /// Same as In.D1.Gen.filter, but returns an obj[] instead of a 'a[].
-                static member filterObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (typeTag: string) (xlValue: obj) : obj[] = 
-                    let a1D = In.D1.GenFn.filter<'A> rowWiseDef typeTag xlValue
-                    range1D<'A> replaceValues a1D
+            //    /// Same as In.D1.Gen.filter, but returns an obj[] instead of a 'a[].
+            //    static member filterObj<'A> (rowWiseDef: bool option) (replaceValues: ReplaceValues) (typeTag: string) (xlValue: obj) : obj[] = 
+            //        let a1D = In.D1.GenFn.filter<'A> rowWiseDef typeTag xlValue
+            //        range1D<'A> replaceValues a1D
 
-            [<RequireQualifiedAccess>]
-            module Gen =
+            //[<RequireQualifiedAccess>]
+            //module GenTBDx =
 
-                // TODO DO WE NEED THESE FUNCTIONS? SHOULD THESE FUNCTIONS BE IN IN!!!   FIXX ME
-                // maybe useful for testing / inspection. E.g. take an xl-range and apply these functions, see the result directly into Excel. (direct from xl to xl...)
-                // ???
-                /// Same as In.D1.Gen.def but returns a obj[], rather than a (boxed) 'a[].
-                let defObj (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
-                    let gentype = typeTag |> Variant.labelType true
-                    let args : obj[] = [| rowWiseDef; replaceValues; defValue; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<GenFn> "defObj" [| gentype |] args
-                    res :?> obj[]
+            //    // TODO DO WE NEED THESE FUNCTIONS? SHOULD THESE FUNCTIONS BE IN IN!!!   FIXX ME
+            //    // maybe useful for testing / inspection. E.g. take an xl-range and apply these functions, see the result directly into Excel. (direct from xl to xl...)
+            //    // ???
+            //    /// Same as In.D1.Gen.def but returns a obj[], rather than a (boxed) 'a[].
+            //    let defObj (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
+            //        let gentype = typeTag |> Variant.labelType true
+            //        let args : obj[] = [| rowWiseDef; replaceValues; defValue; typeTag; xlValue |]
+            //        let res = Useful.Generics.invoke<GenFnTBD> "defObj" [| gentype |] args
+            //        res :?> obj[]
 
-                /// Same as In.D1.Gen.defOpt but returns a obj[], rather than a (boxed) ('a option)[].
-                let defOptObj (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
-                    let gentype = typeTag |> Variant.labelType true
-                    let args : obj[] = [| rowWiseDef; replaceValues; defValue; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<GenFn> "defOptObj" [| gentype |] args
-                    res :?> obj[]
+            //    /// Same as In.D1.Gen.defOpt but returns a obj[], rather than a (boxed) ('a option)[].
+            //    let defOptObj (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
+            //        let gentype = typeTag |> Variant.labelType true
+            //        let args : obj[] = [| rowWiseDef; replaceValues; defValue; typeTag; xlValue |]
+            //        let res = Useful.Generics.invoke<GenFnTBD> "defOptObj" [| gentype |] args
+            //        res :?> obj[]
 
-                // TODO change name to Any.def
-                /// Same as In.D1.Gen.defAllCases but returns a obj[], rather than a (boxed) ('a option)[].
-                let defAllCasesObj (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
-                    let gentype = typeTag |> Variant.labelType true
-                    let args : obj[] = [| rowWiseDef; replaceValues; defValue; typeTag; xlValue |]
+            //    // TODO change name to Any.def
+            //    /// Same as In.D1.Gen.defAllCases but returns a obj[], rather than a (boxed) ('a option)[].
+            //    let defAllCasesObj (rowWiseDef: bool option) (replaceValues: ReplaceValues) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj[] = 
+            //        let gentype = typeTag |> Variant.labelType true
+            //        let args : obj[] = [| rowWiseDef; replaceValues; defValue; typeTag; xlValue |]
 
-                    let res =
-                        if typeTag |> isOptionalType then
-                            Useful.Generics.invoke<GenFn> "defOptObj" [| gentype |] args
-                        else
-                            Useful.Generics.invoke<GenFn> "defObj" [| gentype |] args
-                    res :?> obj[]
+            //        let res =
+            //            if typeTag |> isOptionalType then
+            //                Useful.Generics.invoke<GenFnTBD> "defOptObj" [| gentype |] args
+            //            else
+            //                Useful.Generics.invoke<GenFnTBD> "defObj" [| gentype |] args
+            //        res :?> obj[]
 
-                /// Same as In.D1.Gen.filter.
-                let filterObj (rowWiseDef: bool option) (replaceValues: ReplaceValues) (typeTag: string) (xlValue: obj) : obj[] = 
-                    let gentype = typeTag |> Variant.labelType false
-                    let args : obj[] = [| rowWiseDef; replaceValues; typeTag; xlValue |]
-                    //let res = callMethod "filterObj" gentype args
-                    let res = Useful.Generics.invoke<GenFn> "filterObj" [| gentype |] args
-                    res :?> obj[]
+            //    /// Same as In.D1.Gen.filter.
+            //    let filterObj (rowWiseDef: bool option) (replaceValues: ReplaceValues) (typeTag: string) (xlValue: obj) : obj[] = 
+            //        let gentype = typeTag |> Variant.labelType false
+            //        let args : obj[] = [| rowWiseDef; replaceValues; typeTag; xlValue |]
+            //        //let res = callMethod "filterObj" gentype args
+            //        let res = Useful.Generics.invoke<GenFnTBD> "filterObj" [| gentype |] args
+            //        res :?> obj[]
 
         // -----------------------------------
         // -- Convenience functions
@@ -2149,11 +2169,14 @@ module Cast_XL =
         // the type annotations are NOT necessary (but are used here for readability).
         match replmethod.ToUpper().Substring(0,1) with
         | "F" -> let a1D = In.D1.Nan.filter xlkinds o1D
-                 a1D |> Out.range1D<double> rplval
+                 //a1D |> Out.range1D<double> rplval
+                 a1D |> Out.D1.Prm.out<double> rplval
         | "O" -> let a1D = In.D1.Nan.Opt.def xlkinds None o1D 
-                 a1D |> Out.range1DOpt<double> rplval
+                 //a1D |> Out.range1DOpt<double> rplval
+                 a1D |> Out.D1.Prm.out<double option> rplval
         | _   -> let a1D = In.D1.Nan.def xlkinds defVal o1D 
-                 a1D |> Out.range1D<double> rplval
+                 //a1D |> Out.range1D<double> rplval
+                 a1D |> Out.D1.Prm.out<double> rplval
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to int[].")>]
     let cast1d_int
@@ -2257,7 +2280,7 @@ module Cast_XL =
     [<ExcelFunction(Category="XL", Description="Cast a 1D-slice of an xl-range to a generic type 1D array.")>] // FIXME change wording
     let cast1d_gen
         ([<ExcelArgument(Description= "1D xl-range.")>] range: obj)
-        ([<ExcelArgument(Description= "Type label.")>] typeLabel: string)
+        ([<ExcelArgument(Description= "Type tag. E.g. bool, date, double, string, obj or #bool, #date,  etc...")>] typeTag: string)
         ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Optional\" (= replace with None) or \"Filter\". Default is \"Replace\".]")>] replaceMethod: obj)
         ([<ExcelArgument(Description= "[Default Value (only for non-optional types). Must be of the appropriate type. Default \"<default>\" (which will fail for non-string types).]")>] defaultValue: obj)
         ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
@@ -2271,20 +2294,15 @@ module Cast_XL =
         let none = In.D0.Stg.def "<none>" noneValue
         let empty = In.D0.Stg.def "<empty>" emptyValue
         let rplval = { def with none = none; empty = empty }
-        //let isoptional = isOptionalType typeLabel
         let defVal = In.D0.Missing.tryO defaultValue
-            
+        
+        // for demo purpose only: take an Excel range input,
+        // converts it into a (boxed) typed array, then outputs it back to Excel.
         match replmethod.ToUpper().Substring(0,1) with
-        | "F" -> Out.D1.Gen.filterObj rowwise rplval typeLabel range
-        | _ -> 
-            // Input from Excel converted into a (boxed) typed array.
-            let xa1D = In.D1.Gen.Any.def rowwise defVal typeLabel range
-            // Unboxing the array and conversion to obj[] for further output to Excel.
-            match xa1D |> Out.D1.Unbox.o1D with
-            | None -> [| box ExcelError.ExcelErrorNA |]
-            | Some o1D ->
-                // Output to Excel.
-                Out.D1.Bxd.Any.out rplval o1D
+        | "F" -> let xa1D = In.D1.Gen.filter None typeTag range
+                 xa1D |> (Out.D1.Unbox.apply rplval (Out.D1.Prm.out rplval))
+        | _ -> let xa1D = In.D1.Gen.Any.def rowwise defVal typeTag range
+               xa1D |> (Out.D1.Unbox.apply rplval (Out.D1.Prm.out rplval))
 
     [<ExcelFunction(Category="XL", Description="Cast a 2D xl-range to a generic type 2D array.")>]
     let cast2d_gen
@@ -2612,7 +2630,8 @@ module TEST_XL =
 
         // result
         let xxx  = Reg.Out.elem row col rgMtrx
-        xxx |> (Out.cellOptTBD ReplaceValues.def) // TODO FIXME
+        // xxx |> (Out.cellOptTBD ReplaceValues.def) // TODO FIXME
+        xxx |> Out.D0.Bxd.Opt.out ReplaceValues.def
 
     [<ExcelFunction(Category="EXAMPLE", Description="Returns Mtrx size.")>]
     let mtrxGen_size

@@ -83,6 +83,32 @@ type Registry() =
         else
             None
 
+    member this.tryFind1D (regKey: string) : ((Type[])*obj) option =
+        match this.tryFind regKey with
+        | None -> None
+        | Some regObj ->
+            let ty = regObj.GetType()
+
+            if ty.IsArray && (ty.GetArrayRank() = 1) then
+                let genty = ty.GetElementType()
+                ([| genty |], regObj) 
+                |> Some
+            else
+                None
+
+    member this.tryFind2D (regKey: string) : ((Type[])*obj) option =
+        match this.tryFind regKey with
+        | None -> None
+        | Some regObj ->
+            let ty = regObj.GetType()
+
+            if ty.IsArray && (ty.GetArrayRank() = 2) then
+                let genty = ty.GetElementType()
+                ([| genty |], regObj) 
+                |> Some
+            else
+                None
+
     /// Returns a registry object's type, given its regKey.
     member this.tryType (regKey: string) : Type option =
         regKey |> this.tryFind |> Option.map (fun o -> o.GetType())
@@ -106,14 +132,6 @@ type Registry() =
     // -- Extraction functions
     // -----------------------------------
 
-    //member this.tryExtractS<'a> (regKeyOrString: string) : 'a option =
-    //    match this.tryFind regKeyOrString with
-    //    | None -> if typeof<'a> = typeof<string> then Some (unbox (box regKeyOrString)) else None
-    //    | Some regObj -> 
-    //        match regObj with
-    //        | :? 'a as v -> Some v
-    //        | _ -> None
-
     member this.tryExtract<'a> (xlValue: obj) : 'a option =
         match xlValue with
         | :? string as regKey ->
@@ -127,31 +145,10 @@ type Registry() =
         | :? 'a as v -> Some v
         | _ -> None
 
-    member this.tryExtract1D (regKey: string) : ((Type[])*obj) option =
-        match this.tryFind regKey with
-        | None -> None
-        | Some regObj ->
-            let ty = regObj.GetType()
-
-            if ty.IsArray && (ty.GetArrayRank() = 1) then
-                let genty = ty.GetElementType()
-                ([| genty |], regObj) 
-                |> Some
-            else
-                None
-
-    member this.tryExtract2D (regKey: string) : ((Type[])*obj) option =
-        match this.tryFind regKey with
-        | None -> None
-        | Some regObj ->
-            let ty = regObj.GetType()
-
-            if ty.IsArray && (ty.GetArrayRank() = 2) then
-                let genty = ty.GetElementType()
-                ([| genty |], regObj) 
-                |> Some
-            else
-                None
+    member this.tryExtractO (xlValue: obj) : obj option =
+        match xlValue with
+        | :? string as regKey -> this.tryFind regKey
+        | _ -> None
 
     // https://docs.microsoft.com/en-us/dotnet/framework/reflection-and-codedom/how-to-examine-and-instantiate-generic-types-with-reflection
     // https://docs.microsoft.com/en-us/dotnet/api/system.type.getgenerictypedefinition?view=net-5.0
@@ -178,6 +175,23 @@ type Registry() =
         this.tryExtractGen' targetType xlValue
         |> Option.map (fun o -> ((o.GetType().GetGenericArguments()), o))
 
+    // Returns the type of the first R-Obj found in an Excel range, xlValue.
+    member this.trySampleType (xlValue: obj) : Type option =
+        match xlValue with
+        | :? (obj[,]) as o2D ->
+            let rgtypes = 
+                [| for i in o2D.GetLowerBound(0) .. o2D.GetUpperBound(0) -> [| for j in o2D.GetLowerBound(1) .. o2D.GetUpperBound(1) -> o2D.[i, j] |] |]
+                |> Array.concat
+                |> Array.choose (fun xlval -> match xlval with | :? String as regKey -> this.tryType regKey | _ -> None)
+
+            if rgtypes.Length = 0 then // should never happen if xlValue is an Excel range.
+                None
+            else
+                rgtypes |> Array.head |> Some
+        | :? string as regKey -> this.tryType regKey
+        | _ -> None
+
+
     // -----------------------------------
     // -- Excel RefID
     // -----------------------------------
@@ -203,6 +217,17 @@ type Registry() =
     /// Pretty-prints a registry object, given its key.
     member this.tryPPrint (key: string) : string option =
         this.tryFind key |> Option.map (fun o -> sprintf "%A" o)
+
+    // -----------------------------------
+    // -- Misc.
+    // -----------------------------------
+    
+    /// Unsafe
+    member this.defaultValue<'a> (xlValue: obj) : 'a =
+        this.tryExtract<'a> xlValue |> Option.defaultValue (Unchecked.defaultof<'a>)
+        //match this.tryExtract<'a> xlValue with
+        //| None -> Unchecked.defaultof<'a>
+        //| Some regObj -> regObj
 
 module Registry =
     /// Master registry where all registered objects are held.
@@ -1052,6 +1077,10 @@ module API =
                     | None -> convert |> Array.map Option.get |> Some
                     | Some _ -> defValue1D
     
+            //// Extract R-Objects from Excel Ranges.
+            //module Reg =
+                
+
             /// Convenience functions to cast default xl-values, given a type-tag.
             module private DefaultValue =
                 /// Returns a typed-value given an optional xl-value and a type-tag.
@@ -1078,6 +1107,12 @@ module API =
             /// Useful functions for casting xl-arrays, given a type-tag (e.g. "int", "date", "double", "string"...)
             /// Use module Gen functions for their untyped versions.
             type GenFn =
+                static member defaultValue<'A> (xlValue: obj option) (typeTag: string) : 'A =
+                    match xlValue with
+                    | None -> Variant.labelDefVal typeTag 
+                    | Some xlval -> xlval
+                    :?> 'A
+
                 /// Converts an xl-value to a 'A[], given a typed default-value for elements which can't be cast to 'A.
                 static member def<'A> (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A[] = 
                     let o1D = Cast.to1D (rowWiseDef |> Option.defaultValue false) xlValue
@@ -1104,6 +1139,13 @@ module API =
                         let defval = DateTime.FromOADate(DefaultValue.ofTag<double> typeTag defValue)
                         let a1D = Dte.def defval o1D
                         a1D |> Array.map (fun x -> (box x) :?> 'A)
+                    | OBJ ->
+                        let defval = 
+                            match defValue with 
+                            | None -> Unchecked.defaultof<'A> 
+                            | Some defv -> Registry.MRegistry.defaultValue<'A> defv
+                        let regObjs = o1D |> Array.map Registry.MRegistry.tryExtract<'A>
+                        regObjs |> Array.map (Option.defaultValue defval)
                     | _ -> [||]
         
                 /// Converts an xl-value to a ('A option)[], given an optional default-value for elements which can't be cast to 'A.
@@ -1132,6 +1174,10 @@ module API =
                         let defval = DefaultValue.Opt.ofTag<double> defValue |> Option.map (fun d -> DateTime.FromOADate(d))
                         let a1D = Dte.Opt.def defval o1D
                         a1D |> Array.map (fun x -> (box x) :?> 'A option)
+                    | OBJ -> 
+                        let defval = defValue |> Option.map (Registry.MRegistry.tryExtract<'A>) |> Option.flatten
+                        let regObjs = o1D |> Array.map Registry.MRegistry.tryExtract<'A>
+                        regObjs |> Array.map (fun ao -> match ao with | None -> defval | _ -> ao)
                     | _ -> [||]
                 
                 static member filter<'A> (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : 'A[] = 
@@ -1152,6 +1198,9 @@ module API =
                     | DATE -> 
                         let a1D = Dte.filter o1D
                         a1D |> Array.map (fun x -> (box x) :?> 'A)
+                    | OBJ -> 
+                        let regObjs = o1D |> Array.map Registry.MRegistry.tryExtract<'A>
+                        regObjs |> Array.choose id
                     | _ -> [||]
 
                 static member tryDV<'A> (rowWiseDef: bool option) (defValue1D: 'A[] option) (typeTag: string) (xlValue: obj) : 'A[] option = 
@@ -1173,12 +1222,21 @@ module API =
                         let defval1D = box defValue1D :?> (DateTime[] option)
                         let a1D = Dte.tryDV defval1D o1D
                         box a1D :?> 'A[] option
+                    | OBJ ->
+                        let regObjs = o1D |> Array.map Registry.MRegistry.tryExtract<'A>
+                        match regObjs |> Array.tryFind Option.isNone with
+                        | None -> regObjs |> Array.map Option.get |> Some
+                        | Some _ -> defValue1D
                     | _ -> None
 
+                static member tryEmpty<'A> (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : 'A[] = 
+                    let defValue1D : 'A[] = [||]
+                    GenFn.tryDV<'A> rowWiseDef (Some defValue1D) typeTag xlValue
+                    |> Option.get
 
-                /// TODO: wording
-                static member empty<'A> (typeTag: string) : 'A[] = [||]
-                static member emptyOpt<'A> (typeTag: string) : 'A[] option = Some [||]
+                ///// TODO: wording
+                //static member empty<'A> (typeTag: string) : 'A[] = [||]
+                //static member emptyOpt<'A> (typeTag: string) : 'A[] option = Some [||]
 
 
             /// Useful functions for casting xl-arrays, given a type-tag (e.g. "int", "date", "double", "string"...)
@@ -1188,7 +1246,11 @@ module API =
                 /// Converts an xl-value to a 'a[], given a type-tag and a compatible default-value for when casting to 'a fails.
                 /// The type-tag determines 'a. Only works for non-optional type-tags, e.g. "string".
                 let def (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
-                    let gentype = typeTag |> Variant.labelType true
+                    let gentype =
+                        if typeTag.ToUpper() = "OBJ" then
+                            Registry.MRegistry.trySampleType xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
+                        else
+                            typeTag |> Variant.labelType false
                     let args : obj[] = [| rowWiseDef; defValue; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<GenFn> "def" [| gentype |] args
                     res
@@ -1197,7 +1259,17 @@ module API =
                     /// Converts an xl-value to a ('a option)[], given a type-tag and a compatible default-value for when casting to 'a fails.
                     /// The type-tag determines 'a. Only works for optional type-tags, e.g. "#string".
                     let def (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
-                        let gentype = typeTag |> Variant.labelType true
+                        // let gentype = typeTag |> Variant.labelType true
+                        let gentype =
+                            if typeTag.ToUpper() = "#OBJ" then
+                                // if provided, and if defValue is a R-obj, then its type is used for gentype.
+                                // if not provided, then try to find the first R-obj within xlValue and use its type for gentype.
+                                match defValue with
+                                | None -> Registry.MRegistry.trySampleType xlValue |> Option.get // assumes a type is found, will fail otherwise.
+                                | Some defval -> Registry.MRegistry.trySampleType defval |> Option.get
+                            else
+                                typeTag |> Variant.labelType true
+
                         let args : obj[] = [| rowWiseDef; defValue; typeTag; xlValue |]
                         let res = Useful.Generics.invoke<GenFn> "defOpt" [| gentype |] args
                         res
@@ -1207,6 +1279,14 @@ module API =
                     /// Convenient, single function covering def and Opt.def cases.
                     /// The returned (boxed) array might be either a 'a[] or a ('a option)[], depending on wether the type-tag is optional or not.
                     let def (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                        let gentype = typeTag |> Variant.labelType true
+                        if typeTag |> isOptionalType then
+                            Opt.def rowWiseDef defValue typeTag xlValue
+                        else
+                            def rowWiseDef defValue typeTag xlValue
+
+
+                    let defOLD (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                         let gentype = typeTag |> Variant.labelType true
                         let args : obj[] = [| rowWiseDef; defValue; typeTag; xlValue |]
 
@@ -1219,16 +1299,34 @@ module API =
                 
                 /// TODO: wording here. Mentioning the output is a (boxed) 'a[] where 'a is determined by the type tag
                 let filter (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : obj = 
-                    let gentype = typeTag |> Variant.labelType false
+                    let gentype =
+                        if typeTag.ToUpper() = "OBJ" then
+                            Registry.MRegistry.trySampleType xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
+                        else
+                            typeTag |> Variant.labelType false
                     let args : obj[] = [| rowWiseDef; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<GenFn> "filter" [| gentype |] args
                     res
 
                 // FIXME: wording
                 let tryDV (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : obj = 
-                    let gentype = typeTag |> Variant.labelType false
+                    let gentype =
+                        if typeTag.ToUpper() = "OBJ" then
+                            Registry.MRegistry.trySampleType xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
+                        else
+                            typeTag |> Variant.labelType false
                     let args : obj[] = [| rowWiseDef; defValue1D; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<GenFn> "tryDV" [| gentype |] args
+                    res
+
+                let tryEmpty (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : obj = 
+                    let gentype =
+                        if typeTag.ToUpper() = "OBJ" then
+                            Registry.MRegistry.trySampleType xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
+                        else
+                            typeTag |> Variant.labelType false
+                    let args : obj[] = [| rowWiseDef; typeTag; xlValue |]
+                    let res = Useful.Generics.invoke<GenFn> "tryEmpty" [| gentype |] args
                     res
 
                 // FIXME: wording
@@ -1238,18 +1336,18 @@ module API =
                         let res = Useful.Option.unbox xa1D
                         res
 
-                // FIXME: wording
-                let empty (typeTag: string) : obj = 
-                    let gentype = typeTag |> Variant.labelType false
-                    let args : obj[] = [| typeTag |]
-                    let res = Useful.Generics.invoke<GenFn> "empty" [| gentype |] args
-                    res
+                //// FIXME: wording
+                //let emptyz (typeTag: string) : obj = 
+                //    let gentype = typeTag |> Variant.labelType false
+                //    let args : obj[] = [| typeTag |]
+                //    let res = Useful.Generics.invoke<GenFn> "empty" [| gentype |] args
+                //    res
 
-                let emptyOpt (typeTag: string) : obj = 
-                    let gentype = typeTag |> Variant.labelType false
-                    let args : obj[] = [| typeTag |]
-                    let res = Useful.Generics.invoke<GenFn> "emptyOpt" [| gentype |] args
-                    res
+                //let emptyOptz (typeTag: string) : obj = 
+                //    let gentype = typeTag |> Variant.labelType false
+                //    let args : obj[] = [| typeTag |]
+                //    let res = Useful.Generics.invoke<GenFn> "emptyOpt" [| gentype |] args
+                //    res
 
 
         /// Obj[] input functions.
@@ -1669,14 +1767,36 @@ module API =
             module Reg = 
                 /// Outputs to Excel:
                 ///    - Primitives-type: Returns values directly to Excel.
-                ///    - R-object : Returns a Registry keys and stores values in the Registry.
-                let out<'a> (refKey: String) (proxys: Proxys) (o0D: obj) : obj =
-                    let ty = typeof<'a> |> Useful.Option.uType |> Option.defaultValue typeof<'a>
-                
+                ///    - R-object : Returns a Registry keys and stores values in the Registry. TODO Wording about unpacking option type
+                let out<'a> (unwrapOptions: bool) (refKey: String) (proxys: Proxys) (o0D: obj) : obj =
+                    let ty = 
+                        if unwrapOptions then
+                            typeof<'a> |> Useful.Option.uType |> Option.defaultValue typeof<'a>
+                        else
+                            typeof<'a>
+
                     if ty |> Useful.Type.isPrimitive true then
                         o0D |> Useful.Option.map proxys.none (Bxd.Any.out proxys)
-                    else    
-                        o0D |> Useful.Option.map proxys.none (Registry.MRegistry.append refKey >> box)
+                    else
+                        if unwrapOptions then
+                            o0D |> Useful.Option.map proxys.none (Registry.MRegistry.append refKey >> box)
+                        else
+                            o0D |> Registry.MRegistry.append refKey |> box
+
+                let outO (refKey: String) (proxys: Proxys) (xlValue: obj) : obj =
+                    let mapping (o: obj) =
+                        if o |> isNull then // protects the `ty = o.GetType()` snippet which fails on None values at runtime (= null values at runtime).
+                            proxys.none
+                        else
+                            let ty = o.GetType()
+                            if ty |> Useful.Type.isPrimitive false then
+                                o |> Useful.Option.map proxys.none (Bxd.Any.out proxys)
+                            else
+                                o |> Useful.Option.map proxys.none (Registry.MRegistry.append refKey >> box)
+
+                    match Registry.MRegistry.tryExtractO xlValue with
+                    | None -> proxys.failed
+                    | Some regObj -> regObj |> Useful.Option.map proxys.none mapping
 
         // -----------------------------------
         // -- Convenience functions
@@ -1756,11 +1876,11 @@ module API =
                 ///    - None values will be returned as ReplaveValues.none.
                 ///    - Any other type: Each element values are stored individually in the Registry and for each a Registry key is returned to Excel.
                 ///    - Empty arrays will return [| proxys.empty |]. (Excel naturally returns empty array values as #VALUE!).
-                let out<'a> (refKey: String) (proxys: Proxys) (o1D: obj[]) : obj[] =
+                let out<'a> (unwrapOptions: bool) (refKey: String) (proxys: Proxys) (o1D: obj[]) : obj[] =
                     if o1D |> Array.isEmpty then
                         [| proxys.empty |]
                     else
-                        o1D |> Array.map (D0.Reg.out refKey proxys)
+                        o1D |> Array.map (D0.Reg.out<'a> unwrapOptions refKey proxys)
 
             [<RequireQualifiedAccess>]
             module Unbox = 
@@ -1873,11 +1993,11 @@ module API =
                 ///    - None values will be returned as ReplaveValues.none.
                 ///    - Any other type: Each element values are stored individually in the Registry and for each a Registry key is returned to Excel.
                 ///    - Empty arrays will return [| proxys.empty |]. (Excel naturally returns empty array values as #VALUE!).
-                let out<'a> (refKey: String) (proxys: Proxys) (o2D: obj[,]) : obj[,] =
+                let out<'a> (unwrapOptions: bool) (refKey: String) (proxys: Proxys) (o2D: obj[,]) : obj[,] =
                     if o2D |> In.D2.isEmpty then
                         In.D2.singleton<obj> proxys.empty
                     else
-                        o2D |> Array2D.map (D0.Reg.out refKey proxys)
+                        o2D |> Array2D.map (D0.Reg.out unwrapOptions refKey proxys)
 
             [<RequireQualifiedAccess>]
             module Unbox = 
@@ -1989,6 +2109,19 @@ module Registry_XL =
         | (:? string as regkey1), (:? string as regkey2) -> (regkey1 = regkey2) || (MRegistry.equal regkey1 regkey2)
         | _ -> regKey1 = regKey2
         |> box
+
+    [<ExcelFunction(Category="Registry", Description="Returns a registry object's type.")>]
+    let rg_unwrap 
+        ([<ExcelArgument(Description= "Reg. key.")>] regKey: obj)
+        ([<ExcelArgument(Description= "[ToString() style. Default is false.]")>] toStringStyle: obj)
+        : obj =
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        API.Out.D0.Reg.outO rfid Proxys.def regKey
+        //MRegistry.tryType regKey |> Option.map (Useful.Type.pPrint tostringstyle) |> outNA
 
 module Cast_XL =
     open Excel
@@ -2482,12 +2615,12 @@ module A1D =
     // -- Reflection functions
     // -----------------------------------
     type GenFn =
-        static member out<'A> (a1D: 'A[]) (refKey: String) (proxys: Proxys) : obj[] = 
-            a1D |> Array.map box |> (API.Out.D1.Reg.out<'A> refKey proxys)
+        static member out<'A> (a1D: 'A[]) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) : obj[] = 
+            a1D |> Array.map box |> (API.Out.D1.Reg.out<'A> unwrapOptions refKey proxys)
             
         static member count<'A> (a1D: 'A[]) : int = a1D |> Array.length
 
-        static member elem<'A> (a1D: 'A[]) (index: int) : 'A = a1D |> Array.item index
+        static member elem<'A> (a1D: 'A[]) (index: int) : 'A = a1D  |> Array.item index
 
         static member sub<'A> (a1D: 'A[]) (startIndex: int option) (count: int option) : 'A[] =
             a1D |> sub startIndex count
@@ -2503,25 +2636,25 @@ module A1D =
     // -----------------------------------
     module Reg =
         module Out =
-            let out (regKey: string) (refKey: String) (proxys: Proxys) : obj[] option =
+            let out (regKey: string) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) : obj[] option =
                 let methodNm = "out"
-                MRegistry.tryExtract1D regKey
-                |> Option.map (apply<GenFn> methodNm [||] [| refKey; proxys |])
+                MRegistry.tryFind1D regKey
+                |> Option.map (apply<GenFn> methodNm [||] [| unwrapOptions; refKey; proxys |])
                 |> Option.map (fun o -> o :?> obj[])
 
             let count (xlValue: string) : obj option =  // FIXME: rename arg to regKey
                 let methodNm = "count"
-                MRegistry.tryExtract1D xlValue
+                MRegistry.tryFind1D xlValue
                 |> Option.map (apply<GenFn> methodNm [||] [||])
 
             let elem (index: int) (xlValue: string) : obj option =
                 let methodNm = "elem"
-                MRegistry.tryExtract1D xlValue
+                MRegistry.tryFind1D xlValue
                 |> Option.map (apply<GenFn> methodNm [||] [| index |])
 
             let sub (regKey: string) (startIndex: int option) (count: int option) : obj option =
                 let methodNm = "sub"
-                MRegistry.tryExtract1D regKey
+                MRegistry.tryFind1D regKey
                 |> Option.map (apply<GenFn> methodNm [||] [| startIndex; count |])
 
             let private append2' (tys1:Type[], o1:obj) (tys2:Type[], o2:obj) : obj option =
@@ -2533,7 +2666,7 @@ module A1D =
                     |> Some
 
             let append2 (regKey1: string)  (regKey2: string) : obj option =
-                match MRegistry.tryExtract1D regKey1, MRegistry.tryExtract1D regKey2 with
+                match MRegistry.tryFind1D regKey1, MRegistry.tryFind1D regKey2 with
                 | None, None -> None
                 | Some (_, o1), None -> Some o1
                 | None, Some (_, o2) -> Some o2
@@ -2541,7 +2674,7 @@ module A1D =
 
             let append3 (regKey1: string)  (regKey2: string)  (regKey3: string) : obj option =
                 let methodNm = "append3"
-                match MRegistry.tryExtract1D regKey1, MRegistry.tryExtract1D regKey2, MRegistry.tryExtract1D regKey3 with
+                match MRegistry.tryFind1D regKey1, MRegistry.tryFind1D regKey2, MRegistry.tryFind1D regKey3 with
                 | None, None, None -> None
                 | Some (_, o1), None, None -> Some o1
                 | None, Some (_, o2), None -> Some o2
@@ -2570,6 +2703,51 @@ module A1D_XL =
     let a1_ofRng
         ([<ExcelArgument(Description= "1D xl-range.")>] range: obj)
         ([<ExcelArgument(Description= "Type tag: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type.")>] typeTag: string)
+        ([<ExcelArgument(Description= "[Replacement method for wrong-type elements. \"[R]eplace\", \"[F]ilter\", \"[S]trict\", \"[E]mptyStrict\". Default is \"Strict\".]")>] replaceMethod: obj)
+        ([<ExcelArgument(Description= "[Default Value (only for non-optional types, optional types default to None).]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
+        ([<ExcelArgument(Description= "[Failed value. Default is #N/A.]")>] failedValue: obj)
+        : obj  =
+
+        // intermediary stage
+        let rowwise = In.D0.Bool.Opt.def None rowWiseDirection
+        let replmethod = In.D0.Stg.def "STRICT" replaceMethod
+        let defVal = In.D0.Missing.tryO defaultValue
+        let failedval = In.D0.Missing.defO Proxys.def.failed failedValue
+        let isoptional = isOptionalType typeTag
+        
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // wording
+        match (replmethod.ToUpper().Substring(0,1)), isoptional with
+        | "F", _ -> 
+            let xa1D = In.D1.Gen.filter rowwise typeTag range
+            let res = xa1D |> MRegistry.register rfid
+            box res
+
+        // strict / empty-strict methods: 
+        //    - return a 1D array if *all* of the array's elements are of expected type (as determined by typeTag)
+        // empty-strict: returns an empty array otherwise.
+        // strict: return None otherwise. Here returns failed value.
+        | "E", _ -> 
+            let xa1D = In.D1.Gen.tryEmpty rowwise typeTag range
+            let res = xa1D |> MRegistry.register rfid
+            box res
+        | "S", _ -> 
+            match In.D1.Gen.Try.tryDV rowwise None typeTag range with
+            | None -> failedval
+            | Some xa1D -> 
+                let res = xa1D |> MRegistry.register rfid
+                box res
+        | _ ->  let xa1D = In.D1.Gen.Any.def rowwise defVal typeTag range
+                let res = xa1D |> MRegistry.register rfid
+                box res
+
+    [<ExcelFunction(Category="Array1D", Description="Cast a 1D-slice of an xl-range to a generic type array.")>]
+    let a1_ofRngOLD
+        ([<ExcelArgument(Description= "1D xl-range.")>] range: obj)
+        ([<ExcelArgument(Description= "Type tag: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type.")>] typeTag: string)
         ([<ExcelArgument(Description= "[Replacement method for wrong-type elements. \"[R]eplace\", \"[O]ptional\" (= replace with None), \"[F]ilter\", \"[S]trict\", \"[E]mptyStrict\". Default is \"Strict\".]")>] replaceMethod: obj)
         ([<ExcelArgument(Description= "[Default Value (only for non-optional types, optional types default to None).]")>] defaultValue: obj)
         ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
@@ -2595,17 +2773,15 @@ module A1D_XL =
         //    - return a 1D array if *all* of the array's elements are of expected type (as determined by typeTag)
         // empty-strict: returns an empty array otherwise.
         // strict: return None otherwise. Here returns failed value.
-        | rm when rm ="E" || rm = "S" -> 
-            let xa1D = 
-                if rm = "E" then
-                    let empty1d = In.D1.Gen.emptyOpt typeTag
-                    In.D1.Gen.Try.tryDV rowwise empty1d typeTag range
-                else
-                    In.D1.Gen.Try.tryDV rowwise None typeTag range
-            match xa1D with 
+        | "E" -> 
+            let xa1D = In.D1.Gen.tryEmpty rowwise typeTag range
+            let res = xa1D |> MRegistry.register rfid
+            box res
+        | "S" -> 
+            match In.D1.Gen.Try.tryDV rowwise None typeTag range with
             | None -> failedval
-            | Some xa1d -> 
-                let res = xa1d |> MRegistry.register rfid
+            | Some xa1D -> 
+                let res = xa1D |> MRegistry.register rfid
                 box res
         | _ ->  let xa1D = In.D1.Gen.Any.def rowwise defVal typeTag range
                 let res = xa1D |> MRegistry.register rfid
@@ -2617,19 +2793,21 @@ module A1D_XL =
         ([<ExcelArgument(Description= "1D array R-object.")>] rgA1D: string)
         ([<ExcelArgument(Description= "[None indicator. Default is \"<none>\".]")>] noneIndicator: obj)
         ([<ExcelArgument(Description= "[Empty array indicator. Default is \"<empty>\".]")>] emptyIndicator: obj)
+        ([<ExcelArgument(Description= "[Unwrap optional types. Default is true.]")>] unwrapOptions: obj)
         // TODO: add nan indicator?
         : obj[] = 
-
+        
         // intermediary stage
         let none = In.D0.Stg.def "<none>" noneIndicator
         let empty = In.D0.Stg.def "<empty>" emptyIndicator
         let proxys = { def with none = none; empty = empty }
+        let unwrapoptions = In.D0.Bool.def true unwrapOptions
 
         // caller cell's reference ID
         let rfid = MRegistry.refID
-
+        
         // result
-        match A1D.Reg.Out.out rgA1D rfid proxys with
+        match A1D.Reg.Out.out rgA1D unwrapoptions rfid proxys with
         | None -> [| box ExcelError.ExcelErrorNA |]
         | Some o1D -> o1D
 
@@ -2649,12 +2827,13 @@ module A1D_XL =
         match A1D.Reg.Out.count rgA1D with
         | None -> proxys.failed  // TODO Unbox.apply?
         | Some o -> o
-
+        
     [<ExcelFunction(Category="Array1D", Description="Returns an element of a R-object array.")>]
     let a1_elem
         ([<ExcelArgument(Description= "1D array R-object.")>] rgA1D: string) 
         ([<ExcelArgument(Description= "[Index. Default is 0.]")>] index: obj)
         ([<ExcelArgument(Description= "[None indicator. Default is \"<none>\".]")>] noneIndicator: obj)
+        ([<ExcelArgument(Description= "[Unwrap optional types. Default is true.]")>] unwrapOptions: obj)
         : obj = 
 
         // intermediary stage
@@ -2662,14 +2841,15 @@ module A1D_XL =
 
         let none = In.D0.Stg.def "<none>" noneIndicator
         let proxys = { def with none = none }
+        let unwrapoptions = In.D0.Bool.def true unwrapOptions
 
         // caller cell's reference ID (necessary when the elements are not primitive types)
         let rfid = MRegistry.refID
-
+        
         // result
         match A1D.Reg.Out.elem index rgA1D with
         | None -> proxys.failed  // TODO Unbox.apply?
-        | Some o -> o |> API.Out.D0.Reg.out rfid proxys
+        | Some o -> o |> API.Out.D0.Reg.out unwrapoptions rfid proxys
 
     [<ExcelFunction(Category="Array1D", Description="Returns the sub-array of a R-object array.")>]
     let a1_sub
@@ -2759,8 +2939,8 @@ module A2D =
     // -- Reflection functions
     // -----------------------------------
     type GenFn =
-        static member out<'A> (a2D: 'A[,]) (refKey: String) (proxys: Proxys) : obj[,] = 
-            a2D |> Array2D.map box |> (API.Out.D2.Reg.out<'A> refKey proxys)
+        static member out<'A> (a2D: 'A[,]) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) : obj[,] = 
+            a2D |> Array2D.map box |> (API.Out.D2.Reg.out<'A> unwrapOptions refKey proxys)
             
         static member rowCount<'A> (a2D: 'A[,]) : int = a2D |> Array2D.length1
 
@@ -2782,30 +2962,30 @@ module A2D =
     // -----------------------------------
     module Reg =
         module Out =
-            let out (regKey: string) (refKey: String) (proxys: Proxys) : obj[,] option =
+            let out (regKey: string) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) : obj[,] option =
                 let methodNm = "out"
-                MRegistry.tryExtract2D regKey
-                |> Option.map (apply<GenFn> methodNm [||] [| refKey; proxys |])
+                MRegistry.tryFind2D regKey
+                |> Option.map (apply<GenFn> methodNm [||] [| unwrapOptions; refKey; proxys |])
                 |> Option.map (fun o -> o :?> obj[,])
 
             let rowCount (xlValue: string) : obj option =
                 let methodNm = "rowCount"
-                MRegistry.tryExtract2D xlValue
+                MRegistry.tryFind2D xlValue
                 |> Option.map (apply<GenFn> methodNm [||] [||])
 
             let colCount (xlValue: string) : obj option =
                 let methodNm = "colCount"
-                MRegistry.tryExtract2D xlValue
+                MRegistry.tryFind2D xlValue
                 |> Option.map (apply<GenFn> methodNm [||] [||])
 
             let elem (rowIndex: int) (colIndex: int) (xlValue: string) : obj option =
                 let methodNm = "elem"
-                MRegistry.tryExtract2D xlValue
+                MRegistry.tryFind2D xlValue
                 |> Option.map (apply<GenFn> methodNm [||] [| rowIndex; colIndex |])
 
             let sub (regKey: string) (rowStartIndex: int option) (colStartIndex: int option) (rowCount: int option) (colCount: int option) : obj option =
                 let methodNm = "sub"
-                MRegistry.tryExtract1D regKey
+                MRegistry.tryFind1D regKey
                 |> Option.map (apply<GenFn> methodNm [||] [| rowStartIndex; rowStartIndex; rowCount; colCount |])
 
             let private append2' (tys1:Type[], o1:obj) (tys2:Type[], o2:obj) : obj option =
@@ -2817,7 +2997,7 @@ module A2D =
                     |> Some
 
             let append2 (regKey1: string)  (regKey2: string) : obj option =
-                match MRegistry.tryExtract1D regKey1, MRegistry.tryExtract1D regKey2 with
+                match MRegistry.tryFind1D regKey1, MRegistry.tryFind1D regKey2 with
                 | None, None -> None
                 | Some (_, o1), None -> Some o1
                 | None, Some (_, o2) -> Some o2
@@ -2825,7 +3005,7 @@ module A2D =
 
             let append3 (regKey1: string)  (regKey2: string)  (regKey3: string) : obj option =
                 let methodNm = "append3"
-                match MRegistry.tryExtract1D regKey1, MRegistry.tryExtract1D regKey2, MRegistry.tryExtract1D regKey3 with
+                match MRegistry.tryFind1D regKey1, MRegistry.tryFind1D regKey2, MRegistry.tryFind1D regKey3 with
                 | None, None, None -> None
                 | Some (_, o1), None, None -> Some o1
                 | None, Some (_, o2), None -> Some o2
@@ -2878,6 +3058,7 @@ module A2D_XL =
         ([<ExcelArgument(Description= "2D array R-object.")>] rgA2D: string)
         ([<ExcelArgument(Description= "[None indicator. Default is \"<none>\".]")>] noneIndicator: obj)
         ([<ExcelArgument(Description= "[Empty array indicator. Default is \"<empty>\".]")>] emptyIndicator: obj)
+        ([<ExcelArgument(Description= "[Unwrap optional types. Default is true.]")>] unwrapOptions: obj)
         // TODO: add nan indicator?
         : obj[,] = 
 
@@ -2885,12 +3066,13 @@ module A2D_XL =
         let none = In.D0.Stg.def "<none>" noneIndicator
         let empty = In.D0.Stg.def "<empty>" emptyIndicator
         let proxys = { def with none = none; empty = empty }
+        let unwrapoptions = In.D0.Bool.def true unwrapOptions
 
         // caller cell's reference ID
         let rfid = MRegistry.refID
 
         // result
-        match A2D.Reg.Out.out rgA2D rfid proxys with
+        match A2D.Reg.Out.out rgA2D unwrapoptions rfid proxys with
         | None -> box ExcelError.ExcelErrorNA |> A2D.singleton
         | Some o2d -> o2d
 
@@ -2934,6 +3116,7 @@ module A2D_XL =
         ([<ExcelArgument(Description= "[Row index. Default is 0.]")>] rowIndex: obj)
         ([<ExcelArgument(Description= "[Column index. Default is 0.]")>] colIndex: obj)
         ([<ExcelArgument(Description= "[None indicator. Default is \"<none>\".]")>] noneIndicator: obj)
+        ([<ExcelArgument(Description= "[Unwrap optional types. Default is true.]")>] unwrapOptions: obj)
         : obj = 
 
         // intermediary stage
@@ -2942,6 +3125,7 @@ module A2D_XL =
 
         let none = In.D0.Stg.def "<none>" noneIndicator
         let proxys = { def with none = none }
+        let unwrapoptions = In.D0.Bool.def true unwrapOptions
 
         // caller cell's reference ID (necessary when the elements are not primitive types)
         let rfid = MRegistry.refID
@@ -2949,7 +3133,7 @@ module A2D_XL =
         // result
         match A2D.Reg.Out.elem rowindex colindex rgA2D with
         | None -> proxys.failed  // TODO Unbox.apply?
-        | Some o -> o |> API.Out.D0.Reg.out rfid proxys
+        | Some o -> o |> API.Out.D0.Reg.out unwrapoptions rfid proxys
 
     [<ExcelFunction(Category="Array2D", Description="Returns a sub-array of a R-object array.")>]
     let a2_sub
@@ -3056,12 +3240,33 @@ module MAP =
         /// wording : returns keys 1D array to Excel
         static member keys<'K,'V when 'K: comparison> (map: Map<'K,'V>) (refKey: String) (proxys: Proxys) : obj[] =
             let a1D = [| for kvp in map -> kvp.Key |]
-            a1D |> Array.map box |> (API.Out.D1.Reg.out<'K> refKey proxys)
+            a1D |> Array.map box |> (API.Out.D1.Reg.out<'K> false refKey proxys)
 
         /// wording : returns values 1D array to Excel
         static member values<'K,'V when 'K: comparison> (map: Map<'K,'V>) (refKey: String) (proxys: Proxys) : obj[] =
             let a1D = [| for kvp in map -> kvp.Value |]
-            a1D |> Array.map box |> (API.Out.D1.Reg.out<'K> refKey proxys)
+            a1D |> Array.map box |> (API.Out.D1.Reg.out<'K> false refKey proxys)
+
+        /// wording : returns values 1D array to Excel
+        static member find1<'K1,'V when 'K1: comparison> (map: Map<'K1,'V>) (proxys: Proxys) (refKey: String) (key1: 'K1) : obj =
+            match map |> Map.tryFind key1 with
+            | None -> proxys.failed
+            | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'K1> false refKey proxys)
+
+        /// wording : returns values 1D array to Excel
+        static member find2<'K1,'K2,'V when 'K1: comparison and 'K2: comparison> 
+            (map: Map<'K1*'K2,'V>) (proxys: Proxys) (refKey: String) 
+            (key1: 'K1) (key2: 'K2) : obj =
+            match map |> Map.tryFind (key1, key2) with
+            | None -> proxys.failed
+            | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'K1> false refKey proxys)
+
+        static member find3<'K1,'K2,'K3,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison> 
+            (proxys: Proxys) (refKey: String) (map: Map<'K1*'K2*'K3,'V>)
+            (key1: 'K1) (key2: 'K2) (key3: 'K3) : obj =
+            match map |> Map.tryFind (key1, key2, key3) with
+            | None -> proxys.failed
+            | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'K1> false refKey proxys)
 
         // -----------------------------------
         // -- Construction functions
@@ -3082,7 +3287,7 @@ module MAP =
             A1D.zip (A1D.zip3 keys1 keys2 keys3) values |> Map.ofArray
 
         static member out<'A> (a2D: 'A[,]) (refKey: String) (proxys: Proxys) : obj[,] = 
-            a2D |> Array2D.map box |> (API.Out.D2.Reg.out<'A> refKey proxys)
+            a2D |> Array2D.map box |> (API.Out.D2.Reg.out<'A> false refKey proxys)
             
         static member rowCount<'A> (a2D: 'A[,]) : int = a2D |> Array2D.length1
 
@@ -3150,19 +3355,65 @@ module MAP =
                 |> Option.map (apply<GenFn> methodNm [||] [| refKey; proxys |])
                 |> Option.map (fun o -> o :?> obj[])
 
-            //let elem (rowIndex: int) (colIndex: int) (xlValue: string) : obj option =
-            //    let methodNm = "elem"
-            //    MRegistry.tryExtract2D xlValue
-            //    |> Option.map (apply<GenFn> methodNm [||] [| rowIndex; colIndex |])
+            let find1 (regKey: string) (proxys: Proxys) (refKey: string) (key1: obj) : obj option =
+                let methodNm = "find1"
+                MRegistry.tryExtractGen genType regKey
+                |> Option.map (apply<GenFn> methodNm [||] [| proxys; refKey; key1 |])
 
+            let find2 (regKey: string) (proxys: Proxys) (refKey: string) (key1: obj) (key2: obj) : obj option =
+                let methodNm = "find2"
+                MRegistry.tryExtractGen genType regKey
+                |> Option.map (apply<GenFn> methodNm [||] [| proxys; refKey; key1; key2 |])
 
 
 module MAP_XL =
     open Registry
     open API
-    open type Proxys
+//    open type Proxys
 
-    // open API.In.D0
+    [<ExcelFunction(Category="Map", Description="Creates a Map<'Key1*'Key2...,'Val> R-object.")>]
+    let map_ofRng
+        ([<ExcelArgument(Description= "Key1 type tag: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj.")>] k1TypeTag: string)
+        ([<ExcelArgument(Description= "Key2 type tag.")>] k2TypeTag: obj)
+        ([<ExcelArgument(Description= "Key3 type tag.")>] k3TypeTag: obj)
+        ([<ExcelArgument(Description= "Value type tag.")>] valueTypeTag: string)
+        ([<ExcelArgument(Description= "Map keys1.")>] mapKeys1: obj)
+        ([<ExcelArgument(Description= "Map keys1.")>] mapKeys2: obj)
+        ([<ExcelArgument(Description= "Map keys3.")>] mapKeys3: obj)
+        ([<ExcelArgument(Description= "Map values.")>] mapValues: obj)
+        : obj  =
+
+        // intermediary stage
+        let ktag2 = In.D0.Stg.Opt.def None k2TypeTag
+        let ktag3 = In.D0.Stg.Opt.def None k3TypeTag
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        match ktag2, ktag3 with
+        | Some ktg2, Some ktg3 -> 
+            let keys1 = In.D1.Gen.Try.tryDV (Some false) None k1TypeTag mapKeys1
+            let keys2 = In.D1.Gen.Try.tryDV (Some false) None ktg2 mapKeys2
+            let keys3 = In.D1.Gen.Try.tryDV (Some false) None ktg3 mapKeys3
+            let values = In.D1.Gen.Try.tryDV (Some false) None valueTypeTag mapValues
+            box "3keys"
+
+        | Some ktg2, None -> 
+            let keys1 = In.D1.Gen.Try.tryDV (Some false) None k1TypeTag mapKeys1
+            let keys2 = In.D1.Gen.Try.tryDV (Some false) None ktg2 mapKeys2
+            let values = In.D1.Gen.Try.tryDV (Some false) None valueTypeTag mapValues
+            box "2keys"
+
+        | _ -> 
+            let keys1 = In.D1.Gen.Try.tryDV None None k1TypeTag mapKeys1
+            let values = In.D1.Gen.Try.tryDV None None valueTypeTag mapValues
+
+            match keys1, values with
+            | Some ks1, Some vals ->  
+                let map = MAP.Gen.map1 k1TypeTag valueTypeTag ks1 vals
+                let res = map |> MRegistry.register rfid
+                res |> box
+            | _ -> Proxys.def.failed
 
     [<ExcelFunction(Category="Map", Description="Returns the size of a Map R-object.")>]
     let map_count
@@ -3200,61 +3451,55 @@ module MAP_XL =
         | None -> [| Proxys.def.failed |]  // TODO Unbox.apply?
         | Some o1D -> o1D
 
-    [<ExcelFunction(Category="Map", Description="Creates a Map<'Key1*'Key2...,'Val> R-object.")>]
-    let map_ofRng
-        ([<ExcelArgument(Description= "Key1 type tag: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj.")>] k1TypeTag: string)
-        ([<ExcelArgument(Description= "Key2 type tag.")>] k2TypeTag: obj)
-        ([<ExcelArgument(Description= "Key3 type tag.")>] k3TypeTag: obj)
-        ([<ExcelArgument(Description= "Value type tag.")>] valueTypeTag: string)
-        ([<ExcelArgument(Description= "Map keys1.")>] mapKeys1: obj)
-        ([<ExcelArgument(Description= "Map keys1.")>] mapKeys2: obj)
-        ([<ExcelArgument(Description= "Map keys3.")>] mapKeys3: obj)
-        ([<ExcelArgument(Description= "Map values.")>] mapValues: obj)
-        : obj  =
-
-        // intermediary stage
-        let ktag2 = In.D0.Stg.Opt.def None k2TypeTag
-        let ktag3 = In.D0.Stg.Opt.def None k3TypeTag
-        
-        //let keys1 = In.D1.Gen.Try.tryDV None None k1TypeTag mapKeys1
-        //let keys2 = ktag2 |> Option.map (fun keyTag -> In.D1.Gen.Try.tryDV None None keyTag mapKeys2) |> Option.flatten
-        //let keys3 = ktag3 |> Option.map (fun keyTag -> In.D1.Gen.Try.tryDV None None keyTag mapKeys3) |> Option.flatten
-        //let values = In.D1.Gen.Try.tryDV None None valueTypeTag mapValues
+    [<ExcelFunction(Category="Map", Description="Returns a R-object map's values array.")>]
+    let map_find
+        ([<ExcelArgument(Description= "Map R-object.")>] rgMap: string) 
+        ([<ExcelArgument(Description= "Map key1.")>] mapKey1: obj)
+        ([<ExcelArgument(Description= "Map key2.")>] mapKey2: obj)
+        ([<ExcelArgument(Description= "Map key3.")>] mapKey3: obj)
+        ([<ExcelArgument(Description= "Map key3.")>] mapKey4: obj)
+        ([<ExcelArgument(Description= "Map key3.")>] mapKey5: obj)
+        ([<ExcelArgument(Description= "Map key3.")>] mapKey6: obj)
+        ([<ExcelArgument(Description= "Map key3.")>] mapKey7: obj)
+        ([<ExcelArgument(Description= "Map key3.")>] mapKey8: obj)
+        ([<ExcelArgument(Description= "Map key3.")>] mapKey9: obj)
+        : obj = 
 
         // caller cell's reference ID
         let rfid = MRegistry.refID
 
-        match ktag2, ktag3 with
-        | Some ktg2, Some ktg3 -> 
-            let keys1 = In.D1.Gen.Try.tryDV (Some false) None k1TypeTag mapKeys1
-            let keys2 = In.D1.Gen.Try.tryDV (Some false) None ktg2 mapKeys2
-            let keys3 = In.D1.Gen.Try.tryDV (Some false) None ktg3 mapKeys3
-            let values = In.D1.Gen.Try.tryDV (Some false) None valueTypeTag mapValues
-            box "3keys"
+        // intermediary stage
+        let mapkey2 = In.D0.Missing.tryO mapKey2
+        let mapkey3 = In.D0.Missing.tryO mapKey3
+        let mapkey4 = In.D0.Missing.tryO mapKey4
+        let mapkey5 = In.D0.Missing.tryO mapKey5
+        let mapkey6 = In.D0.Missing.tryO mapKey6
+        let mapkey7 = In.D0.Missing.tryO mapKey7
+        let mapkey8 = In.D0.Missing.tryO mapKey8
+        let mapkey9 = In.D0.Missing.tryO mapKey9
 
-        | Some ktg2, None -> 
-            let keys1 = In.D1.Gen.Try.tryDV (Some false) None k1TypeTag mapKeys1
-            let keys2 = In.D1.Gen.Try.tryDV (Some false) None ktg2 mapKeys2
-            let values = In.D1.Gen.Try.tryDV (Some false) None valueTypeTag mapValues
-            box "2keys"
-
+        // result
+        match mapkey2, mapkey3, mapkey4, mapkey5, mapkey6, mapkey7, mapkey8, mapkey9 with
+        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, Some key9 -> 
+            box "9 keys case here"
+        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, None -> 
+            box "8 keys case here"
+        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, None, None -> 
+            box "7 keys case here"
+        | Some key2, Some key3, Some key4, Some key5, Some key6, None, None, None -> 
+            box "6 keys case here"
+        | Some key2, Some key3, Some key4, Some key5, None, None, None, None -> 
+            box "5 keys case here"
+        | Some key2, Some key3, Some key4, None, None, None, None, None -> 
+            box "4 keys case here"
+        | Some key2, Some key3, None, None, None, None, None, None -> 
+            box "3 keys case here"
+        | Some key2, None, None, None, None, None, None, None -> 
+            box "2 keys case here"
         | _ -> 
-            let keys1 = In.D1.Gen.Try.tryDV None None k1TypeTag mapKeys1
-            let values = In.D1.Gen.Try.tryDV None None valueTypeTag mapValues
-
-            match keys1, values with
-            | Some ks1, Some vals ->  
-                let map = MAP.Gen.map1 k1TypeTag valueTypeTag ks1 vals
-                let res = map |> MRegistry.register rfid
-                res |> box
-            | _ -> Proxys.def.failed
-
-        //match replmethod.ToUpper().Substring(0,1) with
-        //| "F" -> let ooo = (In.D2.Gen.filter rowwise typeTag range)
-        //         let res = ooo |> MRegistry.register rfid 
-        //         res |> box
-        //| _ -> let res = (In.D2.Gen.Any.def defVal typeTag range) |> MRegistry.register rfid
-        //       res |> box
+            match MAP.Reg.Out.find1 rgMap Proxys.def rfid mapKey1 with
+            | None -> Proxys.def.failed  // TODO Unbox.apply?
+            | Some o1D -> o1D
 
 
 /// Simple template for generics

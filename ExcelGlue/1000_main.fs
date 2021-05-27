@@ -1309,7 +1309,7 @@ module API =
                     res
 
                 // FIXME: wording
-                let tryDV (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : obj = 
+                let tryDV' (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : Type*obj = 
                     let gentype =
                         if typeTag.ToUpper() = "OBJ" then
                             Registry.MRegistry.trySampleType xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
@@ -1317,7 +1317,11 @@ module API =
                             typeTag |> Variant.labelType false
                     let args : obj[] = [| rowWiseDef; defValue1D; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<GenFn> "tryDV" [| gentype |] args
-                    res
+                    gentype, res
+
+                // FIXME: wording
+                let tryDV (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : obj = 
+                    tryDV' rowWiseDef defValue1D typeTag xlValue |> snd
 
                 let tryEmpty (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype =
@@ -1331,24 +1335,15 @@ module API =
 
                 // FIXME: wording
                 module Try =
+                    let tryDV' (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : (Type*obj) option = 
+                        let genty, xa1D = tryDV' rowWiseDef defValue1D typeTag xlValue
+                        Useful.Option.unbox xa1D
+                        |> Option.map (fun res -> (genty, res))
+
                     let tryDV (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : obj option = 
                         let xa1D = tryDV rowWiseDef defValue1D typeTag xlValue
                         let res = Useful.Option.unbox xa1D
                         res
-
-                //// FIXME: wording
-                //let emptyz (typeTag: string) : obj = 
-                //    let gentype = typeTag |> Variant.labelType false
-                //    let args : obj[] = [| typeTag |]
-                //    let res = Useful.Generics.invoke<GenFn> "empty" [| gentype |] args
-                //    res
-
-                //let emptyOptz (typeTag: string) : obj = 
-                //    let gentype = typeTag |> Variant.labelType false
-                //    let args : obj[] = [| typeTag |]
-                //    let res = Useful.Generics.invoke<GenFn> "emptyOpt" [| gentype |] args
-                //    res
-
 
         /// Obj[] input functions.
         module D2 =
@@ -1782,7 +1777,8 @@ module API =
                             o0D |> Useful.Option.map proxys.none (Registry.MRegistry.append refKey >> box)
                         else
                             o0D |> Registry.MRegistry.append refKey |> box
-
+                
+                // TODO : rewrite this function
                 let outO (refKey: String) (proxys: Proxys) (xlValue: obj) : obj =
                     let mapping (o: obj) =
                         if o |> isNull then // protects the `ty = o.GetType()` snippet which fails on None values at runtime (= null values at runtime).
@@ -3273,18 +3269,63 @@ module MAP =
         // -----------------------------------
 
         /// Builds a Map<'K1,'V> key-value pairs map.
-        static member map1<'K1,'V when 'K1: comparison> (keys1: 'K1[]) (values: 'V[]) : Map<'K1,'V> =
+        static member map1<'K1,'V when 'K1: comparison> (keys1: 'K1[]) (values: 'V[]) 
+            : Map<'K1,'V> =
             A1D.zip keys1 values |> Map.ofArray
 
         /// Builds a Map<'K1*'K2,'V> key-value pairs map.
         static member map2<'K1,'K2,'V when 'K1: comparison and 'K2: comparison> 
-            (keys1: 'K1[]) (keys2: 'K2[]) (values: 'V[]) : Map<'K1*'K2,'V> =
+            (keys1: 'K1[]) (keys2: 'K2[]) (values: 'V[]) 
+            : Map<'K1*'K2,'V> =
             A1D.zip (A1D.zip keys1 keys2) values |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3,'V> key-value pairs map.
         static member map3<'K1,'K2,'K3,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison> 
-            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (values: 'V[]) : Map<'K1*'K2*'K3,'V> =
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (values: 'V[]) 
+            : Map<'K1*'K2*'K3,'V> =
             A1D.zip (A1D.zip3 keys1 keys2 keys3) values |> Map.ofArray
+
+        /// Builds a Map<'K1*'K2*'K3*'K4,'V> key-value pairs map.
+        static member map4<'K1,'K2,'K3,'K4,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (values: 'V[]) 
+            : Map<'K1*'K2*'K3*'K4,'V> =
+            A1D.zip (A1D.zip4 keys1 keys2 keys3 keys4) values |> Map.ofArray
+
+        /// Builds a Map<'K1*'K2*'K3*'K4*'K5,'V> key-value pairs map.
+        static member map5<'K1,'K2,'K3,'K4,'K5,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (values: 'V[]) 
+            : Map<'K1*'K2*'K3*'K4*'K5,'V> =
+            A1D.zip (A1D.zip5 keys1 keys2 keys3 keys4 keys5) values |> Map.ofArray
+
+        /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6,'V> key-value pairs map.
+        static member map6<'K1,'K2,'K3,'K4,'K5,'K6,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (values: 'V[]) 
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6,'V> =
+            A1D.zip (A1D.zip6 keys1 keys2 keys3 keys4 keys5 keys6) values |> Map.ofArray
+
+        /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V> key-value pairs map.
+        static member map7<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (values: 'V[]) 
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V> =
+            A1D.zip (A1D.zip7 keys1 keys2 keys3 keys4 keys5 keys6 keys7) values |> Map.ofArray
+
+        /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V> key-value pairs map.
+        static member map8<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (values: 'V[]) 
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V> =
+            A1D.zip (A1D.zip8 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8) values |> Map.ofArray
+
+        /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9,'V> key-value pairs map.
+        static member map9<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (keys9: 'K9[]) (values: 'V[])
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9,'V> =
+            A1D.zip (A1D.zip9 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9) values |> Map.ofArray
+
+        /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9*'K10,'V> key-value pairs map.
+        static member map10<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'K10,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison and 'K10: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (keys9: 'K9[]) (keys10: 'K10[]) (values: 'V[])
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9*'K10,'V> =
+            A1D.zip (A1D.zip10 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9 keys10) values |> Map.ofArray
 
         static member out<'A> (a2D: 'A[,]) (refKey: String) (proxys: Proxys) : obj[,] = 
             a2D |> Array2D.map box |> (API.Out.D2.Reg.out<'A> false refKey proxys)
@@ -3306,29 +3347,19 @@ module MAP =
         
 
     module Gen =
-        /// wording
-        let map1 (tyTagKey1: string) (tyTagValue: string) (keys1: obj) (values: obj) : obj = 
-            let gtykey1 = tyTagKey1 |> Variant.labelType true
-            let gtyval = tyTagValue |> Variant.labelType true
-
-            let args : obj[] = [| keys1; values |]
-            let res = Useful.Generics.invoke<GenFn> "map1" [| gtykey1; gtyval |] args
-            res
+        ///// wording
+        //let map1 (gtykey1: Type) (gtyval: Type) (keys1: obj) (values: obj) : obj = 
+        //    let args : obj[] = [| keys1; values |]
+        //    let res = Useful.Generics.invoke<GenFn> "map1" [| gtykey1; gtyval |] args
+        //    res
 
         /// wording
-        let map2 (tyTagKey1: string) (tyTagKey2: string) (tyTagValue: string) (keys1: obj) (keys2: obj) (values: obj) : obj = 
-            let gtys = [| tyTagKey1; tyTagKey2; tyTagValue |] |> Array.map (Variant.labelType true)
+        let mapN (gtykeys: Type[]) (gtyval: Type) (keys: obj[]) (values: obj) : obj = 
+            let gtys = Array.append gtykeys [| gtyval |]
+            let args : obj[] = Array.append keys [| values |]
+            let methodnm = sprintf "map%d" gtykeys.Length
 
-            let args : obj[] = [| keys1; keys2; values |]
-            let res = Useful.Generics.invoke<GenFn> "map2" gtys args
-            res
-        
-        /// wording
-        let map3 (tyTagKey1: string) (tyTagKey2: string) (tyTagKey3: string) (tyTagValue: string) (keys1: obj) (keys2: obj) (keys3: obj) (values: obj) : obj = 
-            let gtys = [| tyTagKey1; tyTagKey2; tyTagKey3; tyTagValue |] |> Array.map (Variant.labelType true)
-
-            let args : obj[] = [| keys1; keys2; keys3; values |]
-            let res = Useful.Generics.invoke<GenFn> "map3" gtys args
+            let res = Useful.Generics.invoke<GenFn> methodnm gtys args
             res
 
     // -----------------------------------
@@ -3376,44 +3407,204 @@ module MAP_XL =
         ([<ExcelArgument(Description= "Key1 type tag: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj.")>] k1TypeTag: string)
         ([<ExcelArgument(Description= "Key2 type tag.")>] k2TypeTag: obj)
         ([<ExcelArgument(Description= "Key3 type tag.")>] k3TypeTag: obj)
+        ([<ExcelArgument(Description= "Key4 type tag.")>] k4TypeTag: obj)
+        ([<ExcelArgument(Description= "Key5 type tag.")>] k5TypeTag: obj)
+        ([<ExcelArgument(Description= "Key6 type tag.")>] k6TypeTag: obj)
+        ([<ExcelArgument(Description= "Key7 type tag.")>] k7TypeTag: obj)
+        ([<ExcelArgument(Description= "Key8 type tag.")>] k8TypeTag: obj)
+        ([<ExcelArgument(Description= "Key9 type tag.")>] k9TypeTag: obj)
+        ([<ExcelArgument(Description= "Key10 type tag.")>] k10TypeTag: obj)
         ([<ExcelArgument(Description= "Value type tag.")>] valueTypeTag: string)
         ([<ExcelArgument(Description= "Map keys1.")>] mapKeys1: obj)
-        ([<ExcelArgument(Description= "Map keys1.")>] mapKeys2: obj)
+        ([<ExcelArgument(Description= "Map keys2.")>] mapKeys2: obj)
         ([<ExcelArgument(Description= "Map keys3.")>] mapKeys3: obj)
+        ([<ExcelArgument(Description= "Map keys4.")>] mapKeys4: obj)
+        ([<ExcelArgument(Description= "Map keys5.")>] mapKeys5: obj)
+        ([<ExcelArgument(Description= "Map keys6.")>] mapKeys6: obj)
+        ([<ExcelArgument(Description= "Map keys7.")>] mapKeys7: obj)
+        ([<ExcelArgument(Description= "Map keys8.")>] mapKeys8: obj)
+        ([<ExcelArgument(Description= "Map keys9.")>] mapKeys9: obj)
+        ([<ExcelArgument(Description= "Map keys10.")>] mapKeys10: obj)
         ([<ExcelArgument(Description= "Map values.")>] mapValues: obj)
         : obj  =
 
         // intermediary stage
         let ktag2 = In.D0.Stg.Opt.def None k2TypeTag
         let ktag3 = In.D0.Stg.Opt.def None k3TypeTag
+        let ktag4 = In.D0.Stg.Opt.def None k4TypeTag
+        let ktag5 = In.D0.Stg.Opt.def None k5TypeTag
+        let ktag6 = In.D0.Stg.Opt.def None k6TypeTag
+        let ktag7 = In.D0.Stg.Opt.def None k7TypeTag
+        let ktag8 = In.D0.Stg.Opt.def None k8TypeTag
+        let ktag9 = In.D0.Stg.Opt.def None k9TypeTag
+        let ktag10 = In.D0.Stg.Opt.def None k10TypeTag
 
         // caller cell's reference ID
         let rfid = MRegistry.refID
 
-        match ktag2, ktag3 with
-        | Some ktg2, Some ktg3 -> 
-            let keys1 = In.D1.Gen.Try.tryDV (Some false) None k1TypeTag mapKeys1
-            let keys2 = In.D1.Gen.Try.tryDV (Some false) None ktg2 mapKeys2
-            let keys3 = In.D1.Gen.Try.tryDV (Some false) None ktg3 mapKeys3
-            let values = In.D1.Gen.Try.tryDV (Some false) None valueTypeTag mapValues
-            box "3keys"
+        let gtykeys_keys_gtyvals_vals =
+            match ktag2, ktag3, ktag4, ktag5, ktag6, ktag7, ktag8, ktag9, ktag10 with
+            | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, Some ktg8, Some ktg9, Some ktg10 -> 
+                let trykeys1 =  API.In.D1.Gen.Try.tryDV' None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Gen.Try.tryDV' None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Gen.Try.tryDV' None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Gen.Try.tryDV' None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Gen.Try.tryDV' None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Gen.Try.tryDV' None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Gen.Try.tryDV' None None ktg7 mapKeys7
+                let trykeys8 =  API.In.D1.Gen.Try.tryDV' None None ktg8 mapKeys8
+                let trykeys9 =  API.In.D1.Gen.Try.tryDV' None None ktg9 mapKeys9
+                let trykeys10 =  API.In.D1.Gen.Try.tryDV' None None ktg10 mapKeys10
+                let tryvals =  API.In.D1.Gen.Try.tryDV' None None valueTypeTag mapValues
 
-        | Some ktg2, None -> 
-            let keys1 = In.D1.Gen.Try.tryDV (Some false) None k1TypeTag mapKeys1
-            let keys2 = In.D1.Gen.Try.tryDV (Some false) None ktg2 mapKeys2
-            let values = In.D1.Gen.Try.tryDV (Some false) None valueTypeTag mapValues
-            box "2keys"
+                match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, trykeys8, trykeys9, trykeys10, tryvals with
+                | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtykey8, keys8), Some (gtykey9, keys9), Some (gtykey10, keys10), Some (gtyval, vals) -> 
+                    let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4; gtykey5; gtykey6; gtykey7; gtykey8; gtykey9; gtykey10 |]
+                    let keys = [| keys1; keys2; keys3; keys4; keys5; keys6; keys7; keys8; keys9; keys10 |]
+                    Some (gtykeys, keys, gtyval, vals)
+                | _ -> None
 
-        | _ -> 
-            let keys1 = In.D1.Gen.Try.tryDV None None k1TypeTag mapKeys1
-            let values = In.D1.Gen.Try.tryDV None None valueTypeTag mapValues
+            | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, Some ktg8, Some ktg9, None -> 
+                let trykeys1 =  API.In.D1.Gen.Try.tryDV' None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Gen.Try.tryDV' None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Gen.Try.tryDV' None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Gen.Try.tryDV' None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Gen.Try.tryDV' None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Gen.Try.tryDV' None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Gen.Try.tryDV' None None ktg7 mapKeys7
+                let trykeys8 =  API.In.D1.Gen.Try.tryDV' None None ktg8 mapKeys8
+                let trykeys9 =  API.In.D1.Gen.Try.tryDV' None None ktg9 mapKeys9
+                let tryvals =  API.In.D1.Gen.Try.tryDV' None None valueTypeTag mapValues
 
-            match keys1, values with
-            | Some ks1, Some vals ->  
-                let map = MAP.Gen.map1 k1TypeTag valueTypeTag ks1 vals
-                let res = map |> MRegistry.register rfid
-                res |> box
-            | _ -> Proxys.def.failed
+                match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, trykeys8, trykeys9, tryvals with
+                | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtykey8, keys8), Some (gtykey9, keys9), Some (gtyval, vals) -> 
+                    let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4; gtykey5; gtykey6; gtykey7; gtykey8; gtykey9 |]
+                    let keys = [| keys1; keys2; keys3; keys4; keys5; keys6; keys7; keys8; keys9 |]
+                    Some (gtykeys, keys, gtyval, vals)
+                | _ -> None
+                
+            | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, Some ktg8, None, None -> 
+                let trykeys1 =  API.In.D1.Gen.Try.tryDV' None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Gen.Try.tryDV' None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Gen.Try.tryDV' None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Gen.Try.tryDV' None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Gen.Try.tryDV' None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Gen.Try.tryDV' None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Gen.Try.tryDV' None None ktg7 mapKeys7
+                let trykeys8 =  API.In.D1.Gen.Try.tryDV' None None ktg8 mapKeys8
+                let tryvals =  API.In.D1.Gen.Try.tryDV' None None valueTypeTag mapValues
+
+                match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, trykeys8, tryvals with
+                | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtykey8, keys8), Some (gtyval, vals) -> 
+                    let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4; gtykey5; gtykey6; gtykey7; gtykey8 |]
+                    let keys = [| keys1; keys2; keys3; keys4; keys5; keys6; keys7; keys8 |]
+                    Some (gtykeys, keys, gtyval, vals)
+                | _ -> None
+
+            | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, None, None, None -> 
+                let trykeys1 =  API.In.D1.Gen.Try.tryDV' None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Gen.Try.tryDV' None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Gen.Try.tryDV' None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Gen.Try.tryDV' None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Gen.Try.tryDV' None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Gen.Try.tryDV' None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Gen.Try.tryDV' None None ktg7 mapKeys7
+                let tryvals =  API.In.D1.Gen.Try.tryDV' None None valueTypeTag mapValues
+
+                match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, tryvals with
+                | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtyval, vals) -> 
+                    let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4; gtykey5; gtykey6; gtykey7 |]
+                    let keys = [| keys1; keys2; keys3; keys4; keys5; keys6; keys7 |]
+                    Some (gtykeys, keys, gtyval, vals)
+                | _ -> None
+
+            | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, None, None, None, None -> 
+                let trykeys1 =  API.In.D1.Gen.Try.tryDV' None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Gen.Try.tryDV' None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Gen.Try.tryDV' None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Gen.Try.tryDV' None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Gen.Try.tryDV' None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Gen.Try.tryDV' None None ktg6 mapKeys6
+                let tryvals =  API.In.D1.Gen.Try.tryDV' None None valueTypeTag mapValues
+
+                match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, tryvals with
+                | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtyval, vals) -> 
+                    let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4; gtykey5; gtykey6 |]
+                    let keys = [| keys1; keys2; keys3; keys4; keys5; keys6 |]
+                    Some (gtykeys, keys, gtyval, vals)
+                | _ -> None
+
+            | Some ktg2, Some ktg3, Some ktg4, Some ktg5, None, None, None, None, None -> 
+                let trykeys1 =  API.In.D1.Gen.Try.tryDV' None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Gen.Try.tryDV' None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Gen.Try.tryDV' None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Gen.Try.tryDV' None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Gen.Try.tryDV' None None ktg5 mapKeys5
+                let tryvals =  API.In.D1.Gen.Try.tryDV' None None valueTypeTag mapValues
+
+                match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, tryvals with
+                | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtyval, vals) -> 
+                    let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4; gtykey5 |]
+                    let keys = [| keys1; keys2; keys3; keys4; keys5 |]
+                    Some (gtykeys, keys, gtyval, vals)
+                | _ -> None
+
+            | Some ktg2, Some ktg3, Some ktg4, None, None, None, None, None, None -> 
+                let trykeys1 =  API.In.D1.Gen.Try.tryDV' None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Gen.Try.tryDV' None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Gen.Try.tryDV' None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Gen.Try.tryDV' None None ktg4 mapKeys4
+                let tryvals =  API.In.D1.Gen.Try.tryDV' None None valueTypeTag mapValues
+
+                match trykeys1, trykeys2, trykeys3, trykeys4, tryvals with
+                | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtyval, vals) -> 
+                    let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4 |]
+                    let keys = [| keys1; keys2; keys3; keys4 |]
+                    Some (gtykeys, keys, gtyval, vals)
+                | _ -> None
+
+            | Some ktg2, Some ktg3, None, None, None, None, None, None, None -> 
+                let trykeys1 =  API.In.D1.Gen.Try.tryDV' None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Gen.Try.tryDV' None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Gen.Try.tryDV' None None ktg3 mapKeys3
+                let tryvals =  API.In.D1.Gen.Try.tryDV' None None valueTypeTag mapValues
+
+                match trykeys1, trykeys2, trykeys3, tryvals with
+                | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtyval, vals) -> 
+                    let gtykeys = [| gtykey1; gtykey2; gtykey3 |]
+                    let keys = [| keys1; keys2; keys3 |]
+                    Some (gtykeys, keys, gtyval, vals)
+                | _ -> None
+
+            | Some ktg2, None, None, None, None, None, None, None, None -> 
+                let trykeys1 =  API.In.D1.Gen.Try.tryDV' None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Gen.Try.tryDV' None None ktg2 mapKeys2
+                let tryvals =  API.In.D1.Gen.Try.tryDV' None None valueTypeTag mapValues
+
+                match trykeys1, trykeys2, tryvals with
+                | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtyval, vals) -> 
+                    let gtykeys = [| gtykey1; gtykey2 |]
+                    let keys = [| keys1; keys2 |]
+                    Some (gtykeys, keys, gtyval, vals)
+                | _ -> None
+
+            | _ -> 
+                let trykeys1 =  API.In.D1.Gen.Try.tryDV' None None k1TypeTag mapKeys1
+                let tryvals =  API.In.D1.Gen.Try.tryDV' None None valueTypeTag mapValues
+
+                match trykeys1, tryvals with
+                | Some (gtykey1, keys1), Some (gtyval, vals) -> 
+                    let gtykeys = [| gtykey1 |]
+                    let keys = [| keys1 |]
+                    Some (gtykeys, keys, gtyval, vals)
+                | _ -> None
+
+        match gtykeys_keys_gtyvals_vals with
+        | None -> Proxys.def.failed
+        | Some (gtykeys, keys, gtyval, vals) ->
+            let map = MAP.Gen.mapN gtykeys gtyval keys vals
+            let res = map |> MRegistry.register rfid
+            res |> box
 
     [<ExcelFunction(Category="Map", Description="Returns the size of a Map R-object.")>]
     let map_count
@@ -3457,12 +3648,13 @@ module MAP_XL =
         ([<ExcelArgument(Description= "Map key1.")>] mapKey1: obj)
         ([<ExcelArgument(Description= "Map key2.")>] mapKey2: obj)
         ([<ExcelArgument(Description= "Map key3.")>] mapKey3: obj)
-        ([<ExcelArgument(Description= "Map key3.")>] mapKey4: obj)
-        ([<ExcelArgument(Description= "Map key3.")>] mapKey5: obj)
-        ([<ExcelArgument(Description= "Map key3.")>] mapKey6: obj)
-        ([<ExcelArgument(Description= "Map key3.")>] mapKey7: obj)
-        ([<ExcelArgument(Description= "Map key3.")>] mapKey8: obj)
-        ([<ExcelArgument(Description= "Map key3.")>] mapKey9: obj)
+        ([<ExcelArgument(Description= "Map key4.")>] mapKey4: obj)
+        ([<ExcelArgument(Description= "Map key5.")>] mapKey5: obj)
+        ([<ExcelArgument(Description= "Map key6.")>] mapKey6: obj)
+        ([<ExcelArgument(Description= "Map key7.")>] mapKey7: obj)
+        ([<ExcelArgument(Description= "Map key8.")>] mapKey8: obj)
+        ([<ExcelArgument(Description= "Map key9.")>] mapKey9: obj)
+        ([<ExcelArgument(Description= "Map key10.")>] mapKey10: obj)
         : obj = 
 
         // caller cell's reference ID
@@ -3477,24 +3669,27 @@ module MAP_XL =
         let mapkey7 = In.D0.Missing.tryO mapKey7
         let mapkey8 = In.D0.Missing.tryO mapKey8
         let mapkey9 = In.D0.Missing.tryO mapKey9
+        let mapkey10 = In.D0.Missing.tryO mapKey10
 
         // result
-        match mapkey2, mapkey3, mapkey4, mapkey5, mapkey6, mapkey7, mapkey8, mapkey9 with
-        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, Some key9 -> 
+        match mapkey2, mapkey3, mapkey4, mapkey5, mapkey6, mapkey7, mapkey8, mapkey9, mapkey10 with
+        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, Some key9, Some key10 -> 
             box "9 keys case here"
-        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, None -> 
+        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, Some key9, None -> 
+            box "9 keys case here"
+        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, None, None -> 
             box "8 keys case here"
-        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, None, None -> 
+        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, None, None, None -> 
             box "7 keys case here"
-        | Some key2, Some key3, Some key4, Some key5, Some key6, None, None, None -> 
+        | Some key2, Some key3, Some key4, Some key5, Some key6, None, None, None, None -> 
             box "6 keys case here"
-        | Some key2, Some key3, Some key4, Some key5, None, None, None, None -> 
+        | Some key2, Some key3, Some key4, Some key5, None, None, None, None, None -> 
             box "5 keys case here"
-        | Some key2, Some key3, Some key4, None, None, None, None, None -> 
+        | Some key2, Some key3, Some key4, None, None, None, None, None, None -> 
             box "4 keys case here"
-        | Some key2, Some key3, None, None, None, None, None, None -> 
+        | Some key2, Some key3, None, None, None, None, None, None, None -> 
             box "3 keys case here"
-        | Some key2, None, None, None, None, None, None, None -> 
+        | Some key2, None, None, None, None, None, None, None, None -> 
             box "2 keys case here"
         | _ -> 
             match MAP.Reg.Out.find1 rgMap Proxys.def rfid mapKey1 with

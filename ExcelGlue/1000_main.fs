@@ -1377,7 +1377,7 @@ module API =
                     let res = Useful.Generics.invoke<TagFn> "tryEmpty" [| gentype |] args
                     res
 
-                // FIXME: wording
+                // FIXME: wording. Same as tryDV' with unboxing
                 module Try =
                     let tryDV' (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : (Type*obj) option = 
                         let genty, xa1D = tryDV' rowWiseDef defValue1D typeTag xlValue
@@ -1716,11 +1716,38 @@ module API =
                     let res = Useful.Generics.invoke<TagFn> "filter" [| gentype |] args
                     res
 
+                let tryDV' (defValue2D: obj) (typeTag: string) (xlValue: obj) : Type*obj = 
+                    let gentype =
+                        if typeTag.ToUpper() = "OBJ" then
+                            Registry.MRegistry.trySampleType false xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
+                        else
+                            typeTag |> Variant.labelType false
+                    let args : obj[] = [| defValue2D; typeTag; xlValue |]
+                    let res = Useful.Generics.invoke<TagFn> "tryDV" [| gentype |] args
+                    gentype, res
+
                 let tryDV (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj = 
+                    tryDV' defValue2D typeTag xlValue |> snd
+
+                let tryDVTBD (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype = typeTag |> Variant.labelType false
                     let args : obj[] = [| defValue2D; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<TagFn> "tryDV" [| gentype |] args
                     res
+
+                // FIXME: wording. Same as tryDV' with unboxing
+                module Try =
+                    let tryDV' (defValue2D: obj) (typeTag: string) (xlValue: obj) : (Type*obj) option = 
+                        let genty, xa2D = tryDV' defValue2D typeTag xlValue
+                        Useful.Option.unbox xa2D
+                        |> Option.map (fun res -> (genty, res))
+
+                    let tryDV (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj option = 
+                        let xa2D = tryDV defValue2D typeTag xlValue
+                        let res = Useful.Option.unbox xa2D
+                        res
+
+                        
 
     /// Functions to retun values to Excel.
     module Out =
@@ -2147,7 +2174,7 @@ module Registry_XL =
 module Cast_XL =
     open Excel
     open API
-    open type Variant
+//    open type Variant
     open type Proxys
 
     [<ExcelFunction(Category="TEST", Description="test2d")>]
@@ -3154,45 +3181,14 @@ module A2D_XL =
     //        | Some o -> o |> MRegistry.register rfid |> box
 
 module MAP = 
-    // open type Registry
     open Registry
     open Useful.Generics
+    open Microsoft.FSharp.Reflection
     // open API
 
     // -----------------------------------
     // -- Main functions
     // -----------------------------------
-
-    ///// Empty 2D array.
-    //let empty2D<'a> : 'a[,] = [|[||]|] |> array2D
-
-    ///// Returns true if the first dimension is 0.
-    //let isEmpty (a2D: 'a[,]) : bool = a2D |> Array2D.length1 = 0 // is this the right way?
-
-    ///// Convenience function to create a 2D singleton.
-    //let singleton<'a> (a: 'a) = Array2D.create 1 1 a
-
-    //let sub' (a2D : 'a[,]) (rowStartIndex: int) (colStartIndex: int) (rowCount: int) (colCount: int) : 'a[,] =
-    //    let rowLen, colLen = a2D |> Array2D.length1, a2D |> Array2D.length2
-
-    //    if (rowStartIndex >= rowLen) || (colStartIndex >= colLen) then
-    //        empty2D<'a>
-    //    else
-    //        let rowstart = max 0 rowStartIndex
-    //        let colstart = max 0 colStartIndex
-    //        let rowcount = (min (rowLen - rowstart) rowCount) |> max 0
-    //        let colcount = (min (colLen - colstart) colCount) |> max 0
-    //        a2D.[rowstart..(rowstart + rowcount - 1), colstart..(colstart + colcount - 1)]
-    
-    //let sub (rowStartIndex: int option) (colStartIndex: int option) (rowCount: int option) (colCount: int option) (a2D : 'a[,]) : 'a[,] =
-    //    let rowLen, colLen = a2D |> Array2D.length1, a2D |> Array2D.length2
-
-    //    let rowidx = rowStartIndex |> Option.defaultValue 0
-    //    let colidx = colStartIndex |> Option.defaultValue 0
-    //    let rowcnt = rowCount |> Option.defaultValue rowLen
-    //    let colcnt = colCount |> Option.defaultValue colLen
-    //    sub' a2D rowidx colidx rowcnt colcnt
-        
 
     // -----------------------------------
     // -- Reflection functions
@@ -3212,35 +3208,118 @@ module MAP =
             let a1D = [| for kvp in map -> kvp.Key |]
             a1D |> Array.map box |> (API.Out.D1.Reg.out<'K> false refKey proxys)
 
-        /// wording : returns values 1D array to Excel
-        static member valuesTBD<'K,'V when 'K: comparison> (map: Map<'K,'V>) (refKey: String) (proxys: Proxys) : obj[] =
-            let a1D = [| for kvp in map -> kvp.Value |]
-            a1D |> Array.map box |> (API.Out.D1.Reg.out<'K> false refKey proxys)
-
+        ///// wording : returns values 1D array to Excel
         static member values<'K,'V when 'K: comparison> (map: Map<'K,'V>) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) : obj[] =
             let a1D = [| for kvp in map -> kvp.Value |]
             a1D |> Array.map box |> (API.Out.D1.Reg.out<'V> unwrapOptions refKey proxys)
 
-        /// wording : returns values 1D array to Excel
-        static member find1<'K1,'V when 'K1: comparison> (map: Map<'K1,'V>) (proxys: Proxys) (refKey: String) (key1: 'K1) : obj =
-            match map |> Map.tryFind key1 with
-            | None -> proxys.failed
-            | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'K1> false refKey proxys)
+        static member find1<'K1,'V when 'K1: comparison> (map: Map<'K1,'V>) (proxys: Proxys) (refKey: String) (okey1: obj) : obj =
+            match okey1 with 
+            | :? 'K1 as key1 ->
+                match map |> Map.tryFind key1 with
+                | None -> proxys.failed
+                | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+            | _ -> proxys.failed
 
         /// wording : returns values 1D array to Excel
         static member find2<'K1,'K2,'V when 'K1: comparison and 'K2: comparison> 
             (map: Map<'K1*'K2,'V>) (proxys: Proxys) (refKey: String) 
-            (key1: 'K1) (key2: 'K2) : obj =
-            match map |> Map.tryFind (key1, key2) with
-            | None -> proxys.failed
-            | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'K1> false refKey proxys)
+            (okey1: obj) (okey2: obj) 
+            : obj =
+                match okey1, okey2 with 
+                | (:? 'K1 as key1), (:? 'K2 as key2) ->
+                    match map |> Map.tryFind (key1, key2) with
+                    | None -> proxys.failed
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                | _ -> proxys.failed
 
         static member find3<'K1,'K2,'K3,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison> 
-            (proxys: Proxys) (refKey: String) (map: Map<'K1*'K2*'K3,'V>)
-            (key1: 'K1) (key2: 'K2) (key3: 'K3) : obj =
-            match map |> Map.tryFind (key1, key2, key3) with
-            | None -> proxys.failed
-            | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'K1> false refKey proxys)
+            (map: Map<'K1*'K2*'K3,'V>) (proxys: Proxys) (refKey: String) 
+            (okey1: obj) (okey2: obj) (okey3: obj) 
+            : obj =
+                match okey1, okey2, okey3 with 
+                | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3) ->
+                    match map |> Map.tryFind (key1, key2, key3) with
+                    | None -> proxys.failed
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                | _ -> proxys.failed
+
+        static member find4<'K1,'K2,'K3,'K4,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison> 
+            (map: Map<'K1*'K2*'K3*'K4,'V>) (proxys: Proxys) (refKey: String) 
+            (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj)
+            : obj =
+                match okey1, okey2, okey3, okey4 with 
+                | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4) ->
+                    match map |> Map.tryFind (key1, key2, key3, key4) with
+                    | None -> proxys.failed
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                | _ -> proxys.failed
+
+        static member find5<'K1,'K2,'K3,'K4,'K5,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison> 
+            (map: Map<'K1*'K2*'K3*'K4*'K5,'V>) (proxys: Proxys) (refKey: String) 
+            (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj) (okey5: obj)
+            : obj =
+                match okey1, okey2, okey3, okey4, okey5 with 
+                | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5) ->
+                    match map |> Map.tryFind (key1, key2, key3, key4, key5) with
+                    | None -> proxys.failed
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                | _ -> proxys.failed
+
+        static member find6<'K1,'K2,'K3,'K4,'K5,'K6,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison> 
+            (map: Map<'K1*'K2*'K3*'K4*'K5*'K6,'V>) (proxys: Proxys) (refKey: String) 
+            (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj) (okey5: obj) (okey6: obj)
+            : obj =
+                match okey1, okey2, okey3, okey4, okey5, okey6 with 
+                | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6) ->
+                    match map |> Map.tryFind (key1, key2, key3, key4, key5, key6) with
+                    | None -> proxys.failed
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                | _ -> proxys.failed
+
+        static member find7<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison> 
+            (map: Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V>) (proxys: Proxys) (refKey: String) 
+            (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj) (okey5: obj) (okey6: obj) (okey7: obj)
+            : obj =
+                match okey1, okey2, okey3, okey4, okey5, okey6, okey7 with 
+                | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6), (:? 'K7 as key7) ->
+                    match map |> Map.tryFind (key1, key2, key3, key4, key5, key6, key7) with
+                    | None -> proxys.failed
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                | _ -> proxys.failed
+
+        static member find8<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison> 
+            (map: Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V>) (proxys: Proxys) (refKey: String) 
+            (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj) (okey5: obj) (okey6: obj) (okey7: obj) (okey8: obj)
+            : obj =
+                match okey1, okey2, okey3, okey4, okey5, okey6, okey7, okey8 with 
+                | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6), (:? 'K7 as key7), (:? 'K8 as key8) ->
+                    match map |> Map.tryFind (key1, key2, key3, key4, key5, key6, key7, key8) with
+                    | None -> proxys.failed
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                | _ -> proxys.failed
+
+        static member find9<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison> 
+            (map: Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9,'V>) (proxys: Proxys) (refKey: String) 
+            (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj) (okey5: obj) (okey6: obj) (okey7: obj) (okey8: obj) (okey9: obj)
+            : obj =
+                match okey1, okey2, okey3, okey4, okey5, okey6, okey7, okey8, okey9 with 
+                | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6), (:? 'K7 as key7), (:? 'K8 as key8), (:? 'K9 as key9) ->
+                    match map |> Map.tryFind (key1, key2, key3, key4, key5, key6, key7, key8, key9) with
+                    | None -> proxys.failed
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                | _ -> proxys.failed
+
+        static member find10<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'K10,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison and 'K10: comparison> 
+            (map: Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9*'K10,'V>) (proxys: Proxys) (refKey: String) 
+            (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj) (okey5: obj) (okey6: obj) (okey7: obj) (okey8: obj) (okey9: obj) (okey10: obj)
+            : obj =
+                match okey1, okey2, okey3, okey4, okey5, okey6, okey7, okey8, okey9, okey10 with 
+                | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6), (:? 'K7 as key7), (:? 'K8 as key8), (:? 'K9 as key9), (:? 'K10 as key10) ->
+                    match map |> Map.tryFind (key1, key2, key3, key4, key5, key6, key7, key8, key9, key10) with
+                    | None -> proxys.failed
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                | _ -> proxys.failed
 
         // -----------------------------------
         // -- Construction functions
@@ -3312,12 +3391,600 @@ module MAP =
             let kvps = maps |> Array.collect (fun mp -> [| for kvp in mp -> kvp.Key, kvp.Value  |])
             kvps |> Map.ofArray
         
+        // BOILER PLATE. ALL CASES ARE NOT IMPLEMENTED YET
+        // START HERE
+
+        /// Builds a Map<'KV1*'KH1,'V> key-value pairs map.
+        static member mapV1H1<'KV1,'KH1,'V when 'KV1: comparison and 'KH1: comparison> 
+            (vKeys1: 'KV1[]) (hKeys1: 'KH1[]) (values: 'V[,])
+            : Map<'KV1*'KH1,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            if (vKeys1.Length = len1) && (hKeys1.Length = len2) then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> hKeys1.[j], values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun (hkey, vals1D) -> 
+                            let keys = vKeys1 |> Array.map (fun vkey -> (vkey, hkey))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KH1*'KV1,'V> key-value pairs map. 
+        /// Similar to mapV1H1 but with HKeys placed first.
+        static member mapH1V1<'KV1,'KH1,'V when 'KV1: comparison and 'KH1: comparison> 
+            (vKeys1: 'KV1[]) (hKeys1: 'KH1[]) (values: 'V[,])
+            : Map<'KH1*'KV1,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            if (vKeys1.Length = len1) && (hKeys1.Length = len2) then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> hKeys1.[j], values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun (hkey, vals1D) -> 
+                            let keys = vKeys1 |> Array.map (fun vkey -> (hkey, vkey))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KH1*'KH2,'V> key-value pairs map.
+        static member mapV1H2<'KV1,'KH1,'KH2,'V when 'KV1: comparison and 'KH1: comparison and 'KH2: comparison> 
+            (vKeys1: 'KV1[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (values: 'V[,])
+            : Map<'KV1*'KH1*'KH2,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if (vKeys1.Length = len1) && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2), vals1D) -> 
+                            let keys = vKeys1 |> Array.map (fun vkey -> (vkey, hkey1, hkey2))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KH1*'KH2,'V> key-value pairs map.
+        /// Similar to mapV1H2 but with HKeys placed first.
+        static member mapH2V1<'KV1,'KH1,'KH2,'V when 'KV1: comparison and 'KH1: comparison and 'KH2: comparison> 
+            (vKeys1: 'KV1[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (values: 'V[,])
+            : Map<'KH1*'KH2*'KV1,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if (vKeys1.Length = len1) && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2), vals1D) -> 
+                            let keys = vKeys1 |> Array.map (fun vkey -> (hkey1, hkey2, vkey))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KH1*'KH2*'KH3,'V> key-value pairs map.
+        static member mapV1H3<'KV1,'KH1,'KH2,'KH3,'V when 'KV1: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison> 
+            (vKeys1: 'KV1[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (values: 'V[,])
+            : Map<'KV1*'KH1*'KH2*'KH3,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if (vKeys1.Length = len1) && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3), vals1D) -> 
+                            let keys = vKeys1 |> Array.map (fun vkey -> (vkey, hkey1, hkey2, hkey3))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KH1*'KH2*'KH3,'V> key-value pairs map.
+        /// Similar to mapV1H3 but with HKeys placed first.
+        static member mapH3V1<'KV1,'KH1,'KH2,'KH3,'V when 'KV1: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison> 
+            (vKeys1: 'KV1[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (values: 'V[,])
+            : Map<'KH1*'KH2*'KH3*'KV1,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if (vKeys1.Length = len1) && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3), vals1D) -> 
+                            let keys = vKeys1 |> Array.map (fun vkey -> (hkey1, hkey2, hkey3, vkey))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KH1*'KH2*'KH3*'KH4,'V> key-value pairs map.
+        static member mapV1H4<'KV1,'KH1,'KH2,'KH3,'KH4,'V when 'KV1: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison and 'KH4: comparison> 
+            (vKeys1: 'KV1[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (hKeys4: 'KH4[]) (values: 'V[,])
+            : Map<'KV1*'KH1*'KH2*'KH3*'KH4,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length; hKeys4.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if (vKeys1.Length = len1) && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j], hKeys4.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3, hkey4), vals1D) -> 
+                            let keys = vKeys1 |> Array.map (fun vkey -> (vkey, hkey1, hkey2, hkey3, hkey4))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KH1*'KH2*'KH3*'KH4*'KV1,'V> key-value pairs map.
+        /// Similar to mapV1H4 but with HKeys placed first.
+        static member mapH4V1<'KV1,'KH1,'KH2,'KH3,'KH4,'V when 'KV1: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison and 'KH4: comparison> 
+            (vKeys1: 'KV1[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (hKeys4: 'KH4[]) (values: 'V[,])
+            : Map<'KH1*'KH2*'KH3*'KH4*'KV1,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length; hKeys4.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if (vKeys1.Length = len1) && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j], hKeys4.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3, hkey4), vals1D) -> 
+                            let keys = vKeys1 |> Array.map (fun vkey -> (hkey1, hkey2, hkey3, hkey4, vkey))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KH1*'KH2*'KH3*'KH4*'KH5,'V> key-value pairs map.
+        static member mapV1H5<'KV1,'KH1,'KH2,'KH3,'KH4,'KH5,'V when 'KV1: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison and 'KH4: comparison and 'KH5: comparison> 
+            (vKeys1: 'KV1[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (hKeys4: 'KH4[]) (hKeys5: 'KH5[]) (values: 'V[,])
+            : Map<'KV1*'KH1*'KH2*'KH3*'KH4*'KH5,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length; hKeys4.Length; hKeys5.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if (vKeys1.Length = len1) && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j], hKeys4.[j], hKeys5.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3, hkey4, hkey5), vals1D) -> 
+                            let keys = vKeys1 |> Array.map (fun vkey -> (vkey, hkey1, hkey2, hkey3, hkey4, hkey5))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KH1*'KH2*'KH3*'KH4*'KH5,'V> key-value pairs map.
+        /// Similar to mapV1H5 but with HKeys placed first.
+        static member mapH5V1<'KV1,'KH1,'KH2,'KH3,'KH4,'KH5,'V when 'KV1: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison and 'KH4: comparison and 'KH5: comparison> 
+            (vKeys1: 'KV1[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (hKeys4: 'KH4[]) (hKeys5: 'KH5[]) (values: 'V[,])
+            : Map<'KH1*'KH2*'KH3*'KH4*'KH5*'KV1,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length; hKeys4.Length; hKeys5.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if (vKeys1.Length = len1) && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j], hKeys4.[j], hKeys5.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3, hkey4, hkey5), vals1D) -> 
+                            let keys = vKeys1 |> Array.map (fun vkey -> (hkey1, hkey2, hkey3, hkey4, hkey5, vkey))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KH1*'KH2*'KH3*'KH4*'KH5*'KH6,'V> key-value pairs map.
+        static member mapV1H6<'KV1,'KH1,'KH2,'KH3,'KH4,'KH5,'KH6,'V when 'KV1: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison and 'KH4: comparison and 'KH5: comparison and 'KH6: comparison> 
+            (vKeys1: 'KV1[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (hKeys4: 'KH4[]) (hKeys5: 'KH5[]) (hKeys6: 'KH6[]) (values: 'V[,])
+            : Map<'KV1*'KH1*'KH2*'KH3*'KH4*'KH5*'KH6,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length; hKeys4.Length; hKeys5.Length; hKeys6.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if (vKeys1.Length = len1) && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j], hKeys4.[j], hKeys5.[j], hKeys6.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3, hkey4, hkey5, hkey6), vals1D) -> 
+                            let keys = vKeys1 |> Array.map (fun vkey -> (vkey, hkey1, hkey2, hkey3, hkey4, hkey5, hkey6))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KH1*'KH2*'KH3*'KH4*'KH5*'KH6*'KV1,'V> key-value pairs map.
+        /// Similar to mapV1H6 but with HKeys placed first.
+        static member mapH6V1<'KV1,'KH1,'KH2,'KH3,'KH4,'KH5,'KH6,'V when 'KV1: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison and 'KH4: comparison and 'KH5: comparison and 'KH6: comparison> 
+            (vKeys1: 'KV1[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (hKeys4: 'KH4[]) (hKeys5: 'KH5[]) (hKeys6: 'KH6[]) (values: 'V[,])
+            : Map<'KH1*'KH2*'KH3*'KH4*'KH5*'KH6*'KV1,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length; hKeys4.Length; hKeys5.Length; hKeys6.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if (vKeys1.Length = len1) && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j], hKeys4.[j], hKeys5.[j], hKeys6.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3, hkey4, hkey5, hkey6), vals1D) -> 
+                            let keys = vKeys1 |> Array.map (fun vkey -> (hkey1, hkey2, hkey3, hkey4, hkey5, hkey6, vkey))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KV2*'KH1,'V> key-value pairs map.
+        static member mapV2H1<'KV1,'KV2,'KH1,'V when 'KV1: comparison and 'KV2: comparison and 'KH1: comparison> 
+            (vKeys1: 'KV1[]) (vKeys2: 'KV2[]) (hKeys1: 'KH1[]) (values: 'V[,])
+            : Map<'KV1*'KV2*'KH1,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all vKeys arrays must have the same length as values' number of rows
+            let testVLen = let lens = [| vKeys1.Length; vKeys2.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len1
+
+            if testVLen && (hKeys1.Length = len2) then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> hKeys1.[j], values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun (hkey, vals1D) -> 
+                            let keys = 
+                                Array.zip vKeys1 vKeys2 
+                                |> Array.map (fun (vkey1, vkey2) -> (vkey1, vkey2, hkey))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KV2*'KH1*'KH2,'V> key-value pairs map.
+        static member mapV2H2<'KV1,'KV2,'KH1,'KH2,'V when 'KV1: comparison and 'KV2: comparison and 'KH1: comparison and 'KH2: comparison> 
+            (vKeys1: 'KV1[]) (vKeys2: 'KV2[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (values: 'V[,])
+            : Map<'KV1*'KV2*'KH1*'KH2,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all vKeys arrays must have the same length as values' number of rows
+            let testVLen = let lens = [| vKeys1.Length; vKeys2.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len1
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if testVLen && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2), vals1D) -> 
+                            let keys = 
+                                Array.zip vKeys1 vKeys2 
+                                |> Array.map (fun (vkey1, vkey2) -> (vkey1, vkey2, hkey1, hkey2))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KV2*'KH1*'KH2*'KH3,'V> key-value pairs map.
+        static member mapV2H3<'KV1,'KV2,'KH1,'KH2,'KH3,'V when 'KV1: comparison and 'KV2: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison> 
+            (vKeys1: 'KV1[]) (vKeys2: 'KV2[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (values: 'V[,])
+            : Map<'KV1*'KV2*'KH1*'KH2*'KH3,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all vKeys arrays must have the same length as values' number of rows
+            let testVLen = let lens = [| vKeys1.Length; vKeys2.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len1
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if testVLen && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3), vals1D) -> 
+                            let keys = 
+                                Array.zip vKeys1 vKeys2 
+                                |> Array.map (fun (vkey1, vkey2) -> (vkey1, vkey2, hkey1, hkey2, hkey3))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KV2*'KH1*'KH2*'KH3*'KH4,'V> key-value pairs map.
+        static member mapV2H4<'KV1,'KV2,'KH1,'KH2,'KH3,'KH4,'V when 'KV1: comparison and 'KV2: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison and 'KH4: comparison> 
+            (vKeys1: 'KV1[]) (vKeys2: 'KV2[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (hKeys4: 'KH4[]) (values: 'V[,])
+            : Map<'KV1*'KV2*'KH1*'KH2*'KH3*'KH4,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all vKeys arrays must have the same length as values' number of rows
+            let testVLen = let lens = [| vKeys1.Length; vKeys2.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len1
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length; hKeys4.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if testVLen && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j], hKeys4.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3, hkey4), vals1D) -> 
+                            let keys = 
+                                Array.zip vKeys1 vKeys2 
+                                |> Array.map (fun (vkey1, vkey2) -> (vkey1, vkey2, hkey1, hkey2, hkey3, hkey4))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KV2*'KH1*'KH2*'KH3*'KH4*'KH5,'V> key-value pairs map.
+        static member mapV2H5<'KV1,'KV2,'KH1,'KH2,'KH3,'KH4,'KH5,'V when 'KV1: comparison and 'KV2: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison and 'KH4: comparison and 'KH5: comparison> 
+            (vKeys1: 'KV1[]) (vKeys2: 'KV2[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (hKeys4: 'KH4[]) (hKeys5: 'KH5[]) (values: 'V[,])
+            : Map<'KV1*'KV2*'KH1*'KH2*'KH3*'KH4*'KH5,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all vKeys arrays must have the same length as values' number of rows
+            let testVLen = let lens = [| vKeys1.Length; vKeys2.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len1
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length; hKeys4.Length; hKeys5.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if testVLen && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j], hKeys4.[j], hKeys5.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3, hkey4, hkey5), vals1D) -> 
+                            let keys = 
+                                Array.zip vKeys1 vKeys2 
+                                |> Array.map (fun (vkey1, vkey2) -> (vkey1, vkey2, hkey1, hkey2, hkey3, hkey4, hkey5))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KV2*'KH1*'KH2*'KH3*'KH4*'KH5*'KH6,'V> key-value pairs map.
+        static member mapV2H6<'KV1,'KV2,'KH1,'KH2,'KH3,'KH4,'KH5,'KH6,'V when 'KV1: comparison and 'KV2: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison and 'KH4: comparison and 'KH5: comparison and 'KH6: comparison> 
+            (vKeys1: 'KV1[]) (vKeys2: 'KV2[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (hKeys4: 'KH4[]) (hKeys5: 'KH5[]) (hKeys6: 'KH6[]) (values: 'V[,])
+            : Map<'KV1*'KV2*'KH1*'KH2*'KH3*'KH4*'KH5*'KH6,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all vKeys arrays must have the same length as values' number of rows
+            let testVLen = let lens = [| vKeys1.Length; vKeys2.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len1
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length; hKeys4.Length; hKeys5.Length; hKeys6.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if testVLen && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j], hKeys4.[j], hKeys5.[j], hKeys6.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3, hkey4, hkey5, hkey6), vals1D) -> 
+                            let keys = 
+                                Array.zip vKeys1 vKeys2 
+                                |> Array.map (fun (vkey1, vkey2) -> (vkey1, vkey2, hkey1, hkey2, hkey3, hkey4, hkey5, hkey6))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KV2*'KV3*'KH1,'V> key-value pairs map.
+        static member mapV3H1<'KV1,'KV2,'KV3,'KH1,'V when 'KV1: comparison and 'KV2: comparison and 'KV3: comparison and 'KH1: comparison> 
+            (vKeys1: 'KV1[]) (vKeys2: 'KV2[]) (vKeys3: 'KV3[]) (hKeys1: 'KH1[]) (values: 'V[,])
+            : Map<'KV1*'KV2*'KV3*'KH1,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all vKeys arrays must have the same length as values' number of rows
+            let testVLen = let lens = [| vKeys1.Length; vKeys2.Length; vKeys3.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len1
+
+            if testVLen && (hKeys1.Length = len2) then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> hKeys1.[j], values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun (hkey, vals1D) -> 
+                            let keys = 
+                                Array.zip3 vKeys1 vKeys2 vKeys3 
+                                |> Array.map (fun (vkey1, vkey2, vkey3) -> (vkey1, vkey2, vkey3, hkey))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KV2*'KV3*'KH1*'KH2,'V> key-value pairs map.
+        static member mapV3H2<'KV1,'KV2,'KV3,'KH1,'KH2,'V when 'KV1: comparison and 'KV2: comparison and 'KV3: comparison and 'KH1: comparison and 'KH2: comparison> 
+            (vKeys1: 'KV1[]) (vKeys2: 'KV2[]) (vKeys3: 'KV3[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (values: 'V[,])
+            : Map<'KV1*'KV2*'KV3*'KH1*'KH2,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all vKeys arrays must have the same length as values' number of rows
+            let testVLen = let lens = [| vKeys1.Length; vKeys2.Length; vKeys3.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len1
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if testVLen && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2), vals1D) -> 
+                            let keys = 
+                                Array.zip3 vKeys1 vKeys2 vKeys3 
+                                |> Array.map (fun (vkey1, vkey2, vkey3) -> (vkey1, vkey2, vkey3, hkey1, hkey2))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KV2*'KV3*'KH1*'KH2*'KH3,'V> key-value pairs map.
+        static member mapV3H3<'KV1,'KV2,'KV3,'KH1,'KH2,'KH3,'V when 'KV1: comparison and 'KV2: comparison and 'KV3: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison> 
+            (vKeys1: 'KV1[]) (vKeys2: 'KV2[]) (vKeys3: 'KV3[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (values: 'V[,])
+            : Map<'KV1*'KV2*'KV3*'KH1*'KH2*'KH3,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all vKeys arrays must have the same length as values' number of rows
+            let testVLen = let lens = [| vKeys1.Length; vKeys2.Length; vKeys3.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len1
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if testVLen && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3), vals1D) -> 
+                            let keys = 
+                                Array.zip3 vKeys1 vKeys2 vKeys3 
+                                |> Array.map (fun (vkey1, vkey2, vkey3) -> (vkey1, vkey2, vkey3, hkey1, hkey2, hkey3))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KV2*'KV3*'KH1*'KH2*'KH3*'KH4,'V> key-value pairs map.
+        static member mapV3H4<'KV1,'KV2,'KV3,'KH1,'KH2,'KH3,'KH4,'V when 'KV1: comparison and 'KV2: comparison and 'KV3: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison and 'KH4: comparison> 
+            (vKeys1: 'KV1[]) (vKeys2: 'KV2[]) (vKeys3: 'KV3[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (hKeys4: 'KH4[]) (values: 'V[,])
+            : Map<'KV1*'KV2*'KV3*'KH1*'KH2*'KH3*'KH4,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all vKeys arrays must have the same length as values' number of rows
+            let testVLen = let lens = [| vKeys1.Length; vKeys2.Length; vKeys3.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len1
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length; hKeys4.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if testVLen && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j], hKeys4.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3, hkey4), vals1D) -> 
+                            let keys = 
+                                Array.zip3 vKeys1 vKeys2 vKeys3 
+                                |> Array.map (fun (vkey1, vkey2, vkey3) -> (vkey1, vkey2, vkey3, hkey1, hkey2, hkey3, hkey4))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KV2*'KV3*'KH1*'KH2*'KH3*'KH4*'KH5,'V> key-value pairs map.
+        static member mapV3H5<'KV1,'KV2,'KV3,'KH1,'KH2,'KH3,'KH4,'KH5,'V when 'KV1: comparison and 'KV2: comparison and 'KV3: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison and 'KH4: comparison and 'KH5: comparison> 
+            (vKeys1: 'KV1[]) (vKeys2: 'KV2[]) (vKeys3: 'KV3[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (hKeys4: 'KH4[]) (hKeys5: 'KH5[]) (values: 'V[,])
+            : Map<'KV1*'KV2*'KV3*'KH1*'KH2*'KH3*'KH4*'KH5,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all vKeys arrays must have the same length as values' number of rows
+            let testVLen = let lens = [| vKeys1.Length; vKeys2.Length; vKeys3.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len1
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length; hKeys4.Length; hKeys5.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if testVLen && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j], hKeys4.[j], hKeys5.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3, hkey4, hkey5), vals1D) -> 
+                            let keys = 
+                                Array.zip3 vKeys1 vKeys2 vKeys3 
+                                |> Array.map (fun (vkey1, vkey2, vkey3) -> (vkey1, vkey2, vkey3, hkey1, hkey2, hkey3, hkey4, hkey5))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        /// Builds a Map<'KV1*'KV2*'KV3*'KH1*'KH2*'KH3*'KH4*'KH5*'KH6,'V> key-value pairs map.
+        static member mapV3H6<'KV1,'KV2,'KV3,'KH1,'KH2,'KH3,'KH4,'KH5,'KH6,'V when 'KV1: comparison and 'KV2: comparison and 'KV3: comparison and 'KH1: comparison and 'KH2: comparison and 'KH3: comparison and 'KH4: comparison and 'KH5: comparison and 'KH6: comparison> 
+            (vKeys1: 'KV1[]) (vKeys2: 'KV2[]) (vKeys3: 'KV3[]) (hKeys1: 'KH1[]) (hKeys2: 'KH2[]) (hKeys3: 'KH3[]) (hKeys4: 'KH4[]) (hKeys5: 'KH5[]) (hKeys6: 'KH6[]) (values: 'V[,])
+            : Map<'KV1*'KV2*'KV3*'KH1*'KH2*'KH3*'KH4*'KH5*'KH6,'V> =
+            let len1, len2 = values |> Array2D.length1, values |> Array2D.length2
+
+            // all vKeys arrays must have the same length as values' number of rows
+            let testVLen = let lens = [| vKeys1.Length; vKeys2.Length; vKeys3.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len1
+            // all hKeys arrays must have the same length as values' number of columns
+            let testHLen = let lens = [| hKeys1.Length; hKeys2.Length; hKeys3.Length; hKeys4.Length; hKeys5.Length; hKeys6.Length |] |> Array.distinct in (lens.Length = 1) && lens.[0] = len2
+
+            if testVLen && testHLen then 
+                let htranskeys = [| for j in 0 .. (len2 - 1) -> (hKeys1.[j], hKeys2.[j], hKeys3.[j], hKeys4.[j], hKeys5.[j], hKeys6.[j]), values.[*, j] |]
+                let kvps = 
+                    htranskeys
+                    |> Array.collect 
+                        (fun ((hkey1, hkey2, hkey3, hkey4, hkey5, hkey6), vals1D) -> 
+                            let keys = 
+                                Array.zip3 vKeys1 vKeys2 vKeys3 
+                                |> Array.map (fun (vkey1, vkey2, vkey3) -> (vkey1, vkey2, vkey3, hkey1, hkey2, hkey3, hkey4, hkey5, hkey6))
+                            Array.zip keys vals1D
+                        )
+                kvps |> Map.ofArray
+            else
+                Map.empty
+
+        // NOT IMPLEMENTED YET : CASES mapVnHm where n > = 4 
+
+        // BOILER PLATE. ALL CASES ARE NOT IMPLEMENTED YET
+        // END HERE
+
     module Gen =
         /// wording
         let mapN (gtykeys: Type[]) (gtyval: Type) (keys: obj[]) (values: obj) : obj = 
             let gtys = Array.append gtykeys [| gtyval |]
             let args : obj[] = Array.append keys [| values |]
             let methodnm = sprintf "map%d" gtykeys.Length
+
+            let res = Useful.Generics.invoke<GenFn> methodnm gtys args
+            res
+
+        let map2D (vgtykeys: Type[]) (hgtykeys: Type[]) (gtyval: Type) (vkeys: obj[]) (hkeys: obj[]) (values: obj) : obj = 
+            let gtys = Array.append (Array.append vgtykeys hgtykeys) [| gtyval |]
+            let args : obj[] = Array.append (Array.append vkeys hkeys) [| values |]
+            let methodnm = sprintf "mapV%dH%d" vgtykeys.Length hgtykeys.Length
 
             let res = Useful.Generics.invoke<GenFn> methodnm gtys args
             res
@@ -3352,24 +4019,40 @@ module MAP =
                 |> Option.map (apply<GenFn> methodNm [||] [| unwrapOptions; refKey; proxys |])
                 |> Option.map (fun o -> o :?> obj[])
 
-            let find1 (regKey: string) (proxys: Proxys) (refKey: string) (key1: obj) : obj option =
+            let find1 (regKey: string) (proxys: Proxys) (refKey: string) (okey1: obj) : obj option =
                 let methodNm = "find1"
                 MRegistry.tryExtractGen genType regKey
-                |> Option.map (apply<GenFn> methodNm [||] [| proxys; refKey; key1 |])
+                |> Option.map (apply<GenFn> methodNm [||] [| proxys; refKey; okey1 |])
 
-            let find2 (regKey: string) (proxys: Proxys) (refKey: string) (key1: obj) (key2: obj) : obj option =
-                let methodNm = "find2"
-                MRegistry.tryExtractGen genType regKey
-                |> Option.map (apply<GenFn> methodNm [||] [| proxys; refKey; key1; key2 |])
+            let findN (regKey: string) (proxys: Proxys) (refKey: string) (okeys: obj[]) : obj option =
+                let args : obj[] = Array.append [| proxys; refKey |] okeys
+                let methodNm = sprintf "find%d" okeys.Length
+                match MRegistry.tryExtractGen genType regKey with
+                | None -> None
+                | Some (tys, o) -> 
+                    // tys should be a [| some tuple type (for the map object's key), some other type (for the map object's value) |]
+                    if tys.Length <> 2 then
+                        None
+                    else
+                        let elemTys = FSharpType.GetTupleElements(tys.[0])
+                        let genTypeRObj = (Array.append elemTys [| tys.[1] |], o)
+                        apply<GenFn> methodNm [||] args genTypeRObj
+                        |> Some
 
-        //let fff = API.Out.D1
+            //let find2TBD (regKey: string) (proxys: Proxys) (refKey: string)
+            //    (okey1: obj) (okey2: obj) 
+            //    : obj option =
+            //    let methodNm = "find2"
+            //    MRegistry.tryExtractGen genType regKey
+            //    |> Option.map (apply<GenFn> methodNm [||] [| proxys; refKey; okey1; okey2 |])
+
 
 module MAP_XL =
     open Registry
     open API
-//    open type Proxys
+    open type Proxys
 
-    [<ExcelFunction(Category="Map", Description="Creates a Map<'Key1*'Key2...,'Val> R-object.")>]
+    [<ExcelFunction(Category="Map", Description="Creates a Map<'Key1*'Key2...,'Val> R-object from several 1D-arrays of keys and one 1D-array of values.")>]
     let map_ofRng
         ([<ExcelArgument(Description= "Key1 type tag: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj.")>] k1TypeTag: string)
         ([<ExcelArgument(Description= "Key2 type tag.")>] k2TypeTag: obj)
@@ -3573,6 +4256,220 @@ module MAP_XL =
             let res = map |> MRegistry.register rfid
             res |> box
 
+    [<ExcelFunction(Category="Map", Description="Creates a Map<'Key1*'Key2...,'Val> R-object from several 1D-arrays of keys and one 2D-array of values.")>]
+    let map_ofRng2D
+        ([<ExcelArgument(Description= "VKey1 type tag: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj.")>] vk1Tag: string)
+        ([<ExcelArgument(Description= "VKey2 type tag.")>] vk2Tag: obj)
+        ([<ExcelArgument(Description= "VKey3 type tag.")>] vk3Tag: obj)
+        ([<ExcelArgument(Description= "VKey4 type tag.")>] vk4Tag: obj)
+        ([<ExcelArgument(Description= "VKey5 type tag.")>] vk5Tag: obj)
+        ([<ExcelArgument(Description= "VKey6 type tag.")>] vk6Tag: obj)
+        ([<ExcelArgument(Description= "HKey1 type tag.")>] hk1Tag: string)
+        ([<ExcelArgument(Description= "HKey2 type tag.")>] hk2Tag: obj)
+        ([<ExcelArgument(Description= "HKey3 type tag.")>] hk3Tag: obj)
+        ([<ExcelArgument(Description= "HKey4 type tag.")>] hk4Tag: obj)
+        ([<ExcelArgument(Description= "HKey5 type tag.")>] hk5Tag: obj)
+        ([<ExcelArgument(Description= "HKey6 type tag.")>] hk6Tag: obj)
+        ([<ExcelArgument(Description= "Value type tag.")>] valueTag: string)
+        ([<ExcelArgument(Description= "Vkeys1.")>] mapVKeys1: obj)
+        ([<ExcelArgument(Description= "Vkeys2.")>] mapVKeys2: obj)
+        ([<ExcelArgument(Description= "Vkeys3.")>] mapVKeys3: obj)
+        ([<ExcelArgument(Description= "Vkeys4.")>] mapVKeys4: obj)
+        ([<ExcelArgument(Description= "Vkeys5.")>] mapVKeys5: obj)
+        ([<ExcelArgument(Description= "Vkeys6.")>] mapVKeys6: obj)
+        ([<ExcelArgument(Description= "Hkeys1.")>] mapHKeys1: obj)
+        ([<ExcelArgument(Description= "Hkeys2.")>] mapHKeys2: obj)
+        ([<ExcelArgument(Description= "Hkeys3.")>] mapHKeys3: obj)
+        ([<ExcelArgument(Description= "Hkeys4.")>] mapHKeys4: obj)
+        ([<ExcelArgument(Description= "Hkeys5.")>] mapHKeys5: obj)
+        ([<ExcelArgument(Description= "Hkeys6.")>] mapHKeys6: obj)
+        ([<ExcelArgument(Description= "values.")>] mapValues: obj)
+        : obj  =
+
+        // intermediary stage
+        let vktag1 = vk1Tag
+        let vktag2 = In.D0.Stg.Opt.def None vk2Tag
+        let vktag3 = In.D0.Stg.Opt.def None vk3Tag
+        let vktag4 = In.D0.Stg.Opt.def None vk4Tag
+        let vktag5 = In.D0.Stg.Opt.def None vk5Tag
+        let vktag6 = In.D0.Stg.Opt.def None vk6Tag
+        let hktag1 = hk1Tag
+        let hktag2 = In.D0.Stg.Opt.def None hk2Tag
+        let hktag3 = In.D0.Stg.Opt.def None hk3Tag
+        let hktag4 = In.D0.Stg.Opt.def None hk4Tag
+        let hktag5 = In.D0.Stg.Opt.def None hk5Tag
+        let hktag6 = In.D0.Stg.Opt.def None hk6Tag
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        let tryvals =  API.In.D2.Tag.Try.tryDV' None valueTag mapValues
+
+        match tryvals with
+        | None -> Proxys.def.failed
+        | Some (gtyval, vals) ->
+            let vgtykeys_keys =
+                match vktag2, vktag3, vktag4, vktag5, vktag6 with
+                | Some vktg2, Some vktg3, Some vktg4, Some vktg5, Some vktg6 -> 
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None vktg2 mapVKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None vktg3 mapVKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None vktg4 mapVKeys4
+                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None vktg5 mapVKeys5
+                    let trykeys6 =  API.In.D1.Tag.Try.tryDV' None None vktg6 mapVKeys6
+
+                    match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6 with
+                    | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6) -> 
+                        let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4; gtykey5; gtykey6 |]
+                        let keys = [| keys1; keys2; keys3; keys4; keys5; keys6 |]
+                        Some (gtykeys, keys)
+                    | _ -> None
+
+                | Some vktg2, Some vktg3, Some vktg4, Some vktg5, None -> 
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None vktg2 mapVKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None vktg3 mapVKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None vktg4 mapVKeys4
+                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None vktg5 mapVKeys5
+
+                    match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5 with
+                    | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5) -> 
+                        let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4; gtykey5 |]
+                        let keys = [| keys1; keys2; keys3; keys4; keys5 |]
+                        Some (gtykeys, keys)
+                    | _ -> None
+
+                | Some vktg2, Some vktg3, Some vktg4, None, None -> 
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None vktg2 mapVKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None vktg3 mapVKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None vktg4 mapVKeys4
+
+                    match trykeys1, trykeys2, trykeys3, trykeys4 with
+                    | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4) -> 
+                        let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4 |]
+                        let keys = [| keys1; keys2; keys3; keys4 |]
+                        Some (gtykeys, keys)
+                    | _ -> None
+
+                | Some vktg2, Some vktg3, None, None, None -> 
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None vktg2 mapVKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None vktg3 mapVKeys3
+
+                    match trykeys1, trykeys2, trykeys3 with
+                    | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3) -> 
+                        let gtykeys = [| gtykey1; gtykey2; gtykey3 |]
+                        let keys = [| keys1; keys2; keys3 |]
+                        Some (gtykeys, keys)
+                    | _ -> None
+
+                | Some vktg2, None, None, None, None -> 
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None vktg2 mapVKeys2
+
+                    match trykeys1, trykeys2 with
+                    | Some (gtykey1, keys1), Some (gtykey2, keys2) -> 
+                        let gtykeys = [| gtykey1; gtykey2 |]
+                        let keys = [| keys1; keys2 |]
+                        Some (gtykeys, keys)
+                    | _ -> None
+
+                | _ -> 
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None vktag1 mapVKeys1
+
+                    match trykeys1 with
+                    | Some (gtykey1, keys1) -> 
+                        let gtykeys = [| gtykey1 |]
+                        let keys = [| keys1 |]
+                        Some (gtykeys, keys)
+                    | _ -> None
+
+            let hgtykeys_keys =
+                match hktag2, hktag3, hktag4, hktag5, hktag6 with
+                | Some hktg2, Some hktg3, Some hktg4, Some hktg5, Some hktg6 -> 
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None hktg2 mapHKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None hktg3 mapHKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None hktg4 mapHKeys4
+                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None hktg5 mapHKeys5
+                    let trykeys6 =  API.In.D1.Tag.Try.tryDV' None None hktg6 mapHKeys6
+
+                    match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6 with
+                    | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6) -> 
+                        let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4; gtykey5; gtykey6 |]
+                        let keys = [| keys1; keys2; keys3; keys4; keys5; keys6 |]
+                        Some (gtykeys, keys)
+                    | _ -> None
+
+                | Some hktg2, Some hktg3, Some hktg4, Some hktg5, None -> 
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None hktg2 mapHKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None hktg3 mapHKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None hktg4 mapHKeys4
+                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None hktg5 mapHKeys5
+
+                    match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5 with
+                    | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5) -> 
+                        let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4; gtykey5 |]
+                        let keys = [| keys1; keys2; keys3; keys4; keys5 |]
+                        Some (gtykeys, keys)
+                    | _ -> None
+
+                | Some hktg2, Some hktg3, Some hktg4, None, None -> 
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None hktg2 mapHKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None hktg3 mapHKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None hktg4 mapHKeys4
+
+                    match trykeys1, trykeys2, trykeys3, trykeys4 with
+                    | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4) -> 
+                        let gtykeys = [| gtykey1; gtykey2; gtykey3; gtykey4 |]
+                        let keys = [| keys1; keys2; keys3; keys4 |]
+                        Some (gtykeys, keys)
+                    | _ -> None
+
+                | Some hktg2, Some hktg3, None, None, None -> 
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None hktg2 mapHKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None hktg3 mapHKeys3
+
+                    match trykeys1, trykeys2, trykeys3 with
+                    | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3) -> 
+                        let gtykeys = [| gtykey1; gtykey2; gtykey3 |]
+                        let keys = [| keys1; keys2; keys3 |]
+                        Some (gtykeys, keys)
+                    | _ -> None
+
+                | Some hktg2, None, None, None, None -> 
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None hktg2 mapHKeys2
+
+                    match trykeys1, trykeys2 with
+                    | Some (gtykey1, keys1), Some (gtykey2, keys2) -> 
+                        let gtykeys = [| gtykey1; gtykey2 |]
+                        let keys = [| keys1; keys2 |]
+                        Some (gtykeys, keys)
+                    | _ -> None
+
+                | _ -> 
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None hktag1 mapHKeys1
+
+                    match trykeys1 with
+                    | Some (gtykey1, keys1) -> 
+                        let gtykeys = [| gtykey1 |]
+                        let keys = [| keys1 |]
+                        Some (gtykeys, keys)
+                    | _ -> None
+
+            match vgtykeys_keys, hgtykeys_keys with
+            | None, _ -> Proxys.def.failed
+            | _, None -> Proxys.def.failed
+            | Some (vgtykeys, vkeys), Some (hgtykeys, hkeys) ->
+                let map = MAP.Gen.map2D vgtykeys hgtykeys gtyval vkeys hkeys vals
+                let res = map |> MRegistry.register rfid
+                res |> box
+
     [<ExcelFunction(Category="Map", Description="Returns the size of a Map R-object.")>]
     let test_isEmpty
         ([<ExcelArgument(Description= "arg1")>] arg1: obj) 
@@ -3639,6 +4536,8 @@ module MAP_XL =
         ([<ExcelArgument(Description= "Map key8.")>] mapKey8: obj)
         ([<ExcelArgument(Description= "Map key9.")>] mapKey9: obj)
         ([<ExcelArgument(Description= "Map key10.")>] mapKey10: obj)
+        ([<ExcelArgument(Description= "[Failed value. Default is #N/A.]")>] failedValue: obj)
+        ([<ExcelArgument(Description= "[Tuppled. Default is true.]")>] tuppled: obj)  
         : obj = 
 
         // caller cell's reference ID
@@ -3654,34 +4553,73 @@ module MAP_XL =
         let mapkey8 = In.D0.Missing.Obj.tryO mapKey8
         let mapkey9 = In.D0.Missing.Obj.tryO mapKey9
         let mapkey10 = In.D0.Missing.Obj.tryO mapKey10
+        let failedval = In.D0.Missing.Obj.subst Proxys.def.failed failedValue
+        let proxys = { def with failed = failedval }
 
-        // result
-        match mapkey2, mapkey3, mapkey4, mapkey5, mapkey6, mapkey7, mapkey8, mapkey9, mapkey10 with
-        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, Some key9, Some key10 -> 
-            box "9 keys case here"
-        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, Some key9, None -> 
-            box "9 keys case here"
-        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, None, None -> 
-            box "8 keys case here"
-        | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, None, None, None -> 
-            box "7 keys case here"
-        | Some key2, Some key3, Some key4, Some key5, Some key6, None, None, None, None -> 
-            box "6 keys case here"
-        | Some key2, Some key3, Some key4, Some key5, None, None, None, None, None -> 
-            box "5 keys case here"
-        | Some key2, Some key3, Some key4, None, None, None, None, None, None -> 
-            box "4 keys case here"
-        | Some key2, Some key3, None, None, None, None, None, None, None -> 
-            box "3 keys case here"
-        | Some key2, None, None, None, None, None, None, None, None -> 
-            box "2 keys case here"
-        | _ -> 
-            match MAP.Reg.Out.find1 rgMap Proxys.def rfid mapKey1 with
-            | None -> Proxys.def.failed  // TODO Unbox.apply?
-            | Some o1D -> o1D
+        let okeys =
+            // result
+            match mapkey2, mapkey3, mapkey4, mapkey5, mapkey6, mapkey7, mapkey8, mapkey9, mapkey10 with
+            | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, Some key9, Some key10 -> 
+                [| mapKey1; key2; key3; key4; key5; key6; key7; key8; key9; key10 |]
+            | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, Some key9, None -> 
+                [| mapKey1; key2; key3; key4; key5; key6; key7; key8; key9 |]
+            | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, None, None -> 
+                [| mapKey1; key2; key3; key4; key5; key6; key7; key8 |]
+            | Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, None, None, None -> 
+                [| mapKey1; key2; key3; key4; key5; key6; key7 |]
+            | Some key2, Some key3, Some key4, Some key5, Some key6, None, None, None, None -> 
+                [| mapKey1; key2; key3; key4; key5; key6 |]
+            | Some key2, Some key3, Some key4, Some key5, None, None, None, None, None -> 
+                [| mapKey1; key2; key3; key4; key5 |]
+            | Some key2, Some key3, Some key4, None, None, None, None, None, None -> 
+                [| mapKey1; key2; key3; key4 |]
+            | Some key2, Some key3, None, None, None, None, None, None, None -> 
+                [| mapKey1; key2; key3 |]
+            | Some key2, None, None, None, None, None, None, None, None -> 
+                [| mapKey1; key2 |]
+            | _ -> 
+                [| mapKey1 |]
+
+        if okeys.Length = 1 then
+            match MAP.Reg.Out.find1 rgMap Proxys.def rfid okeys.[0] with
+            | None -> proxys.failed
+            | Some o0D -> o0D
+        else
+            match MAP.Reg.Out.findN rgMap Proxys.def rfid okeys with
+            | None -> proxys.failed
+            | Some o0D -> o0D
+
+        
+        //match mapkey2, mapkey3, mapkey4, mapkey5, mapkey6, mapkey7, mapkey8, mapkey9, mapkey10 with
+        //| Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, Some key9, Some key10 -> 
+        //    box "9 keys case here"
+        //| Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, Some key9, None -> 
+        //    box "9 keys case here"
+        //| Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, None, None -> 
+        //    box "8 keys case here"
+        //| Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, None, None, None -> 
+        //    box "7 keys case here"
+        //| Some key2, Some key3, Some key4, Some key5, Some key6, None, None, None, None -> 
+        //    box "6 keys case here"
+        //| Some key2, Some key3, Some key4, Some key5, None, None, None, None, None -> 
+        //    box "5 keys case here"
+        //| Some key2, Some key3, Some key4, None, None, None, None, None, None -> 
+        //    box "4 keys case here"
+        //| Some key2, Some key3, None, None, None, None, None, None, None -> 
+        //    match MAP.Reg.Out.findN rgMap Proxys.def rfid [| mapKey1; key2; key3 |] with
+        //    | None -> proxys.failed
+        //    | Some o0D -> o0D
+        //| Some key2, None, None, None, None, None, None, None, None -> 
+        //    match MAP.Reg.Out.findN rgMap Proxys.def rfid [| mapKey1; key2 |] with
+        //    | None -> proxys.failed
+        //    | Some o0D -> o0D
+        //| _ -> 
+        //    match MAP.Reg.Out.find1 rgMap Proxys.def rfid mapKey1 with
+        //    | None -> proxys.failed
+        //    | Some o0D -> o0D
 
 
-    [<ExcelFunction(Category="Map", Description="Returns the union of many compatible map R-objects.")>]
+    [<ExcelFunction(Category="Map", Description="Returns the union of many compatible Map<K,V> R-objects.")>]
     let map_pool
         ([<ExcelArgument(Description= "Map R-objects.")>] rgMap1D: obj) 
         : obj = 

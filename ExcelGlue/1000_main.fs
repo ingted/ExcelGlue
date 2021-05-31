@@ -1005,6 +1005,43 @@ module API =
                                 Useful.Generics.invoke<TagFn> "def" [| gentype |] args
                         res
 
+            // -------------------------
+            // -- Convenience functions
+            // -------------------------
+                
+            /// Xl-values tests.
+            module Is =
+                let missing (xlValue: obj) : bool = 
+                    match xlValue with    
+                    | :? ExcelMissing -> true
+                    | _ -> false
+
+                let empty (xlValue: obj) : bool = 
+                    match xlValue with    
+                    | :? ExcelEmpty -> true
+                    | _ -> false
+
+                let absent (xlValue: obj) : bool = 
+                    match xlValue with    
+                    | :? ExcelMissing -> true
+                    | :? ExcelEmpty -> true
+                    | _ -> false
+
+                let error (xlValue: obj) : bool = 
+                    match xlValue with    
+                    | :? ExcelError -> true
+                    | _ -> false
+
+                let blank (xlValue: obj) : bool = 
+                    match xlValue with
+                    | :? ExcelEmpty -> true
+                    | :? string as s -> s.Trim() = ""
+                    | _ -> false 
+
+                let blankOrError (xlarg: obj) : bool = 
+                    (blank xlarg) || (error xlarg)
+
+
         /// Obj[] input functions.
         module D1 =
             open Excel
@@ -1747,8 +1784,6 @@ module API =
                         let res = Useful.Option.unbox xa2D
                         res
 
-                        
-
     /// Functions to retun values to Excel.
     module Out =
         open type Variant
@@ -1844,9 +1879,9 @@ module API =
                     | None -> proxys.failed
                     | Some regObj -> regObj |> Useful.Option.map proxys.none mapping
 
-        // -----------------------------------
-        // -- Convenience functions
-        // -----------------------------------
+    // -------------------------
+    // -- Convenience functions
+    // -------------------------
 
         // default-output function
         let out<'a> (defOutput: obj) (output: 'a option) = match output with None -> defOutput | Some value -> box value
@@ -3156,30 +3191,6 @@ module A2D_XL =
         | None -> Proxys.def.failed  // TODO Unbox.apply?
         | Some o -> o |> MRegistry.register rfid |> box
 
-    //[<ExcelFunction(Category="Array2D", Description="Appends several R-object arrays to each other.")>]
-    //let a2_append
-    //    ([<ExcelArgument(Description= "2D array1 R-object.")>] rgA1D1: string) 
-    //    ([<ExcelArgument(Description= "2D array2 R-object.")>] rgA1D2: string) 
-    //    ([<ExcelArgument(Description= "2D array2 R-object.")>] rgA1D3: obj) 
-    //    : obj = 
-
-    //    // intermediary stage
-    //    let rO3 = In.D0.Stg.Opt.def None rgA1D3
-
-    //    // caller cell's reference ID
-    //    let rfid = MRegistry.refID
-
-    //    // result
-    //    match rO3 with
-    //    | None -> 
-    //        match A2D.Reg.Out.append2 rgA1D1 rgA1D2 with
-    //        | None -> box "error"
-    //        | Some o -> o |> MRegistry.register rfid |> box
-    //    | Some rO3 -> 
-    //        match A2D.Reg.Out.append3 rgA1D1 rgA1D2 rO3 with
-    //        | None -> box "error"
-    //        | Some o -> o |> MRegistry.register rfid |> box
-
 module MAP = 
     open Registry
     open Useful.Generics
@@ -4039,14 +4050,6 @@ module MAP =
                         apply<GenFn> methodNm [||] args genTypeRObj
                         |> Some
 
-            //let find2TBD (regKey: string) (proxys: Proxys) (refKey: string)
-            //    (okey1: obj) (okey2: obj) 
-            //    : obj option =
-            //    let methodNm = "find2"
-            //    MRegistry.tryExtractGen genType regKey
-            //    |> Option.map (apply<GenFn> methodNm [||] [| proxys; refKey; okey1; okey2 |])
-
-
 module MAP_XL =
     open Registry
     open API
@@ -4631,6 +4634,13 @@ module MAP_XL =
         match MAP.Reg.In.pool rgMap1D with
         | None -> Proxys.def.failed  // TODO Unbox.apply?
         | Some regObjMap -> regObjMap |> MRegistry.register rfid |> box
+
+
+
+
+
+
+
 
 /// Simple template for generics
 module GenMtrx =

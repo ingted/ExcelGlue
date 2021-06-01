@@ -2551,7 +2551,7 @@ module A1D =
     // -----------------------------------
     // -- Basic functions
     // -----------------------------------
-    let sub' (xs : 'a[]) (startIndex: int) (subCount: int) : 'a[] =
+    let sub' (xs: 'a[]) (startIndex: int) (subCount: int) : 'a[] =
         if startIndex >= xs.Length then
             [||]
         else
@@ -2559,13 +2559,12 @@ module A1D =
             let count = (min (xs.Length - startIndex) subCount) |> max 0
             Array.sub xs start count
     
-    let sub (startIndex: int option) (count: int option) (xs : 'a[]) : 'a[] =
+    let sub (startIndex: int option) (count: int option) (xs: 'a[]) : 'a[] =
         match startIndex, count with
         | Some si, Some cnt -> sub' xs si cnt
         | Some si, None -> sub' xs si (xs.Length - si)
         | None, Some cnt -> sub' xs 0 cnt
         | None, None -> xs
-
 
     // -----------------------------------
     // -- Zip functions

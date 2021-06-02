@@ -246,10 +246,14 @@ module XlXl =
 
         // intermediary stage
         let (len1, len2) = (Array2D.length1 range2D, Array2D.length2 range2D)
-        let rowStartIdx = let rsi = In.D0.Intg.def 0 rowStartIndex in max 0 (min (len1 - 1) rsi)
-        let colStartIdx = let csi = In.D0.Intg.def 0 colStartIndex in max 0 (min (len2 - 1) csi)
-        let rowCount = let rc = In.D0.Intg.def 0 rowCount in max 0 (min (len1 - rowStartIdx - 1) rc)
-        let colCount = let cc = In.D0.Intg.def 0 colCount in max 0 (min (len2 - colStartIdx - 1) cc)
+        //let rowStartIdx = let rsi = In.D0.Intg.def 0 rowStartIndex in max 0 (min (len1 - 1) rsi)
+        //let colStartIdx = let csi = In.D0.Intg.def 0 colStartIndex in max 0 (min (len2 - 1) csi)
+
+        let rowStartIdx = let rsi = In.D0.Intg.def 0 rowStartIndex in max 0 rsi
+        let colStartIdx = let csi = In.D0.Intg.def 0 colStartIndex in max 0 csi
+
+        let rowCount = let rc = In.D0.Intg.def len1 rowCount in max 0 (min (len1 - rowStartIdx) rc)
+        let colCount = let cc = In.D0.Intg.def len2 colCount in max 0 (min (len2 - colStartIdx) cc)
         let emptyIndic = In.D0.Absent.def (box ExcelError.ExcelErrorNA) emptyIndicator
 
         // result
@@ -375,6 +379,7 @@ module XlXl =
         // result
         match value with
         | :? ExcelError -> defaultValue
+        | :? ExcelEmpty -> defaultValue
         | _ -> value
 
     [<ExcelFunction(Category="XL", Description="Replaces non-numeric values with a default value.")>]
@@ -504,7 +509,8 @@ module XlXl =
         : obj =
          
         // intermediary stage
-        let a2D = range |> Array2D.map (In.D0.Dbl.def Double.MinValue >> abs)
+        let a2D = 
+            range |> Array2D.map (In.D0.Dbl.def 0.0 >> abs)
         let len1 = Array2D.length1 a2D
 
         // result
@@ -523,7 +529,8 @@ module XlXl =
         
         // result
         let a1Ds = 
-            [| range1; range2; range3; range4; range5; range6; range1;  |] 
+            [| range1; range2; range3; range4; range5; range6  |] 
+            |> Array.choose In.D0.Absent.Obj.tryO
             |> Array.map (In.Cast.to1D false)
             |> Array.map (Array.map (In.D0.Dbl.def 0.0))
             |> Array.reduce (fun a1D1 a1D2 -> Array.map2 (*) a1D1 a1D2)
@@ -543,7 +550,8 @@ module XlXl =
         
         // result
         let a1Ds = 
-            [| range1; range2; range3; range4; range5; range6; range1;  |] 
+            [| range1; range2; range3; range4; range5; range6 |] 
+            |> Array.choose In.D0.Absent.Obj.tryO
             |> Array.map (In.Cast.to1D false)
             |> Array.map (Array.map (In.D0.Dbl.def 0.0))
             |> Array.reduce (fun a1D1 a1D2 -> Array.map2 (fun x1 x2 -> x1 * x2 |> abs) a1D1 a1D2)

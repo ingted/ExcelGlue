@@ -1,8 +1,10 @@
 ﻿namespace ExcelGlue
 
 open System
+open System.IO
 open System.Collections.Generic
 open ExcelDna.Integration
+open System.Runtime.Serialization.Formatters.Binary
 
 /// Class where all "registered" xl-sheet objects are stored.
 type Registry() =
@@ -38,11 +40,6 @@ type Registry() =
             ref.Add(refKey, Array.append regKeys [| regKey |])
         else
             ref.Add(refKey, [| regKey |])
-
-    ///// Removes object and its xl-cell reference from the Object Registry.
-    //member this.remove (key: string) = 
-    //    reg.Remove(key) |> ignore
-    //    ref.Remove(key)
 
     /// Adds regObject to the registry, and delete all previous references to refKey.
     member this.register (refKey: string) (regObject: obj) : string = 
@@ -261,9 +258,19 @@ type Registry() =
     /// Unsafe
     member this.defaultValue<'a> (xlValue: obj) : 'a =
         this.tryExtract<'a> xlValue |> Option.defaultValue (Unchecked.defaultof<'a>)
-        //match this.tryExtract<'a> xlValue with
-        //| None -> Unchecked.defaultof<'a>
-        //| Some regObj -> regObj
+
+    member this.ioWriteBin (fpath: string) (regKey: string) : DateTime option =
+        match regKey |> this.tryFind with
+        | None -> None
+        | Some o ->
+            use stream = new FileStream(fpath, FileMode.Create)
+            (new BinaryFormatter()).Serialize(stream, o)
+            DateTime.Now |> Some
+
+    member this.ioLoadBin (fpath: string) (refKey: string) : string =
+        use stream = new FileStream(fpath, FileMode.Open)
+        let regObj = (new BinaryFormatter()).Deserialize(stream)
+        this.register refKey regObj
 
 module Registry =
     /// Master registry where all registered objects are held.
@@ -2205,6 +2212,33 @@ module Registry_XL =
         // result
         API.Out.D0.Reg.outO rfid Proxys.def regKey
         //MRegistry.tryType regKey |> Option.map (Useful.Type.pPrint tostringstyle) |> outNA
+
+    // -----------------------------------
+    // -- Misc.
+    // -----------------------------------
+
+    [<ExcelFunction(Category="Registry", Description="Saves a registry object to disk.")>]
+    let rg_writeFile
+        ([<ExcelArgument(Description= "Reg. key.")>] regKey: string)
+        ([<ExcelArgument(Description= "File path.")>] filePath: string)
+        : obj =
+
+        // result
+        match MRegistry.ioWriteBin filePath regKey with
+        | None -> Proxys.def.failed
+        | Some dte -> box dte
+
+    [<ExcelFunction(Category="Registry", Description="Reads a registry object from a file.")>]
+    let rg_readFile
+        ([<ExcelArgument(Description= "File path.")>] filePath: string)
+        : obj =
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        MRegistry.ioLoadBin filePath rfid
+        |> box
 
 module Cast_XL =
     open Excel

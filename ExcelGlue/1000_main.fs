@@ -6,18 +6,21 @@ open System.Collections.Generic
 open ExcelDna.Integration
 open System.Runtime.Serialization.Formatters.Binary
 
-/// Class where all "registered" xl-sheet objects are stored.
+/// Class where all "registered" xl-sheet objects are stored. TODO better wording
 type Registry() =
-    // 2 dictionaries to keep track of objects, and xl-cells references where they are located.
+    // 2 dictionaries to keep track of objects, Registry objects or R-objects, and corresponding xl-cells references where the objects are located.
+    /// Dictionary registry-guid -> R-object.
+    /// "The" registry.
     let reg = Dictionary<string, obj>()
+    /// Dictionary xl-cell reference -> list of associated R-objects guids.
     let ref = Dictionary<string, string[]>()
 
-    // -----------------------------------
+    // -----------------------------
     // -- Construction functions
-    // -----------------------------------
+    // -----------------------------
 
-    /// Removes all objects which are filed under the reference refKey.
-    member private this.removeReferenceObjects (refKey: string) = 
+    /// Removes all objects filed under the xl-cell reference refKey.
+    member private this.removeReferencedObjects (refKey: string) = 
         if ref.ContainsKey refKey then
             for regKey in ref.Item(refKey) do reg.Remove(regKey) |> ignore
             ref.Remove(refKey) |> ignore
@@ -27,12 +30,12 @@ type Registry() =
         reg.Clear()
         ref.Clear()
 
-    /// Adds a reference -> single registry key 
+    /// Adds a (xl-cell reference -> single registry-guid) dictionary entry.
     member private this.addReference (refKey: string) (regKey: string) = 
-        this.removeReferenceObjects refKey
+        this.removeReferencedObjects refKey
         ref.Add(refKey, [| regKey |])
 
-    /// Adds a a single registry key to a (possibly already existing) reference
+    /// Adds a a single registry key to a (possibly already existing) xl-cell reference.
     member private this.appendRef (refKey: string) (regKey: string) =
         if ref.ContainsKey refKey then
             let regKeys = ref.Item(refKey)
@@ -41,45 +44,48 @@ type Registry() =
         else
             ref.Add(refKey, [| regKey |])
 
-    /// Adds regObject to the registry, and delete all previous references to refKey.
+    /// Adds a R-object to the registry given a xl-cell reference, 
+    /// and removes from the registry all existing R-objects filed under the same reference.
     member this.register (refKey: string) (regObject: obj) : string = 
         let regKey = (Guid.NewGuid()).ToString()
         this.addReference refKey regKey
         reg.Add(regKey, regObject)
         regKey
 
-    /// Adds regObject to the registry, under an existing reference refKey.
+    /// Adds a R-object to the registry given a xl-cell reference, 
+    /// without removing existing R-objects filed under the same reference.
     member this.append (refKey: string) (regObject: obj) : string = 
         let regKey = (Guid.NewGuid()).ToString()
         this.appendRef refKey regKey
         reg.Add(regKey, regObject)
         regKey
 
-    // -----------------------------------
+    // -----------------------------
     // -- Inspection functions
-    // -----------------------------------
+    // -----------------------------
 
-    // Returns the number of registry objects held.
+    /// Returns the number of R-objects contained in the registry.
     member this.count = reg.Count
 
-    /// Returns a registry object, given its regKey.
+    /// Returns a R-object, given its associated registry-guid.
     member this.tryFind (regKey: string) : obj option =
         if reg.ContainsKey regKey then
             reg.Item(regKey) |> Some
         else
             None
 
-    /// Returns a reference, given a registry key.
-    /// There can be only one reference per object.
+    /// Returns a corresponding xl-reference, given a registry-guid.
     member private this.tryFindRef (regKey: string) : string option = 
         if reg.ContainsKey regKey then
             [| for kvp in ref -> if kvp.Value |> Array.contains regKey then [| kvp.Key |] else [||] |]
             |> Array.concat
-            |> Array.head
+            |> Array.head // only reference for a given R-object, by construction.
             |> Some
         else
             None
 
+    /// Given a registry-guid, if its associated R-object is a 1D array,
+    /// returns the array element type and the array.
     member this.tryFind1D (regKey: string) : ((Type[])*obj) option =
         match this.tryFind regKey with
         | None -> None
@@ -93,6 +99,8 @@ type Registry() =
             else
                 None
 
+    /// Given a registry-guid, if its associated R-object is a 2D array,
+    /// returns the array element type and the array.
     member this.tryFind2D (regKey: string) : ((Type[])*obj) option =
         match this.tryFind regKey with
         | None -> None
@@ -106,28 +114,28 @@ type Registry() =
             else
                 None
 
-    /// Returns a registry object's type, given its regKey.
+    /// Returns a R-object's type, given its associated registry-guid.
     member this.tryType (regKey: string) : Type option =
         regKey |> this.tryFind |> Option.map (fun o -> o.GetType())
 
-    /// Checks equality on 2 registry objects, given their keys.
+    /// Checks if 2 R-objects are equal.
     member this.equal (regKey1: string) (regKey2: string) : bool = 
         match this.tryFind regKey1, this.tryFind regKey2 with
-        | Some o1, Some o2 -> o1 = o2 // should have an equality constraint?
+        | Some o1, Some o2 -> o1 = o2
         | _ -> false
 
-    /// Returns the registry keys.
+    /// Returns the registry's keys.
     member this.keys : string[] = [| for kvp in reg -> kvp.Key |]
 
-    /// Returns the registry values.
+    /// Returns the registry's values.
     member this.values : obj[] = [| for kvp in reg -> kvp.Value |]
 
-    /// Returns the registry key-value pairs.
+    /// Returns the registry's key-value pairs.
     member this.keyValuePairs : (string*obj)[] = [| for kvp in reg -> kvp.Key, kvp.Value |]
 
-    // -----------------------------------
+    // -----------------------------
     // -- Extraction functions
-    // -----------------------------------
+    // -----------------------------
 
     member this.tryExtract<'a> (xlValue: obj) : 'a option =
         match xlValue with
@@ -224,41 +232,42 @@ type Registry() =
         | :? string as regKey -> this.tryType regKey
         | _ -> None
 
+    // -----------------------------
+    // -- Excel RefID functions
+    // -----------------------------
 
-    // -----------------------------------
-    // -- Excel RefID
-    // -----------------------------------
-
-    member this.excelRef (caller : obj) : string = 
+    member this.excelRef (caller: obj) : string = 
         match caller with
         | :? ExcelReference as ref -> ref.ToString()
         | _ -> ""
 
+    /// Generates a unique key based on the caller xl-cell.
     member this.refID = XlCall.Excel XlCall.xlfCaller |> this.excelRef
 
-    // -----------------------------------
+    // -----------------------------
     // -- Pretty-print functions
-    // -----------------------------------
+    // -----------------------------
 
-    /// Pretty-prints a registry object, given its key.
+    /// Pretty-prints a R-object, given its associated registry-guid.
+    /// Using F# default formatting.
     member this.tryShow (key: string) : string option =
         this.tryFind key |> Option.map (fun o -> sprintf "%A" o)
 
+    /// Pretty-prints a R-object, given its associated registry-guid.
+    /// Using .Net default formatting.
     member this.tryString (key: string) : string option =
         this.tryFind key |> Option.map (fun o -> o.ToString())
 
-    /// Pretty-prints a registry object, given its key.
-    member this.tryPPrint (key: string) : string option =
-        this.tryFind key |> Option.map (fun o -> sprintf "%A" o)
-
-    // -----------------------------------
-    // -- Misc.
-    // -----------------------------------
+    // -----------------------------
+    // -- Miscellaneous
+    // -----------------------------
     
-    /// Unsafe
+    /// Returns a default value. TODO wording 
+    /// Unsafe!
     member this.defaultValue<'a> (xlValue: obj) : 'a =
         this.tryExtract<'a> xlValue |> Option.defaultValue (Unchecked.defaultof<'a>)
 
+    /// Saves a R-object to disk.
     member this.ioWriteBin (fpath: string) (regKey: string) : DateTime option =
         match regKey |> this.tryFind with
         | None -> None
@@ -267,6 +276,7 @@ type Registry() =
             (new BinaryFormatter()).Serialize(stream, o)
             DateTime.Now |> Some
 
+    /// Loads a R-object from disk.
     member this.ioLoadBin (fpath: string) (refKey: string) : string =
         use stream = new FileStream(fpath, FileMode.Open)
         let regObj = (new BinaryFormatter()).Deserialize(stream)
@@ -275,121 +285,6 @@ type Registry() =
 module Registry =
     /// Master registry where all registered objects are held.
     let MRegistry = Registry()
-
-/// F# types for the xl-spreadsheet values we want to capture.
-// Could be extended to more numeric types? E.g. Int64, Decimals...?
-type Variant = | BOOL | BOOLOPT | STRING | STRINGOPT | DOUBLE | DOUBLEOPT | DOUBLENAN | DOUBLENANOPT | INT | INTOPT | DATE | DATEOPT | VAR | VAROPT | OBJ with
-    static member isOptionalType (typeTag: string) : bool = 
-        typeTag.IndexOf("#") >= 0
-
-    static member ofTag (typeTag: string) : Variant = 
-        let isoption = Variant.isOptionalType typeTag
-        let prepString = typeTag.Replace(" ", "").Replace(":", "").Replace("#", "").ToUpper()
-        match prepString with
-        | "B" | "BOOL" | "BOOLEAN" -> if isoption then BOOLOPT else BOOL
-        | "S" | "STR" | "STG" | "STRG" | "STRING" -> if isoption then STRINGOPT else STRING
-        | "D" | "DBL" | "DOUBLE" -> if isoption then DOUBLEOPT else DOUBLE
-        | "DNAN" | "DBLNAN" | "DOUBLENAN" -> if isoption then DOUBLENANOPT else DOUBLENAN
-        | "I" | "INT" | "INTEGER" -> if isoption then INTOPT else INT
-        | "DTE" | "DATE" -> if isoption then DATEOPT else DATE
-        | "V" | "VAR" -> if isoption then VAROPT else VAR
-        | _ -> OBJ
-
-    member this.toLabel : string = 
-        match this with
-        | BOOL -> "BOOL"
-        | BOOLOPT -> "#BOOL"
-        | STRING -> "STRING"
-        | STRINGOPT -> "#STRING"
-        | DOUBLE -> "DOUBLE"
-        | DOUBLEOPT -> "#DOUBLE"
-        | DOUBLENAN -> "DOUBLENAN"
-        | DOUBLENANOPT -> "#DOUBLENAN"
-        | INT -> "INT"
-        | INTOPT -> "#INT"
-        | DATE -> "DATE"
-        | DATEOPT -> "#DATE"
-        | VAR -> "VAR"
-        | VAROPT -> "#VAR"
-        | OBJ-> "OBJ"
-
-    member this.toType : Type = 
-        match this with
-        | BOOL -> typeof<bool>
-        | BOOLOPT -> typeof<bool option>
-        | STRING -> typeof<string>
-        | STRINGOPT -> typeof<string option>
-        | DOUBLE -> typeof<double>
-        | DOUBLEOPT -> typeof<double option>
-        | DOUBLENAN -> typeof<double>
-        | DOUBLENANOPT -> typeof<double option>
-        | INT -> typeof<int>
-        | INTOPT -> typeof<int option>
-        | DATE -> typeof<DateTime>
-        | DATEOPT -> typeof<DateTime option>
-        | VAR -> typeof<obj>
-        | VAROPT -> typeof<obj option>
-        | OBJ-> typeof<obj>
-
-    static member labelType (removeOptionMark: bool) (typeTag: string) : Type = 
-        let var = (if removeOptionMark then typeTag.Replace("#", "") else typeTag) |> Variant.ofTag
-        var.toType
-
-    /// Convenience function. Arbitrary defaults.
-    member this.defVal : obj = 
-        match this with
-        | BOOL -> box false
-        | BOOLOPT -> (Option.None : bool option) |> box
-        | STRING -> box ""
-        | STRINGOPT -> (Option.None : string option) |> box
-        | DOUBLE -> box 0.0
-        | DOUBLEOPT -> (Option.None : double option) |> box
-        | DOUBLENAN -> box 0.0
-        | DOUBLENANOPT -> (Option.None : double option) |> box
-        | INT -> box 0
-        | INTOPT -> (Option.None : int option) |> box
-        | DATE -> box (DateTime(2000,1,1))
-        | DATEOPT -> (Option.None : DateTime option) |> box
-        | VAR -> box ExcelError.ExcelErrorNA
-        | VAROPT -> (Option.None : obj option) |> box
-        | OBJ-> box ExcelError.ExcelErrorNA
-
-    static member labelDefVal (typeTag: string) : obj = 
-        let var = Variant.ofTag typeTag
-        var.defVal
-
-    /// Convenience function.
-    member this.empty1D : obj = 
-        match this with
-        | BOOL -> ([||] : bool[]) |> box
-        | BOOLOPT -> ([||] : bool option[]) |> box
-        | STRING -> ([||] : string[]) |> box
-        | STRINGOPT -> ([||] : string option[]) |> box
-        | DOUBLE -> ([||] : double[]) |> box
-        | DOUBLEOPT -> ([||] : double option[]) |> box
-        | DOUBLENAN -> ([||] : double[]) |> box
-        | DOUBLENANOPT -> ([||] : double option[]) |> box
-        | INT -> ([||] : int[]) |> box
-        | INTOPT -> ([||] : int option[]) |> box
-        | DATE -> ([||] : DateTime[]) |> box
-        | DATEOPT -> ([||] : DateTime option[]) |> box
-        | VAR -> ([||] : obj[]) |> box
-        | VAROPT -> ([||] : obj option[]) |> box
-        | OBJ-> ([||] : obj[]) |> box
-
-    // TODO: wording
-    static member labelEmpty1D (typeTag: string) : obj = 
-        let var = Variant.ofTag typeTag
-        var.empty1D
-
-/// Excel substitute output values.
-///    - Proxys.empty for empty arrays.
-///    - Proxys.failed for function failure.
-///    - Proxys.nan for Double.NaN values.
-///    - Proxys.none for optional F# None values.
-///    - Proxys.object for non-primitive types values.
-type Proxys = { empty: obj; failed: obj; nan: obj; none: obj; object: obj } with
-    static member def : Proxys = { empty = "<empty>"; failed = box ExcelError.ExcelErrorNA ; nan = ExcelError.ExcelErrorNA; none = "<none>"; object = "<obj>" }
 
 module Excel =
     open System
@@ -400,10 +295,52 @@ module Excel =
     ///    - if AllErrors, all Excel error values are converted.
     ///    - if AllNonNumeric, any non-numeric xl-value are.
 
+    type XlKind = double
+    type XLKind = double
+    type ExcelKind = double
+
     /// Describes various convenient sets, "kinds", of xl-spreadsheet values.
     type Kind = | Boolean | Numeric | Textual | NA | Error | Missing | Empty with
-        static member nonBoolean = [| Numeric; Textual |] |> Array.sort
+        static member hasKind (kinds: Set<Kind>) (xlValue: obj) : bool =
+            match xlValue with 
+            | :? bool -> kinds |> Set.contains Boolean
+            | :? double -> kinds |> Set.contains Numeric
+            | :? string -> kinds |> Set.contains Textual
+            | :? ExcelError as e when e = ExcelError.ExcelErrorNA -> kinds |> Set.contains NA
+            | :? ExcelError -> kinds |> Set.contains Error
+            | :? ExcelMissing -> kinds |> Set.contains Missing
+            | :? ExcelEmpty -> kinds |> Set.contains Empty
+            | _ -> false
 
+        static member ofLbl (singleLabel: string) : Kind[] = 
+            match singleLabel.ToUpper() with
+            | "B" | "BOOL" | "BOOLEAN" -> [| Boolean |]
+            | "S" | "STG" | "STRING" | "TXT" | "TEXT" -> [| Textual |]
+            | "D" | "DBL" | "DOUBLE" | "NUM" | "NUMERIC" -> [| Numeric |]
+            | "N" | "NA" | "NAN" | "#NA" | "#N/A" -> [| NA |]
+            | "E" | "ERR" | "ERROR" -> [| Error |]
+            | "M" | "MISS" | "MISSING" -> [| Missing |]
+            | "EMPTY" -> [| Empty |]
+            | "A" | "ABS" | "ABSENT" -> [| Missing; Empty |]
+            | _ -> [||]
+
+        static member all = [| Boolean;  Numeric;  Textual; NA;  Error;  Missing;  Empty |] |> Set.ofArray
+
+        /// Translates a comma separated string into a set of kinds.
+        /// '!' as first element takes the complement set.
+        ///    - "!NUM" // non-numeric kinds, matches any non-numeric value.
+        ///    - "NA" // Nan kind, matches #N/A.
+        ///    - "ERR" // Error kinds, matches any Excel error.
+        ///    - "ABS" // Absent set, matches Missing and Empty arguments.
+        ///    - "TXT" // Textual set, matches any string argument
+        ///    - "!TXT,BOOL" // set of all non-string, non-boolean elements.
+        ///    ...
+        static member ofLabel (label: string) : Set<Kind> =
+            let neg = label.StartsWith("!")
+            let kinds = label.ToUpper().Replace("!","").Split([| "," |], StringSplitOptions.None) |> Array.collect Kind.ofLbl |> Set.ofArray
+            if neg then Set.difference Kind.all kinds else kinds
+
+        static member nonBoolean = [| Numeric; Textual |] |> Array.sort
         static member nonNumeric = [| Boolean; Textual |] |> Array.sort
         static member nonNumericAndNA = [| Boolean; Textual; NA |] |> Array.sort
         static member nonNumericAndError = [| Boolean; Textual; NA; Error |] |> Array.sort
@@ -414,7 +351,7 @@ module Excel =
         static member anyError = [| NA; Error |] |> Array.sort
         static member none = [||]
 
-        static member ofLabel (label: string) : Kind[] =
+        static member ofLabelTBD (label: string) : Kind[] =
             match label.ToUpper() with
             | "NA" -> Kind.onlyNA
             | "ERR" | "ERROR" -> Kind.anyError
@@ -423,9 +360,9 @@ module Excel =
             | "NNERR" | "NN_ERR" | "NN+ERR" | "NONNUM_ERR" | "NONNUM+ERR" | "NONNUMERIC_ERROR" | "NONNUMERIC+ERROR" -> Kind.nonNumericAndError
             | _ -> Kind.none
 
-        static member labelGuide : (string*string) [] =  // FIXME do better
+        static member labelGuideTBD : (string*string) [] =  // FIXME do better
             let labels = [| "NA"; "ERR"; "NN"; "NNNA"; "NNERR"; "NONE"; "default" |]
-            labels |> Array.map (fun lbl -> (lbl, Kind.ofLabel lbl |> Array.map (fun kinds -> kinds.ToString()) |> (String.concat "|")))
+            labels |> Array.map (fun lbl -> (lbl, Kind.ofLabelTBD lbl |> Array.map (fun kinds -> kinds.ToString()) |> (String.concat "|")))
 
     module Kind =
         /// Matches non-numeric, non-error variants, i.e. Bools and Strings.
@@ -555,6 +492,113 @@ module Useful =
             pp
 
 module API = 
+
+    /// F# types for the xl-spreadsheet values we want to capture.
+    // Could be extended to more numeric types? E.g. Int64, Decimals...?
+    type Variant = | BOOL | BOOLOPT | STRING | STRINGOPT | DOUBLE | DOUBLEOPT | DOUBLENAN | DOUBLENANOPT | INT | INTOPT | DATE | DATEOPT | VAR | VAROPT | OBJ with
+        static member isOptionalType (typeTag: string) : bool = 
+            typeTag.IndexOf("#") >= 0
+
+        static member ofTag (typeTag: string) : Variant = 
+            let isoption = Variant.isOptionalType typeTag
+            let prepString = typeTag.Replace(" ", "").Replace(":", "").Replace("#", "").ToUpper()
+            match prepString with
+            | "B" | "BOOL" | "BOOLEAN" -> if isoption then BOOLOPT else BOOL
+            | "S" | "STR" | "STG" | "STRG" | "STRING" -> if isoption then STRINGOPT else STRING
+            | "D" | "DBL" | "DOUBLE" -> if isoption then DOUBLEOPT else DOUBLE
+            | "DNAN" | "DBLNAN" | "DOUBLENAN" -> if isoption then DOUBLENANOPT else DOUBLENAN
+            | "I" | "INT" | "INTEGER" -> if isoption then INTOPT else INT
+            | "DTE" | "DATE" -> if isoption then DATEOPT else DATE
+            | "V" | "VAR" -> if isoption then VAROPT else VAR
+            | _ -> OBJ
+
+        member this.toLabel : string = 
+            match this with
+            | BOOL -> "BOOL"
+            | BOOLOPT -> "#BOOL"
+            | STRING -> "STRING"
+            | STRINGOPT -> "#STRING"
+            | DOUBLE -> "DOUBLE"
+            | DOUBLEOPT -> "#DOUBLE"
+            | DOUBLENAN -> "DOUBLENAN"
+            | DOUBLENANOPT -> "#DOUBLENAN"
+            | INT -> "INT"
+            | INTOPT -> "#INT"
+            | DATE -> "DATE"
+            | DATEOPT -> "#DATE"
+            | VAR -> "VAR"
+            | VAROPT -> "#VAR"
+            | OBJ-> "OBJ"
+
+        member this.toType : Type = 
+            match this with
+            | BOOL -> typeof<bool>
+            | BOOLOPT -> typeof<bool option>
+            | STRING -> typeof<string>
+            | STRINGOPT -> typeof<string option>
+            | DOUBLE -> typeof<double>
+            | DOUBLEOPT -> typeof<double option>
+            | DOUBLENAN -> typeof<double>
+            | DOUBLENANOPT -> typeof<double option>
+            | INT -> typeof<int>
+            | INTOPT -> typeof<int option>
+            | DATE -> typeof<DateTime>
+            | DATEOPT -> typeof<DateTime option>
+            | VAR -> typeof<obj>
+            | VAROPT -> typeof<obj option>
+            | OBJ-> typeof<obj>
+
+        static member labelType (removeOptionMark: bool) (typeTag: string) : Type = 
+            let var = (if removeOptionMark then typeTag.Replace("#", "") else typeTag) |> Variant.ofTag
+            var.toType
+
+        /// Convenience function. Arbitrary defaults.
+        member this.defVal : obj = 
+            match this with
+            | BOOL -> box false
+            | BOOLOPT -> (Option.None : bool option) |> box
+            | STRING -> box ""
+            | STRINGOPT -> (Option.None : string option) |> box
+            | DOUBLE -> box 0.0
+            | DOUBLEOPT -> (Option.None : double option) |> box
+            | DOUBLENAN -> box 0.0
+            | DOUBLENANOPT -> (Option.None : double option) |> box
+            | INT -> box 0
+            | INTOPT -> (Option.None : int option) |> box
+            | DATE -> box (DateTime(2000,1,1))
+            | DATEOPT -> (Option.None : DateTime option) |> box
+            | VAR -> box ExcelError.ExcelErrorNA
+            | VAROPT -> (Option.None : obj option) |> box
+            | OBJ-> box ExcelError.ExcelErrorNA
+
+        static member labelDefVal (typeTag: string) : obj = 
+            let var = Variant.ofTag typeTag
+            var.defVal
+
+        /// Convenience function.
+        member this.empty1D : obj = 
+            match this with
+            | BOOL -> ([||] : bool[]) |> box
+            | BOOLOPT -> ([||] : bool option[]) |> box
+            | STRING -> ([||] : string[]) |> box
+            | STRINGOPT -> ([||] : string option[]) |> box
+            | DOUBLE -> ([||] : double[]) |> box
+            | DOUBLEOPT -> ([||] : double option[]) |> box
+            | DOUBLENAN -> ([||] : double[]) |> box
+            | DOUBLENANOPT -> ([||] : double option[]) |> box
+            | INT -> ([||] : int[]) |> box
+            | INTOPT -> ([||] : int option[]) |> box
+            | DATE -> ([||] : DateTime[]) |> box
+            | DATEOPT -> ([||] : DateTime option[]) |> box
+            | VAR -> ([||] : obj[]) |> box
+            | VAROPT -> ([||] : obj option[]) |> box
+            | OBJ-> ([||] : obj[]) |> box
+
+        // TODO: wording
+        static member labelEmpty1D (typeTag: string) : obj = 
+            let var = Variant.ofTag typeTag
+            var.empty1D
+
     /// Functions to handle or process Inputs from Excel.
     module In =
 
@@ -695,7 +739,63 @@ module API =
                     let subst (defValue: obj) (xlVal: obj) = Obj.subst<double> defValue xlVal
 
             [<RequireQualifiedAccess>]
-            module Nan =
+            module NanNEW =
+                /// Converts a boxed ExcelErrorNA into a Double.NaN.
+                let ofNA (xlVal: obj) : obj =
+                    match xlVal with
+                    | :? ExcelError as err when err = ExcelError.ExcelErrorNA -> Double.NaN |> box
+                    | _ -> xlVal
+
+                /// Converts xl-values of the provided kinds to to boxed Double.NaN.
+                let nanify (xlKinds: Set<Kind>) (xlVal: obj) : obj = 
+                    if xlVal |> Excel.Kind.hasKind xlKinds then
+                        box Double.NaN
+                    else
+                        xlVal
+
+                /// Converts a boxed Double.NaN into an ExcelErrorNA. // FIXME - should be OUT?
+                let ofNaNTBD (xlVal: obj) : obj =
+                    match xlVal with
+                    | :? double as d -> if Double.IsNaN d then ExcelError.ExcelErrorNA |> box else box d
+                    | _ -> xlVal
+
+                /// Casts an xl-value to double or fails, with some other non-double values potentially cast to Double.NaN.
+                let fail (xlKinds: Set<Kind>) (msg: string option) (xlVal: obj) = 
+                    nanify xlKinds xlVal |> fail<double> msg
+
+                /// Casts an xl-value to double with a default-value, with some other non-double values potentially cast to Double.NaN. // FIXME - improve text
+                let def (xlKinds: Set<Kind>) (defValue: double) (xlVal: obj) = 
+                    nanify xlKinds xlVal |> def<double> defValue
+
+                // optional-type default TODO wording
+                module Opt =
+                    /// Casts an xl-value to a double option type with a default-value, with some other non-double values potentially cast to Double.NaN.
+                    let def (xlKinds: Set<Kind>) (defValue: double option) (xlVal: obj) = 
+                        nanify xlKinds xlVal |> Opt.def<double> defValue
+
+                /// Object substitution, based on type.
+                module Obj =
+                    /// Substitutes an object for another one, if it isn't a (boxed) double (e.g. box 1.0).
+                    /// Replaces an xl-value with a double default-value if it isn't a (boxed double) type (e.g. box 1.0), with some other non-double values potentially cast to Double.NaN.
+                    let subst (xlKinds: Set<Kind>) (defValue: obj) (xlVal: obj) = 
+                        nanify xlKinds xlVal |> Obj.subst<double> defValue
+
+                    /// Converts a boxed ExcelErrorNA into a Double.NaN.
+                    /// Similar to nanify function, but lighter.
+                    let ofNA (xlVal: obj) : obj =
+                        match xlVal with
+                        | :? ExcelError as err when err = ExcelError.ExcelErrorNA -> Double.NaN |> box
+                        | _ -> xlVal
+
+                    /// Converts a boxed Double.NaN into an ExcelErrorNA. // FIXME - should be OUT?
+                    let ofNaN (xlVal: obj) : obj =
+                        match xlVal with
+                        | :? double as d -> if Double.IsNaN d then ExcelError.ExcelErrorNA |> box else box d
+                        | _ -> xlVal
+
+
+            [<RequireQualifiedAccess>]
+            module NanX =
                 /// Converts xl-values to boxed Double.NaN in special cases, depending on xl-value's Kind.
                 let nanify (xlKinds: Kind[]) (xlVal: obj) : obj = 
                     match xlVal with
@@ -923,7 +1023,7 @@ module API =
                             | _ -> None
 
                 /// Casts an xl-value to a 'A, with a default-value for when the casting fails.
-                static member def<'A> (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A = 
+                static member def<'A> (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A = 
 
                     match typeTag |> Variant.ofTag with
                     | BOOL -> 
@@ -937,7 +1037,8 @@ module API =
                         def<'A> defval xlValue
                     | DOUBLENAN -> 
                         let defval = TagFn.defaultValue<double> typeTag defValue
-                        let a0D = Nan.def Kind.nonNumericAndNA defval xlValue // TODO: pass xlkinds as argument
+                        //let a0D = Nan.def Kind.nonNumericAndNA defval xlValue // TODO: pass xlkinds as argument
+                        let a0D = NanNEW.def xlKinds defval xlValue // TODO: pass xlkinds as argument
                         box a0D :?> 'A
                     | INT -> 
                         let defval = TagFn.defaultValue<int> typeTag defValue |> int
@@ -951,7 +1052,7 @@ module API =
     
                 /// Casts an xl-value to a 'A option, with a default-value for when the casting fails.
                 /// defValue is None, Some 'a or even Some (Some 'a).
-                static member defOpt<'A> (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A option = 
+                static member defOpt<'A> (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A option = 
                     match typeTag |> Variant.ofTag with
                     | BOOLOPT -> 
                         let defval : 'A option = TagFn.defaultValueOpt<'A> defValue
@@ -964,7 +1065,8 @@ module API =
                         Opt.def<'A> defval xlValue
                     | DOUBLENANOPT -> 
                         let defval = TagFn.defaultValueOpt<double> defValue
-                        let a0D = Nan.Opt.def Kind.nonNumericAndNA defval xlValue // TODO: pass xlkinds as argument
+                        // let a0D = Nan.Opt.def Kind.nonNumericAndNA defval xlValue // TODO: pass xlkinds as argument
+                        let a0D = NanNEW.Opt.def xlKinds defval xlValue // TODO: pass xlkinds as argument
                         box a0D :?> 'A option
                         // Opt.def<'A> defval xlValue
                     | INTOPT -> 
@@ -981,9 +1083,9 @@ module API =
             module Tag = 
                 /// Casts an xl-value to a 'A, with a default-value for when the casting fails.
                 /// 'a is determined by typeTag.
-                let def (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                let def (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype = typeTag |> Variant.labelType true
-                    let args : obj[] = [| defValue; typeTag; xlValue |]
+                    let args : obj[] = [| xlKinds; defValue; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<TagFn> "def" [| gentype |] args
                     res
 
@@ -991,9 +1093,9 @@ module API =
                 module Opt =
                     /// Casts an xl-value to a 'a option, with a default-value for when the casting fails.
                     /// 'a is determined by typeTag.
-                    let def (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                    let def (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                         let gentype = typeTag |> Variant.labelType true
-                        let args : obj[] = [| defValue; typeTag; xlValue |]
+                        let args : obj[] = [| xlKinds; defValue; typeTag; xlValue |]
                         let res = Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
                         res
 
@@ -1001,9 +1103,9 @@ module API =
                 module Any =
                     /// Convenient, single function covering def and Opt.def cases.
                     /// The returned (boxed) value might be either a 'a or a ('a option), depending on wether the type-tag is optional or not.
-                    let def (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                    let def (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                         let gentype = typeTag |> Variant.labelType true
-                        let args : obj[] = [| defValue; typeTag; xlValue |]
+                        let args : obj[] = [| xlKinds; defValue; typeTag; xlValue |]
 
                         let res =
                             if typeTag |> isOptionalType then
@@ -1048,8 +1150,7 @@ module API =
                 let blankOrError (xlarg: obj) : bool = 
                     (blank xlarg) || (error xlarg)
 
-
-        /// Obj[] input functions.
+        /// Obj[] input functions.  // wording
         module D1 =
             open Excel
             open type Variant
@@ -1127,21 +1228,21 @@ module API =
             [<RequireQualifiedAccess>]
             module Nan =
                 /// Converts an obj[] to a double[], given a default-value for non-double elements.
-                let def (xlKinds: Kind[]) (defValue: double) (o1D: obj[]) =
-                    o1D |> Array.map (D0.Nan.def xlKinds defValue)
+                let def (xlKinds: Set<Kind>) (defValue: double) (o1D: obj[]) =
+                    o1D |> Array.map (D0.NanNEW.def xlKinds defValue)
 
                 /// optional-type default
                 module Opt = 
                     /// Converts an obj[] to a ('a option)[], given a default-value for non-double elements.
-                    let def (xlKinds: Kind[]) (defValue: double option) (o1D: obj[]) =
-                        o1D |> Array.map (D0.Nan.Opt.def xlKinds defValue)
+                    let def (xlKinds: Set<Kind>) (defValue: double option) (o1D: obj[]) =
+                        o1D |> Array.map (D0.NanNEW.Opt.def xlKinds defValue)
 
                 /// Converts an obj[] to a DateTime[], removing any non-double element.
-                let filter (xlKinds: Kind[]) (o1D: obj[]) =
-                    o1D |> Array.choose (D0.Nan.Opt.def xlKinds None)
+                let filter (xlKinds: Set<Kind>) (o1D: obj[]) =
+                    o1D |> Array.choose (D0.NanNEW.Opt.def xlKinds None)
 
                 /// Converts an obj[] to an optional 'a[]. All the elements must be double, otherwise defValue array is returned. 
-                let tryDV (xlKinds: Kind[]) (defValue1D: double[] option) (o1D: obj[])  =
+                let tryDV (xlKinds: Set<Kind>) (defValue1D: double[] option) (o1D: obj[])  =
                     let convert = Opt.def xlKinds None o1D
                     match convert |> Array.tryFind Option.isNone with
                     | None -> convert |> Array.map Option.get |> Some
@@ -1197,7 +1298,7 @@ module API =
             /// Use module Gen functions for their untyped versions.
             type TagFn =
                 /// Converts an xl-value to a 'A[], given a typed default-value for elements which can't be cast to 'A.
-                static member def<'A> (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A[] = 
+                static member def<'A> (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A[] = 
                     let o1D = Cast.to1D (rowWiseDef |> Option.defaultValue false) xlValue
 
                     match typeTag |> Variant.ofTag with
@@ -1212,7 +1313,7 @@ module API =
                         def<'A> defval o1D
                     | DOUBLENAN -> 
                         let defval = D0.TagFn.defaultValue<double> typeTag defValue
-                        let a1D = Nan.def Kind.nonNumericAndNA defval o1D // TODO: pass xlkinds as argument
+                        let a1D = Nan.def xlKinds defval o1D
                         a1D |> Array.map (fun x -> (box x) :?> 'A)
                     | INT -> 
                         let defval = D0.TagFn.defaultValue<int> typeTag defValue |> int
@@ -1232,7 +1333,7 @@ module API =
                     | _ -> [||]
         
                 /// Converts an xl-value to a ('A option)[], given an optional default-value for elements which can't be cast to 'A.
-                static member defOpt<'A> (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : ('A option)[] = 
+                static member defOpt<'A> (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : ('A option)[] = 
                     let o1D = Cast.to1D (rowWiseDef |> Option.defaultValue false) xlValue
 
                     match typeTag |> Variant.ofTag with
@@ -1247,7 +1348,7 @@ module API =
                         Opt.def<'A> defval o1D
                     | DOUBLENANOPT -> 
                         let defval = D0.TagFn.defaultValueOpt<double> defValue
-                        let a1D = Nan.Opt.def Kind.nonNumericAndNA defval o1D
+                        let a1D = Nan.Opt.def xlKinds defval o1D
                         a1D |> Array.map (fun x -> (box x) :?> 'A option)
                     | INTOPT -> 
                         let defval = D0.TagFn.defaultValueOpt<double> defValue |> Option.map (int)
@@ -1263,7 +1364,7 @@ module API =
                         regObjs |> Array.map (fun ao -> match ao with | None -> defval | _ -> ao)
                     | _ -> [||]
                 
-                static member filter<'A> (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : 'A[] = 
+                static member filter<'A> (xlKinds: Set<Kind>) (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : 'A[] = 
                     let o1D = Cast.to1D (rowWiseDef |> Option.defaultValue false) xlValue
 
                     match typeTag |> Variant.ofTag with
@@ -1273,7 +1374,7 @@ module API =
                         a1D |> Array.map (fun x -> (box x) :?> 'A)
                     | DOUBLE -> filter<'A> o1D
                     | DOUBLENAN -> 
-                        let a1D = Nan.filter Kind.nonNumericAndNA o1D
+                        let a1D = Nan.filter xlKinds o1D
                         a1D |> Array.map (fun x -> (box x) :?> 'A)
                     | INT -> 
                         let a1D = Intg.filter o1D
@@ -1286,7 +1387,7 @@ module API =
                         regObjs |> Array.choose id
                     | _ -> [||]
 
-                static member tryDV<'A> (rowWiseDef: bool option) (defValue1D: 'A[] option) (typeTag: string) (xlValue: obj) : 'A[] option = 
+                static member tryDV<'A> (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: 'A[] option) (typeTag: string) (xlValue: obj) : 'A[] option = 
                     let o1D = Cast.to1D (rowWiseDef |> Option.defaultValue false) xlValue
 
                     match typeTag |> Variant.ofTag with
@@ -1295,7 +1396,7 @@ module API =
                     | DOUBLE -> tryDV<'A> defValue1D o1D
                     | DOUBLENAN -> 
                         let defval1D = box defValue1D :?> (double[] option)
-                        let a1D = Nan.tryDV Kind.nonNumericAndNA defval1D o1D
+                        let a1D = Nan.tryDV xlKinds defval1D o1D
                         box a1D :?> 'A[] option
                     | INT -> 
                         let defval1D = box defValue1D :?> (int[] option)
@@ -1312,9 +1413,9 @@ module API =
                         | Some _ -> defValue1D
                     | _ -> None
 
-                static member tryEmpty<'A> (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : 'A[] = 
+                static member tryEmpty<'A> (xlKinds: Set<Kind>) (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : 'A[] = 
                     let defValue1D : 'A[] = [||]
-                    TagFn.tryDV<'A> rowWiseDef (Some defValue1D) typeTag xlValue
+                    TagFn.tryDV<'A> xlKinds rowWiseDef (Some defValue1D) typeTag xlValue
                     |> Option.get
 
                 ///// TODO: wording
@@ -1328,20 +1429,20 @@ module API =
             module Tag =
                 /// Converts an xl-value to a 'a[], given a type-tag and a compatible default-value for when casting to 'a fails.
                 /// The type-tag determines 'a. Only works for non-optional type-tags, e.g. "string".
-                let def (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                let def (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype =
                         if typeTag.ToUpper() = "OBJ" then
                             Registry.MRegistry.trySampleType false xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
                         else
                             typeTag |> Variant.labelType false
-                    let args : obj[] = [| rowWiseDef; defValue; typeTag; xlValue |]
+                    let args : obj[] = [| xlKinds; rowWiseDef; defValue; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<TagFn> "def" [| gentype |] args
                     res
 
                 module Opt =
                     /// Converts an xl-value to a ('a option)[], given a type-tag and a compatible default-value for when casting to 'a fails.
                     /// The type-tag determines 'a. Only works for optional type-tags, e.g. "#string".
-                    let def (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                    let def (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                         // let gentype = typeTag |> Variant.labelType true
                         let gentype =
                             if typeTag.ToUpper() = "#OBJ" then
@@ -1353,7 +1454,7 @@ module API =
                             else
                                 typeTag |> Variant.labelType true
 
-                        let args : obj[] = [| rowWiseDef; defValue; typeTag; xlValue |]
+                        let args : obj[] = [| xlKinds; rowWiseDef; defValue; typeTag; xlValue |]
                         let res = Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
                         res
 
@@ -1361,80 +1462,69 @@ module API =
                 module Any =
                     /// Convenient, single function covering def and Opt.def cases.
                     /// The returned (boxed) array might be either a 'a[] or a ('a option)[], depending on wether the type-tag is optional or not.
-                    let def (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
-                        let gentype = typeTag |> Variant.labelType true
+                    let def (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                        // let gentype = typeTag |> Variant.labelType true
                         if typeTag |> isOptionalType then
-                            Opt.def rowWiseDef defValue typeTag xlValue
+                            Opt.def xlKinds rowWiseDef defValue typeTag xlValue
                         else
-                            def rowWiseDef defValue typeTag xlValue
-
-
-                    //let defOLD (rowWiseDef: bool option) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
-                    //    let gentype = typeTag |> Variant.labelType true
-                    //    let args : obj[] = [| rowWiseDef; defValue; typeTag; xlValue |]
-
-                    //    let res =
-                    //        if typeTag |> isOptionalType then
-                    //            Useful.Generics.invoke<GenFn> "defOpt" [| gentype |] args
-                    //        else
-                    //            Useful.Generics.invoke<GenFn> "def" [| gentype |] args
-                    //    res
+                            def xlKinds rowWiseDef defValue typeTag xlValue
 
                 /// TODO: wording here. Mentioning the output is a (boxed) 'a[] where 'a is determined by the type tag
                 // TODO explain trySampleType strict
-                let filter' (rowWiseDef: bool option) (strict: bool) (typeTag: string) (xlValue: obj) : Type*obj = 
+                let filter' (xlKinds: Set<Kind>) (rowWiseDef: bool option) (strict: bool) (typeTag: string) (xlValue: obj) : Type*obj = 
                     let gentype =
                         if typeTag.ToUpper() = "OBJ" then
                             Registry.MRegistry.trySampleType strict xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
                         else
                             typeTag |> Variant.labelType false
-                    let args : obj[] = [| rowWiseDef; typeTag; xlValue |]
+                    let args : obj[] = [| xlKinds; rowWiseDef; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<TagFn> "filter" [| gentype |] args
                     gentype, res
                 
                 /// TODO: wording here. Mentioning the output is a (boxed) 'a[] where 'a is determined by the type tag
-                let filter (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : obj = 
-                    filter' rowWiseDef false typeTag xlValue |> snd
+                let filter (xlKinds: Set<Kind>) (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : obj = 
+                    filter' xlKinds rowWiseDef false typeTag xlValue |> snd
 
                 // FIXME: wording
-                let tryDV' (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : Type*obj = 
+                let tryDV' (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : Type*obj = 
                     let gentype =
                         if typeTag.ToUpper() = "OBJ" then
                             Registry.MRegistry.trySampleType false xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
                         else
                             typeTag |> Variant.labelType false
-                    let args : obj[] = [| rowWiseDef; defValue1D; typeTag; xlValue |]
+                    let args : obj[] = [| xlKinds; rowWiseDef; defValue1D; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<TagFn> "tryDV" [| gentype |] args
                     gentype, res
 
                 // FIXME: wording
-                let tryDV (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : obj = 
-                    tryDV' rowWiseDef defValue1D typeTag xlValue |> snd
+                let tryDV (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : obj = 
+                    tryDV' xlKinds rowWiseDef defValue1D typeTag xlValue |> snd
 
-                let tryEmpty (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : obj = 
+                let tryEmpty (xlKinds: Set<Kind>) (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype =
                         if typeTag.ToUpper() = "OBJ" then
                             Registry.MRegistry.trySampleType false xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
                         else
                             typeTag |> Variant.labelType false
-                    let args : obj[] = [| rowWiseDef; typeTag; xlValue |]
+                    let args : obj[] = [| xlKinds; rowWiseDef; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<TagFn> "tryEmpty" [| gentype |] args
                     res
 
                 // FIXME: wording. Same as tryDV' with unboxing
                 module Try =
-                    let tryDV' (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : (Type*obj) option = 
-                        let genty, xa1D = tryDV' rowWiseDef defValue1D typeTag xlValue
+                    let tryDV' (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : (Type*obj) option = 
+                        let genty, xa1D = tryDV' xlKinds rowWiseDef defValue1D typeTag xlValue
                         Useful.Option.unbox xa1D
                         |> Option.map (fun res -> (genty, res))
 
-                    let tryDV (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : obj option = 
-                        let xa1D = tryDV rowWiseDef defValue1D typeTag xlValue
+                    let tryDV (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : obj option = 
+                        let xa1D = tryDV xlKinds rowWiseDef defValue1D typeTag xlValue
                         let res = Useful.Option.unbox xa1D
                         res
 
         /// Obj[] input functions.
         module D2 =
+            open Excel
             open type Variant
 
             let empty2D<'a> : 'a[,] = [|[||]|] |> array2D
@@ -1535,10 +1625,27 @@ module API =
                 /// Converts an obj[,] to an optional 'a[,]. All the elements must be doubles, otherwise defValue array is returned. 
                 let tryDV (defValue2D: double[,] option) (o2D: obj[,]) : double[,] option = tryDV<double> defValue2D o2D
 
-            // TODO : ADD ME
             [<RequireQualifiedAccess>]
             module Nan = 
-                let x1 = 0
+                /// Converts an obj[,] to a bool[,], given a bool default-value for when casting to double fails.
+                let def (xlKinds: Set<Kind>) (defValue: double) (o2D: obj[,]) : double[,] = 
+                    o2D |> Array2D.map (D0.NanNEW.def xlKinds defValue)
+
+                // optional-type default
+                module Opt =
+                    /// Converts an obj[,] to a (bool option)[,], given a bool default-value for when casting to double fails.
+                    let def (xlKinds: Set<Kind>) (defValue: double option) (o2D: obj[,]) : (double option)[,] = 
+                        o2D |> Array2D.map (D0.NanNEW.Opt.def xlKinds defValue)
+
+                /// Converts an obj[,] to a bool[,], removing either row or column where any element isn't a (boxed) string.
+                let filter (xlKinds: Set<Kind>) (rowWise: bool) (o2D: obj[,]) : double[,] = 
+                    o2D 
+                    |> Array2D.map (D0.NanNEW.nanify xlKinds)
+                    |> filter<double> rowWise
+
+                /// Converts an obj[,] to an optional 'a[,]. All the elements must be doubles, otherwise defValue array is returned. 
+                let tryDV (xlKinds: Set<Kind>) (defValue2D: double[,] option) (o2D: obj[,]) : double[,] option = 
+                    tryDV<double> defValue2D o2D
 
             [<RequireQualifiedAccess>]
             module Intg = 
@@ -1637,7 +1744,7 @@ module API =
             /// Use module Gen functions for their untyped versions.
             type TagFn =
                 /// Converts an xl-value to a 'A[], given a typed default-value for elements which can't be cast to 'A.
-                static member def<'A> (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A [,] = 
+                static member def<'A> (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : 'A [,] = 
                     let o2D = Cast.to2D xlValue
 
                     match typeTag |> Variant.ofTag with
@@ -1650,6 +1757,10 @@ module API =
                     | DOUBLE -> 
                         let defval = D0.TagFn.defaultValue<'A> typeTag defValue
                         def<'A> defval o2D
+                    | DOUBLENAN -> 
+                        let defval = D0.TagFn.defaultValue<double> typeTag defValue
+                        let a2D = Nan.def xlKinds defval o2D
+                        a2D |> Array2D.map (fun x -> (box x) :?> 'A)
                     | INT -> 
                         let defval = D0.TagFn.defaultValue<int> typeTag defValue |> int
                         let a2D = Intg.def defval o2D
@@ -1661,7 +1772,7 @@ module API =
                     | _ -> empty2D<'A>
         
                 /// Converts an xl-value to a ('A option)[], given an optional default-value for elements which can't be cast to 'A.
-                static member defOpt<'A> (defValue: obj option) (typeTag: string) (xlValue: obj) : ('A option)[,] = 
+                static member defOpt<'A> (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : ('A option)[,] = 
                     let o2D = Cast.to2D xlValue
 
                     match typeTag |> Variant.ofTag with
@@ -1674,6 +1785,10 @@ module API =
                     | DOUBLEOPT -> 
                         let defval : 'A option = D0.TagFn.defaultValueOpt<'A> defValue
                         Opt.def<'A> defval o2D
+                    | DOUBLENANOPT -> 
+                        let defval = D0.TagFn.defaultValueOpt<double> defValue
+                        let a2D = Nan.Opt.def xlKinds defval o2D
+                        a2D |> Array2D.map (fun x -> (box x) :?> 'A option)
                     | INTOPT -> 
                         let defval = D0.TagFn.defaultValueOpt<double> defValue |> Option.map (int)
                         let a2D = Intg.Opt.def defval o2D
@@ -1684,13 +1799,16 @@ module API =
                         a2D |> Array2D.map (fun x -> (box x) :?> 'A option)
                     | _ -> empty2D<'A option>
                 
-                static member filter<'A> (rowWise: bool option) (typeTag: string) (xlValue: obj) : 'A[,] = 
+                static member filter<'A> (xlKinds: Set<Kind>) (rowWise: bool option) (typeTag: string) (xlValue: obj) : 'A[,] = 
                     let o2D = Cast.to2D xlValue
 
                     match typeTag |> Variant.ofTag with
                     | BOOL -> filter<'A> (rowWise |> Option.defaultValue true) o2D
                     | STRING -> filter<'A> (rowWise |> Option.defaultValue true) o2D
                     | DOUBLE -> filter<'A> (rowWise |> Option.defaultValue true) o2D
+                    | DOUBLENAN -> 
+                        let a2D = Nan.filter xlKinds (rowWise |> Option.defaultValue true) o2D
+                        a2D |> Array2D.map (fun x -> (box x) :?> 'A)
                     | INT -> 
                         let a2D = Intg.filter (rowWise |> Option.defaultValue true) o2D
                         a2D |> Array2D.map (fun x -> (box x) :?> 'A)
@@ -1699,14 +1817,17 @@ module API =
                         a2D |> Array2D.map (fun x -> (box x) :?> 'A)
                     | _ -> empty2D<'A>
 
-                static member tryDV<'A> (defValue2D: 'A[,] option) (typeTag: string) (xlValue: obj) : 'A [,] option = 
+                static member tryDV<'A> (xlKinds: Set<Kind>) (defValue2D: 'A[,] option) (typeTag: string) (xlValue: obj) : 'A [,] option = 
                     let o2D = Cast.to2D xlValue
 
                     match typeTag |> Variant.ofTag with
                     | BOOL -> tryDV<'A> defValue2D o2D
                     | STRING -> tryDV<'A> defValue2D o2D
                     | DOUBLE -> tryDV<'A> defValue2D o2D
-
+                    | DOUBLENAN ->
+                        let defval2D = box defValue2D :?> (double[,] option)
+                        let a2D = Nan.tryDV xlKinds defval2D o2D
+                        box a2D :?> 'A[,] option
                     | INT -> 
                         let defval2D = box defValue2D :?> (int[,] option)
                         let a2D = Intg.tryDV defval2D o2D
@@ -1717,25 +1838,24 @@ module API =
                         box a2D :?> 'A[,] option
                     | _ -> None
 
-
             /// Useful functions for casting xl-arrays, given a type-tag (e.g. "int", "date", "double", "string"...)
             /// Use type GenFn functions for their typed versions.
             [<RequireQualifiedAccess>]
             module Tag =
                 /// Converts an xl-value to a 'a[], given a type-tag and a compatible default-value for when casting to 'a fails.
                 /// The type-tag determines 'a. Only works for non-optional type-tags, e.g. "string".
-                let def (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                let def (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype = typeTag |> Variant.labelType true
-                    let args : obj[] = [| defValue; typeTag; xlValue |]
+                    let args : obj[] = [| xlKinds; defValue; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<TagFn> "def" [| gentype |] args
                     res
 
                 module Opt =
                     /// Converts an xl-value to a ('a option)[], given a type-tag and a compatible default-value for when casting to 'a fails.
                     /// The type-tag determines 'a. Only works for optional type-tags, e.g. "#string".
-                    let def (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                    let def (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                         let gentype = typeTag |> Variant.labelType true
-                        let args : obj[] = [| defValue; typeTag; xlValue |]
+                        let args : obj[] = [| xlKinds; defValue; typeTag; xlValue |]
                         let res = Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
                         res
 
@@ -1743,9 +1863,9 @@ module API =
                 module Any =
                     /// Convenient, single function covering def and Opt.def cases.
                     /// The returned (boxed) array might be either a 'a[] or a ('a option)[], depending on wether the type-tag is optional or not.
-                    let def (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
+                    let def (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                         let gentype = typeTag |> Variant.labelType true
-                        let args : obj[] = [| defValue; typeTag; xlValue |]
+                        let args : obj[] = [| xlKinds; defValue; typeTag; xlValue |]
 
                         let res =
                             if typeTag |> isOptionalType then
@@ -1754,46 +1874,55 @@ module API =
                                 Useful.Generics.invoke<TagFn> "def" [| gentype |] args
                         res
 
-                let filter (rowWise: bool option) (typeTag: string) (xlValue: obj) : obj = 
+                let filter (xlKinds: Set<Kind>) (rowWise: bool option) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype = typeTag |> Variant.labelType false
-                    let args : obj[] = [| rowWise; typeTag; xlValue |]
+                    let args : obj[] = [| xlKinds; rowWise; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<TagFn> "filter" [| gentype |] args
                     res
 
-                let tryDV' (defValue2D: obj) (typeTag: string) (xlValue: obj) : Type*obj = 
+                let tryDV' (xlKinds: Set<Kind>) (defValue2D: obj) (typeTag: string) (xlValue: obj) : Type*obj = 
                     let gentype =
                         if typeTag.ToUpper() = "OBJ" then
                             Registry.MRegistry.trySampleType false xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
                         else
                             typeTag |> Variant.labelType false
-                    let args : obj[] = [| defValue2D; typeTag; xlValue |]
+                    let args : obj[] = [| xlKinds; defValue2D; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<TagFn> "tryDV" [| gentype |] args
                     gentype, res
 
-                let tryDV (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj = 
-                    tryDV' defValue2D typeTag xlValue |> snd
+                let tryDV (xlKinds: Set<Kind>) (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj = 
+                    tryDV' xlKinds defValue2D typeTag xlValue |> snd
 
-                let tryDVTBD (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj = 
-                    let gentype = typeTag |> Variant.labelType false
-                    let args : obj[] = [| defValue2D; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<TagFn> "tryDV" [| gentype |] args
-                    res
+                //let tryDVTBD (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj = 
+                //    let gentype = typeTag |> Variant.labelType false
+                //    let args : obj[] = [| defValue2D; typeTag; xlValue |]
+                //    let res = Useful.Generics.invoke<TagFn> "tryDV" [| gentype |] args
+                //    res
 
                 // FIXME: wording. Same as tryDV' with unboxing
                 module Try =
-                    let tryDV' (defValue2D: obj) (typeTag: string) (xlValue: obj) : (Type*obj) option = 
-                        let genty, xa2D = tryDV' defValue2D typeTag xlValue
+                    let tryDV' (xlKinds: Set<Kind>) (defValue2D: obj) (typeTag: string) (xlValue: obj) : (Type*obj) option = 
+                        let genty, xa2D = tryDV' xlKinds defValue2D typeTag xlValue
                         Useful.Option.unbox xa2D
                         |> Option.map (fun res -> (genty, res))
 
-                    let tryDV (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj option = 
-                        let xa2D = tryDV defValue2D typeTag xlValue
+                    let tryDV (xlKinds: Set<Kind>) (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj option = 
+                        let xa2D = tryDV xlKinds defValue2D typeTag xlValue
                         let res = Useful.Option.unbox xa2D
                         res
 
     /// Functions to retun values to Excel.
     module Out =
         open type Variant
+
+        /// Substitute output values to Excel.
+        ///    - Proxys.empty for empty arrays.
+        ///    - Proxys.failed for function failure.
+        ///    - Proxys.nan for Double.NaN values.
+        ///    - Proxys.none for optional F# None values.
+        ///    - Proxys.object for non-primitive types values.
+        type Proxys = { empty: obj; failed: obj; nan: obj; none: obj; object: obj } with
+            static member def : Proxys = { empty = "<empty>"; failed = box ExcelError.ExcelErrorNA ; nan = ExcelError.ExcelErrorNA; none = "<none>"; object = "<obj>" }
 
         /// Functions to return single values to Excel.
         module D0 =
@@ -2132,6 +2261,7 @@ module API =
                         | Some o2d -> fn o2d
 
 module Registry_XL =
+    open API
     open API.In.D0
     open API.Out
     open Registry
@@ -2244,7 +2374,7 @@ module Cast_XL =
     open Excel
     open API
 //    open type Variant
-    open type Proxys
+    open type Out.Proxys
 
     [<ExcelFunction(Category="TEST", Description="test2d")>]
     let test2D ([<ExcelArgument(Description= "Range.")>] range: obj)
@@ -2276,13 +2406,30 @@ module Cast_XL =
         // result
         xxx
 
-    [<ExcelFunction(Category="XL", Description="Cast an xl-range to DateTime[].")>]
-    let cast_edgeCases ()
+    [<ExcelFunction(Category="ExcelGlue Info", Description="Returns the xl-kind string labels.")>]
+    let cast_xlKinds()
         : obj[,]  =
 
-        // result
-        let (lbls, dus) = Kind.labelGuide |> Array.map (fun (lbl, du) -> (box lbl, box du)) |> Array.unzip
-        [| lbls; dus |] |> array2D
+        // intermediary stage
+        let labels = [| "BOOL"; "STG"; "DBL"; "NA"; "ERR"; "MISS"; "EMPTY"; "ABS" |]
+
+        // result        
+        Array2D.init (labels.Length) 2 
+            (fun i j ->
+                if j = 1 then
+                    labels.[i]
+                else
+                    String.Join(",", Excel.Kind.ofLbl labels.[i] |> Array.map (fun kind -> kind.ToString()))
+            )
+        |> Array2D.map box
+
+    //[<ExcelFunction(Category="XL", Description="Cast an xl-range to DateTime[].")>]  // TODO: what is this?
+    //let cast_edgeCasesTBD ()
+    //    : obj[,]  =
+
+    //    // result
+    //    let (lbls, dus) = Kind.labelGuideTBD |> Array.map (fun (lbl, du) -> (box lbl, box du)) |> Array.unzip
+    //    [| lbls; dus |] |> array2D
 
     [<ExcelFunction(Category="XL", Description="Cast an xl-range to obj[]")>]
     let cast1d_obj
@@ -2395,7 +2542,7 @@ module Cast_XL =
     let cast1d_dblNan
         ([<ExcelArgument(Description= "Range.")>] range: obj)
         ([<ExcelArgument(Description= "[Replacement method for non-double elements. \"Replace\", \"Optional\" (= replace with None), \"Filter\" or \"Strict\". Default is \"Replace\".]")>] replaceMethod: obj)
-        ([<ExcelArgument(Description= "[Edge cases mode. Edge cases values are converted to Double.NaN. E.g. NA, ERR, NN, NNNA, NNERR, NONE. Default is NONE.]")>] xlKinds: obj)
+        ([<ExcelArgument(Description= "[Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... (comma separated). Default is none.]")>] xlKinds: obj)
         ([<ExcelArgument(Description= "[Default Value. Default is 0.]")>] defaultValue: obj)
         ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
         ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
@@ -2407,7 +2554,6 @@ module Cast_XL =
         let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
         let none = In.D0.Stg.def "<none>" noneValue
         let empty = In.D0.Stg.def "<empty>" emptyValue
-        //let edgecase = In.D0.Stg.def "NONE" edgeCase |> In.D0.EdgeCaseConversion.ofLabel
         let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Kind.ofLabel
 
         let defVal = In.D0.Dbl.def 0.0 defaultValue
@@ -2497,28 +2643,30 @@ module Cast_XL =
         //([<ExcelArgument(Description= "[Default Value (only for non-optional types). Must be of the appropriate type. Default \"<default>\" (which will fail for non-string types).]")>] defaultValue: obj)
         ([<ExcelArgument(Description= "[Default Value (only for non-optional types, optional types default to None). Must be of the appropriate type, else it will fail.]")>] defaultValue: obj)
         ([<ExcelArgument(Description= "[None indicator. Default is \"<none>\".]")>] noneIndicator: obj)
+        ([<ExcelArgument(Description= "[Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... (comma separated). Default is none.]")>] xlKinds: obj)
         : obj  =
 
         // intermediary stage
         let none = In.D0.Stg.def "<none>" noneIndicator
         let proxys = { def with none = none }
         let defVal = In.D0.Missing.Obj.tryO defaultValue
+        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Kind.ofLabel
 
         // for demo purpose only: takes an Excel cell input,
         // converts it into a (boxed) typed value, then outputs it back to Excel.
         //let res = Out.D0.Gen.defAllCasesObj proxys defVal typeLabel xlValue
-        let xa0D = In.D0.Tag.Any.def defVal typeTag xlValue
+        let xa0D = In.D0.Tag.Any.def xlkinds defVal typeTag xlValue
         xa0D |> Out.D0.Prm.out proxys
 
     [<ExcelFunction(Category="XL", Description="Cast a 1D-slice of an xl-range to a generic type 1D array.")>] // FIXME change wording
     let cast1d_gen
         ([<ExcelArgument(Description= "1D xl-range.")>] range: obj)
         ([<ExcelArgument(Description= "Type tag: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj")>] typeTag: string)
-        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Optional\" (= replace with None), \"Filter\" or \"Strict\". Default is \"Replace\".]")>] replaceMethod: obj)
-        // ([<ExcelArgument(Description= "[Default Value (only for non-optional types). Must be of the appropriate type. Default \"<default>\" (which will fail for non-string types).]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Filter\" or \"Strict\". Default is \"Replace\".]")>] replaceMethod: obj)
         ([<ExcelArgument(Description= "[Default Value (only for non-optional types, optional types default to None). Must be of the appropriate type, else it will fail.]")>] defaultValue: obj)
         ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
         ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
+        ([<ExcelArgument(Description= "[Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... (comma separated). Default is none.]")>] xlKinds: obj)
         ([<ExcelArgument(Description= "[Row-wise slice direction when input is a fat, 2D, range. True or false or none. Default is none.]")>] rowWiseDirection: obj)
         : obj[]  =
 
@@ -2529,30 +2677,31 @@ module Cast_XL =
         let empty = In.D0.Stg.def "<empty>" emptyValue
         let proxys = { def with empty = empty; failed = "<failed>"; none = none }
         let defVal = In.D0.Missing.Obj.tryO defaultValue
+        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Kind.ofLabel
         
         // for demo purpose only: takes an Excel range input,
         // converts it into a (boxed) typed array, then outputs it back to Excel.
         match replmethod.ToUpper().Substring(0,1) with
-        | "F" -> let xa1D = In.D1.Tag.filter rowwise typeTag range
+        | "F" -> let xa1D = In.D1.Tag.filter xlkinds rowwise typeTag range
                  xa1D |> (Out.D1.Unbox.apply proxys (Out.D1.Prm.out proxys))
 
         // strict method: either all the array's elements are of type int, or return None (here the 1-elem array [| proxys.failed |])
-        | "S" -> let xa1D = In.D1.Tag.tryDV rowwise None typeTag range
+        | "S" -> let xa1D = In.D1.Tag.tryDV xlkinds rowwise None typeTag range
                  xa1D |> (Out.D1.Unbox.Opt.apply proxys (Out.D1.Prm.out proxys))
 
-        | _ -> let xa1D = In.D1.Tag.Any.def rowwise defVal typeTag range
+        | _ -> let xa1D = In.D1.Tag.Any.def xlkinds rowwise defVal typeTag range
                xa1D |> (Out.D1.Unbox.apply proxys (Out.D1.Prm.out proxys))
 
     [<ExcelFunction(Category="XL", Description="Cast a 2D xl-range to a generic type 2D array.")>]
     let cast2d_gen
         ([<ExcelArgument(Description= "2D xl-range.")>] range: obj)
         ([<ExcelArgument(Description= "Type tag: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj")>] typeTag: string)
-        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Optional\" (= replace with None), \"Filter\" or \"Strict\". Default is \"Replace\".]")>] replaceMethod: obj)
-        // ([<ExcelArgument(Description= "[Default Value (only for non-optional types). Must be of the appropriate type. Default \"<default>\" (which will fail for non-string types).]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Filter\" or \"Strict\". Default is \"Replace\".]")>] replaceMethod: obj)
         ([<ExcelArgument(Description= "[Default Value (only for non-optional types, optional types default to None). Must be of the appropriate type, else it will fail.]")>] defaultValue: obj)
         ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
         ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
         ([<ExcelArgument(Description= "[Row wise direction. Default is none.]")>] rowWiseDirection: obj)
+        ([<ExcelArgument(Description= "[Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... (comma separated). Default is none.]")>] xlKinds: obj)
         : obj[,]  =
 
         // intermediary stage
@@ -2562,25 +2711,26 @@ module Cast_XL =
         let empty = In.D0.Stg.def "<empty>" emptyValue
         let proxys = { def with empty = empty; failed = "<failed>"; none = none }
         let defVal = In.D0.Missing.Obj.tryO defaultValue
+        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Kind.ofLabel
         
         // for demo purpose only: takes an Excel range input,
         // converts it into a (boxed) typed 2D array, then outputs it back to Excel.
         match replmethod.ToUpper().Substring(0,1) with
-        | "F" -> let xa2D = In.D2.Tag.filter rowwise typeTag range
+        | "F" -> let xa2D = In.D2.Tag.filter xlkinds rowwise typeTag range
                  xa2D |> (Out.D2.Unbox.apply proxys (Out.D2.Prm.out proxys))
 
         // strict method: either all the array's elements are of type int, or return None (here the 1-elem array [| proxys.failed |])
-        | "S" -> let xa2D = In.D2.Tag.tryDV None typeTag range
+        | "S" -> let xa2D = In.D2.Tag.tryDV xlkinds None typeTag range
                  xa2D |> (Out.D2.Unbox.Opt.apply proxys (Out.D2.Prm.out proxys))
 
-        | _ -> let xa2D = In.D2.Tag.Any.def defVal typeTag range
+        | _ -> let xa2D = In.D2.Tag.Any.def xlkinds defVal typeTag range
                xa2D |> (Out.D2.Unbox.apply proxys (Out.D2.Prm.out proxys))
 
 module A1D = 
-    open type Registry
+    //open type Registry
     open Registry
     open Useful.Generics
-    open API
+    open API.Out
 
     // -----------------------------------
     // -- Basic functions
@@ -2808,8 +2958,9 @@ module A1D =
 module A1D_XL =
     open Registry
     open API
+    open API.Out
     open type Variant
-    open type Proxys
+    open type Out.Proxys
 
     // open API.In.D0
 
@@ -2821,6 +2972,7 @@ module A1D_XL =
         ([<ExcelArgument(Description= "[Default Value (only for non-optional types, optional types default to None).]")>] defaultValue: obj)
         ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
         ([<ExcelArgument(Description= "[Failed value. Default is #N/A.]")>] failedValue: obj)
+        ([<ExcelArgument(Description= "[Only doubleNaN tag: Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... Default is none.]")>] xlKinds: obj)
         : obj  =
 
         // intermediary stage
@@ -2829,6 +2981,7 @@ module A1D_XL =
         let defVal = In.D0.Absent.Obj.tryO defaultValue
         let failedval = In.D0.Missing.Obj.subst Proxys.def.failed failedValue
         let isoptional = isOptionalType typeTag
+        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Excel.Kind.ofLabel
         
         // caller cell's reference ID
         let rfid = MRegistry.refID
@@ -2836,7 +2989,7 @@ module A1D_XL =
         // wording
         match (replmethod.ToUpper().Substring(0,1)), isoptional with
         | "F", _ -> 
-            let xa1D = In.D1.Tag.filter rowwise typeTag range
+            let xa1D = In.D1.Tag.filter xlkinds rowwise typeTag range
             let res = xa1D |> MRegistry.register rfid
             box res
 
@@ -2845,16 +2998,16 @@ module A1D_XL =
         // empty-strict: returns an empty array otherwise.
         // strict: return None otherwise. Here returns failed value.
         | "E", _ -> 
-            let xa1D = In.D1.Tag.tryEmpty rowwise typeTag range
+            let xa1D = In.D1.Tag.tryEmpty xlkinds rowwise typeTag range
             let res = xa1D |> MRegistry.register rfid
             box res
         | "S", _ -> 
-            match In.D1.Tag.Try.tryDV rowwise None typeTag range with
+            match In.D1.Tag.Try.tryDV xlkinds rowwise None typeTag range with
             | None -> failedval
             | Some xa1D -> 
                 let res = xa1D |> MRegistry.register rfid
                 box res
-        | _ ->  let xa1D = In.D1.Tag.Any.def rowwise defVal typeTag range
+        | _ ->  let xa1D = In.D1.Tag.Any.def xlkinds rowwise defVal typeTag range
                 let res = xa1D |> MRegistry.register rfid
                 box res
 
@@ -2965,10 +3118,10 @@ module A1D_XL =
             | Some o -> o |> MRegistry.register rfid |> box
 
 module A2D = 
-    open type Registry
+    // open type Registry
     open Registry
     open Useful.Generics
-    open API
+    open API.Out
 
     // -----------------------------------
     // -- Main functions
@@ -3093,31 +3246,34 @@ module A2D =
 module A2D_XL =
     open Registry
     open API
-    open type Proxys
+    open API.Out
+    open type Out.Proxys
 
     [<ExcelFunction(Category="Array2D", Description="Cast a 2D xl-range to a generic type array.")>]
     let a2_ofRng
         ([<ExcelArgument(Description= "2D xl-range.")>] range: obj)
         ([<ExcelArgument(Description= "Type tag: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj")>] typeTag: string)
-        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Optional\" (= replace with None), \"Filter\" or \"Strict\". Default is \"Replace\".]")>] replaceMethod: obj)
+        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Filter\" or \"Strict\". Default is \"Replace\".]")>] replaceMethod: obj)
         ([<ExcelArgument(Description= "[Default Value (only for non-optional types, optional types default to None). Must be of the appropriate type, else it will fail.]")>] defaultValue: obj)
         ([<ExcelArgument(Description= "[Row wise direction. Default is none.]")>] rowWiseDirection: obj)
+        ([<ExcelArgument(Description= "[Only doubleNaN tag: Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... Default is none.]")>] xlKinds: obj)
         : obj  =
 
         // intermediary stage
         let rowwise = In.D0.Bool.Opt.def None rowWiseDirection
         let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
         let defVal = In.D0.Absent.Obj.tryO defaultValue
+        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Excel.Kind.ofLabel
         
         // caller cell's reference ID
         let rfid = MRegistry.refID
-
+        // TODO: strict method?
         match replmethod.ToUpper().Substring(0,1) with
-        | "F" -> let ooo = (In.D2.Tag.filter rowwise typeTag range)
-                 let res = ooo |> MRegistry.register rfid 
-                 res |> box
-        | _ -> let res = (In.D2.Tag.Any.def defVal typeTag range) |> MRegistry.register rfid
-               res |> box
+        | "F" -> let xa2D = (In.D2.Tag.filter xlkinds rowwise typeTag range)
+                 let res = xa2D |> MRegistry.register rfid 
+                 box res
+        | _ -> let res = (In.D2.Tag.Any.def xlkinds defVal typeTag range) |> MRegistry.register rfid
+               box res
 
     [<ExcelFunction(Category="Array2D", Description="Extracts a 2D array out of a R-object.")>]
     let a2_toRng
@@ -3228,7 +3384,7 @@ module MAP =
     open Registry
     open Useful.Generics
     open Microsoft.FSharp.Reflection
-    // open API
+    open API.Out
 
     // -----------------------------------
     // -- Main functions
@@ -4086,7 +4242,8 @@ module MAP =
 module MAP_XL =
     open Registry
     open API
-    open type Proxys
+    open API.Out
+    open type Out.Proxys
 
     [<ExcelFunction(Category="Map", Description="Creates a Map<'Key1*'Key2...,'Val> R-object from several 1D-arrays of keys and one 1D-array of values.")>]
     let map_ofRng
@@ -4131,17 +4288,17 @@ module MAP_XL =
         let gtykeys_keys_gtyvals_vals =
             match ktag2, ktag3, ktag4, ktag5, ktag6, ktag7, ktag8, ktag9, ktag10 with
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, Some ktg8, Some ktg9, Some ktg10 -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' None None ktg6 mapKeys6
-                let trykeys7 =  API.In.D1.Tag.Try.tryDV' None None ktg7 mapKeys7
-                let trykeys8 =  API.In.D1.Tag.Try.tryDV' None None ktg8 mapKeys8
-                let trykeys9 =  API.In.D1.Tag.Try.tryDV' None None ktg9 mapKeys9
-                let trykeys10 =  API.In.D1.Tag.Try.tryDV' None None ktg10 mapKeys10
-                let tryvals =  API.In.D1.Tag.Try.tryDV' None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg7 mapKeys7
+                let trykeys8 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg8 mapKeys8
+                let trykeys9 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg9 mapKeys9
+                let trykeys10 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg10 mapKeys10
+                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, trykeys8, trykeys9, trykeys10, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtykey8, keys8), Some (gtykey9, keys9), Some (gtykey10, keys10), Some (gtyval, vals) -> 
@@ -4151,16 +4308,16 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, Some ktg8, Some ktg9, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' None None ktg6 mapKeys6
-                let trykeys7 =  API.In.D1.Tag.Try.tryDV' None None ktg7 mapKeys7
-                let trykeys8 =  API.In.D1.Tag.Try.tryDV' None None ktg8 mapKeys8
-                let trykeys9 =  API.In.D1.Tag.Try.tryDV' None None ktg9 mapKeys9
-                let tryvals =  API.In.D1.Tag.Try.tryDV' None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg7 mapKeys7
+                let trykeys8 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg8 mapKeys8
+                let trykeys9 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg9 mapKeys9
+                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, trykeys8, trykeys9, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtykey8, keys8), Some (gtykey9, keys9), Some (gtyval, vals) -> 
@@ -4170,15 +4327,15 @@ module MAP_XL =
                 | _ -> None
                 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, Some ktg8, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' None None ktg6 mapKeys6
-                let trykeys7 =  API.In.D1.Tag.Try.tryDV' None None ktg7 mapKeys7
-                let trykeys8 =  API.In.D1.Tag.Try.tryDV' None None ktg8 mapKeys8
-                let tryvals =  API.In.D1.Tag.Try.tryDV' None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg7 mapKeys7
+                let trykeys8 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg8 mapKeys8
+                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, trykeys8, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtykey8, keys8), Some (gtyval, vals) -> 
@@ -4188,14 +4345,14 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' None None ktg6 mapKeys6
-                let trykeys7 =  API.In.D1.Tag.Try.tryDV' None None ktg7 mapKeys7
-                let tryvals =  API.In.D1.Tag.Try.tryDV' None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg7 mapKeys7
+                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtyval, vals) -> 
@@ -4205,13 +4362,13 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' None None ktg6 mapKeys6
-                let tryvals =  API.In.D1.Tag.Try.tryDV' None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg6 mapKeys6
+                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtyval, vals) -> 
@@ -4221,12 +4378,12 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, None, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None ktg5 mapKeys5
-                let tryvals =  API.In.D1.Tag.Try.tryDV' None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg5 mapKeys5
+                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtyval, vals) -> 
@@ -4236,11 +4393,11 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, None, None, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None ktg4 mapKeys4
-                let tryvals =  API.In.D1.Tag.Try.tryDV' None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
+                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtyval, vals) -> 
@@ -4250,10 +4407,10 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, None, None, None, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None ktg3 mapKeys3
-                let tryvals =  API.In.D1.Tag.Try.tryDV' None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
+                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtyval, vals) -> 
@@ -4263,9 +4420,9 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, None, None, None, None, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None ktg2 mapKeys2
-                let tryvals =  API.In.D1.Tag.Try.tryDV' None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
+                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtyval, vals) -> 
@@ -4275,8 +4432,8 @@ module MAP_XL =
                 | _ -> None
 
             | _ -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None k1TypeTag mapKeys1
-                let tryvals =  API.In.D1.Tag.Try.tryDV' None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
+                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
 
                 match trykeys1, tryvals with
                 | Some (gtykey1, keys1), Some (gtyval, vals) -> 
@@ -4339,7 +4496,7 @@ module MAP_XL =
         // caller cell's reference ID
         let rfid = MRegistry.refID
 
-        let tryvals =  API.In.D2.Tag.Try.tryDV' None valueTag mapValues
+        let tryvals =  API.In.D2.Tag.Try.tryDV' Set.empty None valueTag mapValues
 
         match tryvals with
         | None -> Proxys.def.failed
@@ -4347,12 +4504,12 @@ module MAP_XL =
             let vgtykeys_keys =
                 match vktag2, vktag3, vktag4, vktag5, vktag6 with
                 | Some vktg2, Some vktg3, Some vktg4, Some vktg5, Some vktg6 -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None vktag1 mapVKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None vktg2 mapVKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None vktg3 mapVKeys3
-                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None vktg4 mapVKeys4
-                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None vktg5 mapVKeys5
-                    let trykeys6 =  API.In.D1.Tag.Try.tryDV' None None vktg6 mapVKeys6
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg2 mapVKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg3 mapVKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg4 mapVKeys4
+                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg5 mapVKeys5
+                    let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg6 mapVKeys6
 
                     match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6) -> 
@@ -4362,11 +4519,11 @@ module MAP_XL =
                     | _ -> None
 
                 | Some vktg2, Some vktg3, Some vktg4, Some vktg5, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None vktag1 mapVKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None vktg2 mapVKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None vktg3 mapVKeys3
-                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None vktg4 mapVKeys4
-                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None vktg5 mapVKeys5
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg2 mapVKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg3 mapVKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg4 mapVKeys4
+                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg5 mapVKeys5
 
                     match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5) -> 
@@ -4376,10 +4533,10 @@ module MAP_XL =
                     | _ -> None
 
                 | Some vktg2, Some vktg3, Some vktg4, None, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None vktag1 mapVKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None vktg2 mapVKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None vktg3 mapVKeys3
-                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None vktg4 mapVKeys4
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg2 mapVKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg3 mapVKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg4 mapVKeys4
 
                     match trykeys1, trykeys2, trykeys3, trykeys4 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4) -> 
@@ -4389,9 +4546,9 @@ module MAP_XL =
                     | _ -> None
 
                 | Some vktg2, Some vktg3, None, None, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None vktag1 mapVKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None vktg2 mapVKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None vktg3 mapVKeys3
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg2 mapVKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg3 mapVKeys3
 
                     match trykeys1, trykeys2, trykeys3 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3) -> 
@@ -4401,8 +4558,8 @@ module MAP_XL =
                     | _ -> None
 
                 | Some vktg2, None, None, None, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None vktag1 mapVKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None vktg2 mapVKeys2
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg2 mapVKeys2
 
                     match trykeys1, trykeys2 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2) -> 
@@ -4412,7 +4569,7 @@ module MAP_XL =
                     | _ -> None
 
                 | _ -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None vktag1 mapVKeys1
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktag1 mapVKeys1
 
                     match trykeys1 with
                     | Some (gtykey1, keys1) -> 
@@ -4424,12 +4581,12 @@ module MAP_XL =
             let hgtykeys_keys =
                 match hktag2, hktag3, hktag4, hktag5, hktag6 with
                 | Some hktg2, Some hktg3, Some hktg4, Some hktg5, Some hktg6 -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None hktag1 mapHKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None hktg2 mapHKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None hktg3 mapHKeys3
-                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None hktg4 mapHKeys4
-                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None hktg5 mapHKeys5
-                    let trykeys6 =  API.In.D1.Tag.Try.tryDV' None None hktg6 mapHKeys6
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg2 mapHKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg3 mapHKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg4 mapHKeys4
+                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg5 mapHKeys5
+                    let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg6 mapHKeys6
 
                     match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6) -> 
@@ -4439,11 +4596,11 @@ module MAP_XL =
                     | _ -> None
 
                 | Some hktg2, Some hktg3, Some hktg4, Some hktg5, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None hktag1 mapHKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None hktg2 mapHKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None hktg3 mapHKeys3
-                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None hktg4 mapHKeys4
-                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' None None hktg5 mapHKeys5
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg2 mapHKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg3 mapHKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg4 mapHKeys4
+                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg5 mapHKeys5
 
                     match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5) -> 
@@ -4453,10 +4610,10 @@ module MAP_XL =
                     | _ -> None
 
                 | Some hktg2, Some hktg3, Some hktg4, None, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None hktag1 mapHKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None hktg2 mapHKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None hktg3 mapHKeys3
-                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' None None hktg4 mapHKeys4
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg2 mapHKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg3 mapHKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg4 mapHKeys4
 
                     match trykeys1, trykeys2, trykeys3, trykeys4 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4) -> 
@@ -4466,9 +4623,9 @@ module MAP_XL =
                     | _ -> None
 
                 | Some hktg2, Some hktg3, None, None, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None hktag1 mapHKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None hktg2 mapHKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' None None hktg3 mapHKeys3
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg2 mapHKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg3 mapHKeys3
 
                     match trykeys1, trykeys2, trykeys3 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3) -> 
@@ -4478,8 +4635,8 @@ module MAP_XL =
                     | _ -> None
 
                 | Some hktg2, None, None, None, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None hktag1 mapHKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' None None hktg2 mapHKeys2
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg2 mapHKeys2
 
                     match trykeys1, trykeys2 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2) -> 
@@ -4489,7 +4646,7 @@ module MAP_XL =
                     | _ -> None
 
                 | _ -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' None None hktag1 mapHKeys1
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktag1 mapHKeys1
 
                     match trykeys1 with
                     | Some (gtykey1, keys1) -> 
@@ -4700,11 +4857,11 @@ module GenMtrx =
     type GenFn =
         static member mtrx0D<'A> (defValue: obj option) (typeLabel: string) (size: int) (xlValue: obj) : GenMTRX<'A> =
             // let a0Dx = In.D0.Gen.def defValue typeLabel xlValue
-            let a0D = In.D0.Tag.Any.def defValue typeLabel xlValue :?> 'A
+            let a0D = In.D0.Tag.Any.def Set.empty defValue typeLabel xlValue :?> 'A
             a0D |> create0D size
 
         static member mtrx1D<'A> (defValue: obj option) (typeLabel: string) (size: int) (xlValue: obj) : GenMTRX<'A> =
-            let a1D = In.D1.TagFn.def None defValue typeLabel xlValue
+            let a1D = In.D1.TagFn.def Set.empty None defValue typeLabel xlValue
             a1D |> create1D size
         
         static member size<'A> (mtrx: GenMTRX<'A>) : int = mtrx.size
@@ -4746,7 +4903,6 @@ module Mtrx =
             static member myMember1<'T> (arg1: obj) : 'T[] = [||]
             static member myMember2<'T> (arg2: obj) : 'T[,] = [|[||]|] |> array2D
 
-
     // some typed creation functions
     let create0D<'a> (size: int) (a0D: 'a) : MTRX<'a> = Array2D.create size size a0D
     let create1D<'a> (size: int) (a1D: 'a[]) = [| for i in 0 .. (size - 1) -> a1D |] |> array2D
@@ -4754,15 +4910,14 @@ module Mtrx =
     // == reflection functions ==
     type GenFn =
         static member mtrx0D<'A> (defValue: obj option) (typeLabel: string) (size: int) (xlValue: obj) : MTRX<'A> =
-            let a0D = In.D0.TagFn.def defValue typeLabel xlValue
+            let a0D = In.D0.TagFn.def Set.empty defValue typeLabel xlValue
             a0D |> create0D size
 
         static member mtrx1D<'A> (defValue: obj option) (typeLabel: string) (size: int) (xlValue: obj) : MTRX<'A> =
-            let a1D = In.D1.TagFn.def None defValue typeLabel xlValue
+            let a1D = In.D1.TagFn.def Set.empty None defValue typeLabel xlValue
             a1D |> create1D size
         
         static member size<'A> (mtrx: MTRX<'A>) : int = mtrx |> Array2D.length1
-            
 
     // == registry functions ==
     let mtrxRegOLD (xlValue: string) : obj = 
@@ -4813,8 +4968,9 @@ module TEST_XL =
     open Registry
     // open Excel
     open API
+    open API.Out
     open type Variant
-    open type Proxys
+    open type API.Out.Proxys
     open GenMtrx
 
     [<ExcelFunction(Category="EXAMPLE", Description="Creates a Mtrx R-object.")>]

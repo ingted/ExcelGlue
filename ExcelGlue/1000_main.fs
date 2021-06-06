@@ -23,7 +23,7 @@ type Registry() =
     member private this.removeReferencedObjects (refKey: string) = 
         if ref.ContainsKey refKey then
             for regKey in ref.Item(refKey) do reg.Remove(regKey) |> ignore
-            ref.Remove(refKey) |> ignore
+        ref.Remove(refKey) |> ignore
 
     /// Removes all objects and their xl-cell references from the Object Registry.
     member this.clear = 
@@ -286,120 +286,6 @@ module Registry =
     /// Master registry where all registered objects are held.
     let MRegistry = Registry()
 
-module Excel =
-    open System
-
-    // FIXME better wording
-    /// Indicates which xl-values are to be converted to special values (e.g. Double.NaN in 0D, [||] in 1D) :
-    ///    - if OnlyErrorNA, only ExcelErrorNA values are converted.
-    ///    - if AllErrors, all Excel error values are converted.
-    ///    - if AllNonNumeric, any non-numeric xl-value are.
-
-    type XlKind = double
-    type XLKind = double
-    type ExcelKind = double
-
-    /// Describes various convenient sets, "kinds", of xl-spreadsheet values.
-    type Kind = | Boolean | Numeric | Textual | NA | Error | Missing | Empty with
-        static member hasKind (kinds: Set<Kind>) (xlValue: obj) : bool =
-            match xlValue with 
-            | :? bool -> kinds |> Set.contains Boolean
-            | :? double -> kinds |> Set.contains Numeric
-            | :? string -> kinds |> Set.contains Textual
-            | :? ExcelError as e when e = ExcelError.ExcelErrorNA -> kinds |> Set.contains NA
-            | :? ExcelError -> kinds |> Set.contains Error
-            | :? ExcelMissing -> kinds |> Set.contains Missing
-            | :? ExcelEmpty -> kinds |> Set.contains Empty
-            | _ -> false
-
-        static member ofLbl (singleLabel: string) : Kind[] = 
-            match singleLabel.ToUpper() with
-            | "B" | "BOOL" | "BOOLEAN" -> [| Boolean |]
-            | "S" | "STG" | "STRING" | "TXT" | "TEXT" -> [| Textual |]
-            | "D" | "DBL" | "DOUBLE" | "NUM" | "NUMERIC" -> [| Numeric |]
-            | "N" | "NA" | "NAN" | "#NA" | "#N/A" -> [| NA |]
-            | "E" | "ERR" | "ERROR" -> [| Error |]
-            | "M" | "MISS" | "MISSING" -> [| Missing |]
-            | "EMPTY" -> [| Empty |]
-            | "A" | "ABS" | "ABSENT" -> [| Missing; Empty |]
-            | _ -> [||]
-
-        static member all = [| Boolean;  Numeric;  Textual; NA;  Error;  Missing;  Empty |] |> Set.ofArray
-
-        /// Translates a comma separated string into a set of kinds.
-        /// '!' as first element takes the complement set.
-        ///    - "!NUM" // non-numeric kinds, matches any non-numeric value.
-        ///    - "NA" // Nan kind, matches #N/A.
-        ///    - "ERR" // Error kinds, matches any Excel error.
-        ///    - "ABS" // Absent set, matches Missing and Empty arguments.
-        ///    - "TXT" // Textual set, matches any string argument
-        ///    - "!TXT,BOOL" // set of all non-string, non-boolean elements.
-        ///    ...
-        static member ofLabel (label: string) : Set<Kind> =
-            let neg = label.StartsWith("!")
-            let kinds = label.ToUpper().Replace("!","").Split([| "," |], StringSplitOptions.None) |> Array.collect Kind.ofLbl |> Set.ofArray
-            if neg then Set.difference Kind.all kinds else kinds
-
-        static member nonBoolean = [| Numeric; Textual |] |> Array.sort
-        static member nonNumeric = [| Boolean; Textual |] |> Array.sort
-        static member nonNumericAndNA = [| Boolean; Textual; NA |] |> Array.sort
-        static member nonNumericAndError = [| Boolean; Textual; NA; Error |] |> Array.sort
-
-        static member nonTextual = [| Boolean; Numeric |] |> Array.sort
-
-        static member onlyNA = [| NA |]
-        static member anyError = [| NA; Error |] |> Array.sort
-        static member none = [||]
-
-        static member ofLabelTBD (label: string) : Kind[] =
-            match label.ToUpper() with
-            | "NA" -> Kind.onlyNA
-            | "ERR" | "ERROR" -> Kind.anyError
-            | "NN" | "NONNUM" | "NONNUMERIC" -> Kind.nonNumeric
-            | "NNNA" | "NN_NA" | "NN+NA" | "NONNUM_NA" | "NONNUM+NA" | "NONNUMERIC_NA" | "NONNUMERIC+NA" ->  Kind.nonNumericAndNA
-            | "NNERR" | "NN_ERR" | "NN+ERR" | "NONNUM_ERR" | "NONNUM+ERR" | "NONNUMERIC_ERROR" | "NONNUMERIC+ERROR" -> Kind.nonNumericAndError
-            | _ -> Kind.none
-
-        static member labelGuideTBD : (string*string) [] =  // FIXME do better
-            let labels = [| "NA"; "ERR"; "NN"; "NNNA"; "NNERR"; "NONE"; "default" |]
-            labels |> Array.map (fun lbl -> (lbl, Kind.ofLabelTBD lbl |> Array.map (fun kinds -> kinds.ToString()) |> (String.concat "|")))
-
-    module Kind =
-        /// Matches non-numeric, non-error variants, i.e. Bools and Strings.
-        let (|NonNumeric|_|) (xlKinds: Kind[]) (xlVal: obj) : bool option = 
-            match xlVal, xlKinds |> Array.sort with            
-            | :? string, k when k = Kind.nonNumeric -> Some true
-            | :? bool, k when k = Kind.nonNumeric -> Some true
-            | _ -> None
-
-        /// Matches non-numeric and #N/A variants, i.e. Bools, Strings and #N/A.
-        let (|NonNumericAndNA|_|) (xlKinds: Kind[]) (xlVal: obj) : bool option = 
-            match xlVal, xlKinds |> Array.sort with            
-            | :? string, k when k = Kind.nonNumericAndNA -> Some true
-            | :? bool, k when k = Kind.nonNumericAndNA -> Some true
-            | :? ExcelError as xlerr, k  when (xlerr = ExcelError.ExcelErrorNA) && (k = Kind.nonNumericAndNA) -> Some true
-            | _ -> None
-
-        /// Matches non-numeric and any error variants, i.e. Bools, Strings and errors.
-        let (|NonNumericAndError|_|) (xlKinds: Kind[]) (xlVal: obj) : bool option = 
-            match xlVal, xlKinds |> Array.sort with            
-            | :? string, k when k = Kind.nonNumericAndError -> Some true
-            | :? bool, k when k = Kind.nonNumericAndError -> Some true
-            | :? ExcelError, k when k = Kind.nonNumericAndError -> Some true
-            | _ -> None
-
-        /// Only matches #N/A variants.
-        let (|OnlyNA|_|) (xlKinds: Kind[]) (xlVal: obj) : bool option = 
-            match xlVal, xlKinds |> Array.sort with            
-            | :? ExcelError as xlerr, k  when (xlerr = ExcelError.ExcelErrorNA) && (k = Kind.onlyNA) -> Some true
-            | _ -> None
-
-        /// Matches any error variants, e.g. #N/A, #NUM, #REF...
-        let (|AnyError|_|) (xlKinds: Kind[]) (xlVal: obj) : bool option = 
-            match xlVal, xlKinds |> Array.sort with            
-            | :? ExcelError, k when k = Kind.anyError -> Some true
-            | _ -> None
-
 module Useful =
     module Option =   
         /// NONE should always precede SOME in active patterns.
@@ -599,9 +485,50 @@ module API =
             let var = Variant.ofTag typeTag
             var.empty1D
 
+    // FIXME better wording
+    /// Describes various convenient sets, "kinds", of xl-spreadsheet values.
+    type Kind = | Boolean | Numeric | Textual | NA | Error | Missing | Empty with
+        static member hasKind (kinds: Set<Kind>) (xlValue: obj) : bool =
+            match xlValue with 
+            | :? bool -> kinds |> Set.contains Boolean
+            | :? double -> kinds |> Set.contains Numeric
+            | :? string -> kinds |> Set.contains Textual
+            | :? ExcelError as e when e = ExcelError.ExcelErrorNA -> kinds |> Set.contains NA
+            | :? ExcelError -> kinds |> Set.contains Error
+            | :? ExcelMissing -> kinds |> Set.contains Missing
+            | :? ExcelEmpty -> kinds |> Set.contains Empty
+            | _ -> false
+
+        static member ofLbl (singleLabel: string) : Kind[] = 
+            match singleLabel.ToUpper() with
+            | "B" | "BOOL" | "BOOLEAN" -> [| Boolean |]
+            | "S" | "STG" | "STRING" | "TXT" | "TEXT" -> [| Textual |]
+            | "D" | "DBL" | "DOUBLE" | "NUM" | "NUMERIC" -> [| Numeric |]
+            | "N" | "NA" | "NAN" | "#NA" | "#N/A" -> [| NA |]
+            | "E" | "ERR" | "ERROR" -> [| Error |]
+            | "M" | "MISS" | "MISSING" -> [| Missing |]
+            | "EMPTY" -> [| Empty |]
+            | "A" | "ABS" | "ABSENT" -> [| Missing; Empty |]
+            | _ -> [||]
+
+        static member all = [| Boolean;  Numeric;  Textual; NA;  Error;  Missing;  Empty |] |> Set.ofArray
+
+        /// Translates a comma separated string into a set of kinds.
+        /// '!' as first element takes the complement set.
+        ///    - "!NUM" // non-numeric kinds, matches any non-numeric value.
+        ///    - "NA" // Nan kind, matches #N/A.
+        ///    - "ERR" // Error kinds, matches any Excel error.
+        ///    - "ABS" // Absent set, matches Missing and Empty arguments.
+        ///    - "TXT" // Textual set, matches any string argument
+        ///    - "!TXT,BOOL" // set of all non-string, non-boolean elements.
+        ///    ...
+        static member ofLabel (label: string) : Set<Kind> =
+            let neg = label.StartsWith("!")
+            let kinds = label.ToUpper().Replace("!","").Split([| "," |], StringSplitOptions.None) |> Array.collect Kind.ofLbl |> Set.ofArray
+            if neg then Set.difference Kind.all kinds else kinds
+
     /// Functions to handle or process Inputs from Excel.
     module In =
-
         /// Excel native types conversion (e.g. from obj[,] to obj[]...).
         module Cast =
             /// Slices xl-ranges into 1D arrays.
@@ -653,8 +580,8 @@ module API =
         /// Obj input functions.
         module D0 =
             open type Variant
-            open Excel
-            open Excel.Kind
+            //open Excel
+            // open Excel.Kind
 
             /// Casts an obj to generic type or fails.
             let fail<'a> (msg: string option) (o: obj) : 'a =
@@ -739,7 +666,7 @@ module API =
                     let subst (defValue: obj) (xlVal: obj) = Obj.subst<double> defValue xlVal
 
             [<RequireQualifiedAccess>]
-            module NanNEW =
+            module Nan =
                 /// Converts a boxed ExcelErrorNA into a Double.NaN.
                 let ofNA (xlVal: obj) : obj =
                     match xlVal with
@@ -748,7 +675,7 @@ module API =
 
                 /// Converts xl-values of the provided kinds to to boxed Double.NaN.
                 let nanify (xlKinds: Set<Kind>) (xlVal: obj) : obj = 
-                    if xlVal |> Excel.Kind.hasKind xlKinds then
+                    if xlVal |> Kind.hasKind xlKinds then
                         box Double.NaN
                     else
                         xlVal
@@ -793,67 +720,6 @@ module API =
                         | :? double as d -> if Double.IsNaN d then ExcelError.ExcelErrorNA |> box else box d
                         | _ -> xlVal
 
-
-            [<RequireQualifiedAccess>]
-            module NanX =
-                /// Converts xl-values to boxed Double.NaN in special cases, depending on xl-value's Kind.
-                let nanify (xlKinds: Kind[]) (xlVal: obj) : obj = 
-                    match xlVal with
-                    | :? double -> xlVal
-                    | NonNumeric xlKinds _ -> box Double.NaN
-                    | NonNumericAndNA xlKinds _ -> box Double.NaN
-                    | NonNumericAndError xlKinds _ -> box Double.NaN
-                    | OnlyNA xlKinds _ -> box Double.NaN
-                    | AnyError xlKinds _ -> box Double.NaN
-                    | _ -> xlVal
-
-                /// Converts a boxed ExcelErrorNA into a Double.NaN.
-                /// Similar to nanify function, but simpler.
-                let ofNA (xlVal: obj) : obj =
-                    match xlVal with
-                    | :? ExcelError as err when err = ExcelError.ExcelErrorNA -> Double.NaN |> box
-                    | _ -> xlVal
-
-                /// Converts a boxed Double.NaN into an ExcelErrorNA. // FIXME - should be OUT?
-                let ofNaN (xlVal: obj) : obj =
-                    match xlVal with
-                    | :? double as d -> if Double.IsNaN d then ExcelError.ExcelErrorNA |> box else box d
-                    | _ -> xlVal
-
-                /// Casts an xl-value to double or fails, with some other non-double values potentially cast to Double.NaN.
-                let fail (xlKinds: Kind[]) (msg: string option) (xlVal: obj) = 
-                    nanify xlKinds xlVal |> fail<double> msg
-
-                /// Casts an xl-value to double with a default-value, with some other non-double values potentially cast to Double.NaN. // FIXME - improve text
-                let def (xlKinds: Kind[]) (defValue: double) (xlVal: obj) = 
-                    nanify xlKinds xlVal |> def<double> defValue
-
-                // optional-type default FIXX
-                module Opt =
-                    /// Casts an xl-value to a double option type with a default-value, with some other non-double values potentially cast to Double.NaN.
-                    let def (xlKinds: Kind[]) (defValue: double option) (xlVal: obj) = 
-                        nanify xlKinds xlVal |> Opt.def<double> defValue
-
-                /// Object substitution, based on type.
-                module Obj =
-                    /// Substitutes an object for another one, if it isn't a (boxed) double (e.g. box 1.0).
-                    /// Replaces an xl-value with a double default-value if it isn't a (boxed double) type (e.g. box 1.0), with some other non-double values potentially cast to Double.NaN.
-                    let subst (xlKinds: Kind[]) (defValue: obj) (xlVal: obj) = 
-                        nanify xlKinds xlVal |> Obj.subst<double> defValue
-
-                    /// Converts a boxed ExcelErrorNA into a Double.NaN.
-                    /// Similar to nanify function, but lighter.
-                    let ofNA (xlVal: obj) : obj =
-                        match xlVal with
-                        | :? ExcelError as err when err = ExcelError.ExcelErrorNA -> Double.NaN |> box
-                        | _ -> xlVal
-
-                    /// Converts a boxed Double.NaN into an ExcelErrorNA. // FIXME - should be OUT?
-                    let ofNaN (xlVal: obj) : obj =
-                        match xlVal with
-                        | :? double as d -> if Double.IsNaN d then ExcelError.ExcelErrorNA |> box else box d
-                        | _ -> xlVal
-
             [<RequireQualifiedAccess>]
             module Intg =
                 let ofDouble (d: double) : int option = 
@@ -880,6 +746,7 @@ module API =
                     let def (defValue: int option) (xlVal: obj) =
                         match xlVal with
                         | :? double as d -> match ofDouble d with | None -> defValue | Some i -> Some i
+                        | :? int as i -> Some i
                         | _ -> defValue
 
                 /// Object substitution, based on type.
@@ -910,6 +777,7 @@ module API =
                     let def (defValue: DateTime option) (xlVal: obj) : DateTime option =
                         match xlVal with
                         | :? double as d -> DateTime.FromOADate d |> Some
+                        | :? DateTime as dte -> Some dte
                         | _ -> defValue
 
                 /// Object substitution, based on type.
@@ -1038,7 +906,7 @@ module API =
                     | DOUBLENAN -> 
                         let defval = TagFn.defaultValue<double> typeTag defValue
                         //let a0D = Nan.def Kind.nonNumericAndNA defval xlValue // TODO: pass xlkinds as argument
-                        let a0D = NanNEW.def xlKinds defval xlValue // TODO: pass xlkinds as argument
+                        let a0D = Nan.def xlKinds defval xlValue // TODO: pass xlkinds as argument
                         box a0D :?> 'A
                     | INT -> 
                         let defval = TagFn.defaultValue<int> typeTag defValue |> int
@@ -1066,7 +934,7 @@ module API =
                     | DOUBLENANOPT -> 
                         let defval = TagFn.defaultValueOpt<double> defValue
                         // let a0D = Nan.Opt.def Kind.nonNumericAndNA defval xlValue // TODO: pass xlkinds as argument
-                        let a0D = NanNEW.Opt.def xlKinds defval xlValue // TODO: pass xlkinds as argument
+                        let a0D = Nan.Opt.def xlKinds defval xlValue // TODO: pass xlkinds as argument
                         box a0D :?> 'A option
                         // Opt.def<'A> defval xlValue
                     | INTOPT -> 
@@ -1152,7 +1020,7 @@ module API =
 
         /// Obj[] input functions.  // wording
         module D1 =
-            open Excel
+            //open Excel
             open type Variant
 
             // non-optional-type default
@@ -1229,17 +1097,17 @@ module API =
             module Nan =
                 /// Converts an obj[] to a double[], given a default-value for non-double elements.
                 let def (xlKinds: Set<Kind>) (defValue: double) (o1D: obj[]) =
-                    o1D |> Array.map (D0.NanNEW.def xlKinds defValue)
+                    o1D |> Array.map (D0.Nan.def xlKinds defValue)
 
                 /// optional-type default
                 module Opt = 
                     /// Converts an obj[] to a ('a option)[], given a default-value for non-double elements.
                     let def (xlKinds: Set<Kind>) (defValue: double option) (o1D: obj[]) =
-                        o1D |> Array.map (D0.NanNEW.Opt.def xlKinds defValue)
+                        o1D |> Array.map (D0.Nan.Opt.def xlKinds defValue)
 
                 /// Converts an obj[] to a DateTime[], removing any non-double element.
                 let filter (xlKinds: Set<Kind>) (o1D: obj[]) =
-                    o1D |> Array.choose (D0.NanNEW.Opt.def xlKinds None)
+                    o1D |> Array.choose (D0.Nan.Opt.def xlKinds None)
 
                 /// Converts an obj[] to an optional 'a[]. All the elements must be double, otherwise defValue array is returned. 
                 let tryDV (xlKinds: Set<Kind>) (defValue1D: double[] option) (o1D: obj[])  =
@@ -1524,7 +1392,7 @@ module API =
 
         /// Obj[] input functions.
         module D2 =
-            open Excel
+            //open Excel
             open type Variant
 
             let empty2D<'a> : 'a[,] = [|[||]|] |> array2D
@@ -1629,18 +1497,18 @@ module API =
             module Nan = 
                 /// Converts an obj[,] to a bool[,], given a bool default-value for when casting to double fails.
                 let def (xlKinds: Set<Kind>) (defValue: double) (o2D: obj[,]) : double[,] = 
-                    o2D |> Array2D.map (D0.NanNEW.def xlKinds defValue)
+                    o2D |> Array2D.map (D0.Nan.def xlKinds defValue)
 
                 // optional-type default
                 module Opt =
                     /// Converts an obj[,] to a (bool option)[,], given a bool default-value for when casting to double fails.
                     let def (xlKinds: Set<Kind>) (defValue: double option) (o2D: obj[,]) : (double option)[,] = 
-                        o2D |> Array2D.map (D0.NanNEW.Opt.def xlKinds defValue)
+                        o2D |> Array2D.map (D0.Nan.Opt.def xlKinds defValue)
 
                 /// Converts an obj[,] to a bool[,], removing either row or column where any element isn't a (boxed) string.
                 let filter (xlKinds: Set<Kind>) (rowWise: bool) (o2D: obj[,]) : double[,] = 
                     o2D 
-                    |> Array2D.map (D0.NanNEW.nanify xlKinds)
+                    |> Array2D.map (D0.Nan.nanify xlKinds)
                     |> filter<double> rowWise
 
                 /// Converts an obj[,] to an optional 'a[,]. All the elements must be doubles, otherwise defValue array is returned. 
@@ -2371,7 +2239,7 @@ module Registry_XL =
         |> box
 
 module Cast_XL =
-    open Excel
+    //open Excel
     open API
 //    open type Variant
     open type Out.Proxys
@@ -2419,7 +2287,7 @@ module Cast_XL =
                 if j = 1 then
                     labels.[i]
                 else
-                    String.Join(",", Excel.Kind.ofLbl labels.[i] |> Array.map (fun kind -> kind.ToString()))
+                    String.Join(",", Kind.ofLbl labels.[i] |> Array.map (fun kind -> kind.ToString()))
             )
         |> Array2D.map box
 
@@ -2981,7 +2849,7 @@ module A1D_XL =
         let defVal = In.D0.Absent.Obj.tryO defaultValue
         let failedval = In.D0.Missing.Obj.subst Proxys.def.failed failedValue
         let isoptional = isOptionalType typeTag
-        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Excel.Kind.ofLabel
+        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Kind.ofLabel
         
         // caller cell's reference ID
         let rfid = MRegistry.refID
@@ -3263,7 +3131,7 @@ module A2D_XL =
         let rowwise = In.D0.Bool.Opt.def None rowWiseDirection
         let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
         let defVal = In.D0.Absent.Obj.tryO defaultValue
-        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Excel.Kind.ofLabel
+        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Kind.ofLabel
         
         // caller cell's reference ID
         let rfid = MRegistry.refID
@@ -3413,8 +3281,24 @@ module MAP =
             let a1D = [| for kvp in map -> kvp.Value |]
             a1D |> Array.map box |> (API.Out.D1.Reg.out<'V> unwrapOptions refKey proxys)
 
+        static member cast<'K>  (okey: obj) : obj =
+            if typeof<'K> = typeof<int> then
+                match API.In.D0.Intg.Opt.def None okey with
+                | Some i -> box i
+                | None -> okey // probable run-time failure.
+            elif typeof<'K> = typeof<DateTime> then
+                match API.In.D0.Dte.Opt.def None okey with
+                | Some dte -> box dte
+                | None -> okey // probable run-time failure.
+            elif typeof<'K> = typeof<double> then
+                match okey with
+                | :? ExcelError as e when e = ExcelError.ExcelErrorNA -> Double.NaN |> box
+                | _ -> okey
+            else
+                okey
+
         static member find1<'K1,'V when 'K1: comparison> (map: Map<'K1,'V>) (proxys: Proxys) (refKey: String) (okey1: obj) : obj =
-            match okey1 with 
+            match GenFn.cast<'K1> okey1 with 
             | :? 'K1 as key1 ->
                 match map |> Map.tryFind key1 with
                 | None -> proxys.failed
@@ -3426,7 +3310,7 @@ module MAP =
             (map: Map<'K1*'K2,'V>) (proxys: Proxys) (refKey: String) 
             (okey1: obj) (okey2: obj) 
             : obj =
-                match okey1, okey2 with 
+                match GenFn.cast<'K1> okey1, GenFn.cast<'K2> okey2 with 
                 | (:? 'K1 as key1), (:? 'K2 as key2) ->
                     match map |> Map.tryFind (key1, key2) with
                     | None -> proxys.failed
@@ -3437,7 +3321,7 @@ module MAP =
             (map: Map<'K1*'K2*'K3,'V>) (proxys: Proxys) (refKey: String) 
             (okey1: obj) (okey2: obj) (okey3: obj) 
             : obj =
-                match okey1, okey2, okey3 with 
+                match GenFn.cast<'K1> okey1, GenFn.cast<'K2> okey2, GenFn.cast<'K3> okey3 with 
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3) ->
                     match map |> Map.tryFind (key1, key2, key3) with
                     | None -> proxys.failed
@@ -3448,7 +3332,7 @@ module MAP =
             (map: Map<'K1*'K2*'K3*'K4,'V>) (proxys: Proxys) (refKey: String) 
             (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj)
             : obj =
-                match okey1, okey2, okey3, okey4 with 
+                match GenFn.cast<'K1> okey1, GenFn.cast<'K2> okey2, GenFn.cast<'K3> okey3, GenFn.cast<'K4> okey4 with 
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4) ->
                     match map |> Map.tryFind (key1, key2, key3, key4) with
                     | None -> proxys.failed
@@ -3459,7 +3343,7 @@ module MAP =
             (map: Map<'K1*'K2*'K3*'K4*'K5,'V>) (proxys: Proxys) (refKey: String) 
             (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj) (okey5: obj)
             : obj =
-                match okey1, okey2, okey3, okey4, okey5 with 
+                match GenFn.cast<'K1> okey1, GenFn.cast<'K2> okey2, GenFn.cast<'K3> okey3, GenFn.cast<'K4> okey4, GenFn.cast<'K5> okey5 with 
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5) ->
                     match map |> Map.tryFind (key1, key2, key3, key4, key5) with
                     | None -> proxys.failed
@@ -3470,7 +3354,7 @@ module MAP =
             (map: Map<'K1*'K2*'K3*'K4*'K5*'K6,'V>) (proxys: Proxys) (refKey: String) 
             (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj) (okey5: obj) (okey6: obj)
             : obj =
-                match okey1, okey2, okey3, okey4, okey5, okey6 with 
+                match GenFn.cast<'K1> okey1, GenFn.cast<'K2> okey2, GenFn.cast<'K3> okey3, GenFn.cast<'K4> okey4, GenFn.cast<'K5> okey5, GenFn.cast<'K6> okey6 with 
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6) ->
                     match map |> Map.tryFind (key1, key2, key3, key4, key5, key6) with
                     | None -> proxys.failed
@@ -3481,7 +3365,7 @@ module MAP =
             (map: Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V>) (proxys: Proxys) (refKey: String) 
             (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj) (okey5: obj) (okey6: obj) (okey7: obj)
             : obj =
-                match okey1, okey2, okey3, okey4, okey5, okey6, okey7 with 
+                match GenFn.cast<'K1> okey1, GenFn.cast<'K2> okey2, GenFn.cast<'K3> okey3, GenFn.cast<'K4> okey4, GenFn.cast<'K5> okey5, GenFn.cast<'K6> okey6, GenFn.cast<'K7> okey7 with 
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6), (:? 'K7 as key7) ->
                     match map |> Map.tryFind (key1, key2, key3, key4, key5, key6, key7) with
                     | None -> proxys.failed
@@ -3492,7 +3376,7 @@ module MAP =
             (map: Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V>) (proxys: Proxys) (refKey: String) 
             (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj) (okey5: obj) (okey6: obj) (okey7: obj) (okey8: obj)
             : obj =
-                match okey1, okey2, okey3, okey4, okey5, okey6, okey7, okey8 with 
+                match GenFn.cast<'K1> okey1, GenFn.cast<'K2> okey2, GenFn.cast<'K3> okey3, GenFn.cast<'K4> okey4, GenFn.cast<'K5> okey5, GenFn.cast<'K6> okey6, GenFn.cast<'K7> okey7, GenFn.cast<'K8> okey8 with 
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6), (:? 'K7 as key7), (:? 'K8 as key8) ->
                     match map |> Map.tryFind (key1, key2, key3, key4, key5, key6, key7, key8) with
                     | None -> proxys.failed
@@ -3503,7 +3387,7 @@ module MAP =
             (map: Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9,'V>) (proxys: Proxys) (refKey: String) 
             (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj) (okey5: obj) (okey6: obj) (okey7: obj) (okey8: obj) (okey9: obj)
             : obj =
-                match okey1, okey2, okey3, okey4, okey5, okey6, okey7, okey8, okey9 with 
+                match GenFn.cast<'K1> okey1, GenFn.cast<'K2> okey2, GenFn.cast<'K3> okey3, GenFn.cast<'K4> okey4, GenFn.cast<'K5> okey5, GenFn.cast<'K6> okey6, GenFn.cast<'K7> okey7, GenFn.cast<'K8> okey8, GenFn.cast<'K9> okey9 with 
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6), (:? 'K7 as key7), (:? 'K8 as key8), (:? 'K9 as key9) ->
                     match map |> Map.tryFind (key1, key2, key3, key4, key5, key6, key7, key8, key9) with
                     | None -> proxys.failed
@@ -3514,7 +3398,7 @@ module MAP =
             (map: Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9*'K10,'V>) (proxys: Proxys) (refKey: String) 
             (okey1: obj) (okey2: obj) (okey3: obj) (okey4: obj) (okey5: obj) (okey6: obj) (okey7: obj) (okey8: obj) (okey9: obj) (okey10: obj)
             : obj =
-                match okey1, okey2, okey3, okey4, okey5, okey6, okey7, okey8, okey9, okey10 with 
+                match GenFn.cast<'K1> okey1, GenFn.cast<'K2> okey2, GenFn.cast<'K3> okey3, GenFn.cast<'K4> okey4, GenFn.cast<'K5> okey5, GenFn.cast<'K6> okey6, GenFn.cast<'K7> okey7, GenFn.cast<'K8> okey8, GenFn.cast<'K9> okey9, GenFn.cast<'K10> okey10 with 
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6), (:? 'K7 as key7), (:? 'K8 as key8), (:? 'K9 as key9), (:? 'K10 as key10) ->
                     match map |> Map.tryFind (key1, key2, key3, key4, key5, key6, key7, key8, key9, key10) with
                     | None -> proxys.failed
@@ -4258,17 +4142,18 @@ module MAP_XL =
         ([<ExcelArgument(Description= "Key9 type tag.")>] k9TypeTag: obj)
         ([<ExcelArgument(Description= "Key10 type tag.")>] k10TypeTag: obj)
         ([<ExcelArgument(Description= "Value type tag.")>] valueTypeTag: string)
-        ([<ExcelArgument(Description= "Map keys1.")>] mapKeys1: obj)
-        ([<ExcelArgument(Description= "Map keys2.")>] mapKeys2: obj)
-        ([<ExcelArgument(Description= "Map keys3.")>] mapKeys3: obj)
-        ([<ExcelArgument(Description= "Map keys4.")>] mapKeys4: obj)
-        ([<ExcelArgument(Description= "Map keys5.")>] mapKeys5: obj)
-        ([<ExcelArgument(Description= "Map keys6.")>] mapKeys6: obj)
-        ([<ExcelArgument(Description= "Map keys7.")>] mapKeys7: obj)
-        ([<ExcelArgument(Description= "Map keys8.")>] mapKeys8: obj)
-        ([<ExcelArgument(Description= "Map keys9.")>] mapKeys9: obj)
-        ([<ExcelArgument(Description= "Map keys10.")>] mapKeys10: obj)
-        ([<ExcelArgument(Description= "Map values.")>] mapValues: obj)
+        ([<ExcelArgument(Description= "keys1.")>] mapKeys1: obj)
+        ([<ExcelArgument(Description= "keys2.")>] mapKeys2: obj)
+        ([<ExcelArgument(Description= "keys3.")>] mapKeys3: obj)
+        ([<ExcelArgument(Description= "keys4.")>] mapKeys4: obj)
+        ([<ExcelArgument(Description= "keys5.")>] mapKeys5: obj)
+        ([<ExcelArgument(Description= "keys6.")>] mapKeys6: obj)
+        ([<ExcelArgument(Description= "keys7.")>] mapKeys7: obj)
+        ([<ExcelArgument(Description= "keys8.")>] mapKeys8: obj)
+        ([<ExcelArgument(Description= "keys9.")>] mapKeys9: obj)
+        ([<ExcelArgument(Description= "keys10.")>] mapKeys10: obj)
+        ([<ExcelArgument(Description= "values.")>] mapValues: obj)
+        ([<ExcelArgument(Description= "[Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... (comma separated). Default is none.]")>] xlKinds: obj)
         : obj  =
 
         // intermediary stage
@@ -4281,6 +4166,7 @@ module MAP_XL =
         let ktag8 = In.D0.Stg.Opt.def None k8TypeTag
         let ktag9 = In.D0.Stg.Opt.def None k9TypeTag
         let ktag10 = In.D0.Stg.Opt.def None k10TypeTag
+        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Kind.ofLabel
 
         // caller cell's reference ID
         let rfid = MRegistry.refID
@@ -4288,17 +4174,17 @@ module MAP_XL =
         let gtykeys_keys_gtyvals_vals =
             match ktag2, ktag3, ktag4, ktag5, ktag6, ktag7, ktag8, ktag9, ktag10 with
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, Some ktg8, Some ktg9, Some ktg10 -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg6 mapKeys6
-                let trykeys7 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg7 mapKeys7
-                let trykeys8 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg8 mapKeys8
-                let trykeys9 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg9 mapKeys9
-                let trykeys10 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg10 mapKeys10
-                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg7 mapKeys7
+                let trykeys8 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg8 mapKeys8
+                let trykeys9 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg9 mapKeys9
+                let trykeys10 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg10 mapKeys10
+                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, trykeys8, trykeys9, trykeys10, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtykey8, keys8), Some (gtykey9, keys9), Some (gtykey10, keys10), Some (gtyval, vals) -> 
@@ -4308,16 +4194,16 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, Some ktg8, Some ktg9, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg6 mapKeys6
-                let trykeys7 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg7 mapKeys7
-                let trykeys8 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg8 mapKeys8
-                let trykeys9 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg9 mapKeys9
-                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg7 mapKeys7
+                let trykeys8 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg8 mapKeys8
+                let trykeys9 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg9 mapKeys9
+                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, trykeys8, trykeys9, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtykey8, keys8), Some (gtykey9, keys9), Some (gtyval, vals) -> 
@@ -4327,15 +4213,15 @@ module MAP_XL =
                 | _ -> None
                 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, Some ktg8, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg6 mapKeys6
-                let trykeys7 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg7 mapKeys7
-                let trykeys8 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg8 mapKeys8
-                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg7 mapKeys7
+                let trykeys8 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg8 mapKeys8
+                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, trykeys8, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtykey8, keys8), Some (gtyval, vals) -> 
@@ -4345,14 +4231,14 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg6 mapKeys6
-                let trykeys7 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg7 mapKeys7
-                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg7 mapKeys7
+                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtyval, vals) -> 
@@ -4362,13 +4248,13 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg6 mapKeys6
-                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg6 mapKeys6
+                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtyval, vals) -> 
@@ -4378,12 +4264,12 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, None, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg5 mapKeys5
-                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg5 mapKeys5
+                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtyval, vals) -> 
@@ -4393,11 +4279,11 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, None, None, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg4 mapKeys4
-                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
+                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtyval, vals) -> 
@@ -4407,10 +4293,10 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, None, None, None, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg3 mapKeys3
-                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
+                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtyval, vals) -> 
@@ -4420,9 +4306,9 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, None, None, None, None, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None ktg2 mapKeys2
-                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
+                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtyval, vals) -> 
@@ -4432,8 +4318,8 @@ module MAP_XL =
                 | _ -> None
 
             | _ -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None k1TypeTag mapKeys1
-                let tryvals =  API.In.D1.Tag.Try.tryDV' Set.empty None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
+                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, tryvals with
                 | Some (gtykey1, keys1), Some (gtyval, vals) -> 

@@ -20,10 +20,10 @@ type Registry() =
     // -----------------------------
 
     /// Removes all objects filed under the xl-cell reference refKey.
-    member private this.removeReferencedObjects (refKey: string) = 
+    member this.removeReferencedObjects (refKey: string) = 
         if ref.ContainsKey refKey then
             for regKey in ref.Item(refKey) do reg.Remove(regKey) |> ignore
-        ref.Remove(refKey) |> ignore
+            ref.Remove(refKey) |> ignore
 
     /// Removes all objects and their xl-cell references from the Object Registry.
     member this.clear = 
@@ -59,6 +59,7 @@ type Registry() =
         this.appendRef refKey regKey
         reg.Add(regKey, regObject)
         regKey
+
 
     // -----------------------------
     // -- Inspection functions
@@ -1850,9 +1851,9 @@ module API =
                 ///    - A Double.NaN value is returned as proxys.nan.
                 ///    - If unwrapOptions is true :
                 ///        - Some (primtive-type-value) is returned as primtive-type-value.
-                ///        - A None is returned as proxys.none.
+                ///        - A None is returned as proxys.none. 
                 ///    - Any other type: the value is stored in the Registry and a Registry key is returned to Excel.
-                let out<'a> (unwrapOptions: bool) (refKey: String) (proxys: Proxys) (o0D: obj) : obj =
+                let out<'a> (append: bool) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) (o0D: obj) : obj =
                     let ty = 
                         if unwrapOptions then
                             typeof<'a> |> Useful.Option.uType |> Option.defaultValue typeof<'a>
@@ -1862,13 +1863,15 @@ module API =
                     if ty |> Useful.Type.isPrimitive true then
                         o0D |> Useful.Option.map proxys.none (Bxd.Any.out proxys)
                     else
+                        let regAdd = if append then Registry.MRegistry.append else Registry.MRegistry.register
+
                         if unwrapOptions then
-                            o0D |> Useful.Option.map proxys.none (Registry.MRegistry.append refKey >> box)
+                            o0D |> Useful.Option.map proxys.none (regAdd refKey >> box)
                         else
-                            o0D |> Registry.MRegistry.append refKey |> box
+                            o0D |> regAdd refKey |> box
                 
                 // TODO : rewrite this function
-                let outO (refKey: String) (proxys: Proxys) (xlValue: obj) : obj =
+                let outO (append: bool) (refKey: String) (proxys: Proxys) (xlValue: obj) : obj =
                     let mapping (o: obj) =
                         if o |> isNull then // protects the `ty = o.GetType()` snippet which fails on None values at runtime (= null values at runtime).
                             proxys.none
@@ -1877,7 +1880,8 @@ module API =
                             if ty |> Useful.Type.isPrimitive false then
                                 o |> Useful.Option.map proxys.none (Bxd.Any.out proxys)
                             else
-                                o |> Useful.Option.map proxys.none (Registry.MRegistry.append refKey >> box)
+                                let regAdd = if append then Registry.MRegistry.append else Registry.MRegistry.register
+                                o |> Useful.Option.map proxys.none (regAdd refKey >> box)
 
                     match Registry.MRegistry.tryExtractO xlValue with
                     | None -> proxys.failed
@@ -1967,7 +1971,8 @@ module API =
                     if o1D |> Array.isEmpty then
                         [| proxys.empty |]
                     else
-                        o1D |> Array.map (D0.Reg.out<'a> unwrapOptions refKey proxys)
+                        Registry.MRegistry.removeReferencedObjects refKey
+                        o1D |> Array.map (D0.Reg.out<'a> true unwrapOptions refKey proxys)
 
             [<RequireQualifiedAccess>]
             module Unbox = 
@@ -2084,7 +2089,8 @@ module API =
                     if o2D |> In.D2.isEmpty then
                         In.D2.singleton<obj> proxys.empty
                     else
-                        o2D |> Array2D.map (D0.Reg.out unwrapOptions refKey proxys)
+                        Registry.MRegistry.removeReferencedObjects refKey
+                        o2D |> Array2D.map (D0.Reg.out true unwrapOptions refKey proxys)
 
             [<RequireQualifiedAccess>]
             module Unbox = 
@@ -2208,8 +2214,7 @@ module Registry_XL =
         let rfid = MRegistry.refID
 
         // result
-        API.Out.D0.Reg.outO rfid Proxys.def regKey
-        //MRegistry.tryType regKey |> Option.map (Useful.Type.pPrint tostringstyle) |> outNA
+        API.Out.D0.Reg.outO false rfid Proxys.def regKey
 
     // -----------------------------------
     // -- Misc.
@@ -2940,7 +2945,7 @@ module A1D_XL =
         // result
         match A1D.Reg.Out.elem index rgA1D with
         | None -> proxys.failed  // TODO Unbox.apply?
-        | Some o -> o |> API.Out.D0.Reg.out unwrapoptions rfid proxys
+        | Some o -> o |> API.Out.D0.Reg.out false unwrapoptions rfid proxys
 
     [<ExcelFunction(Category="Array1D", Description="Returns the sub-array of a R-object array.")>]
     let a1_sub
@@ -3223,7 +3228,7 @@ module A2D_XL =
         // result
         match A2D.Reg.Out.elem rowindex colindex rgA2D with
         | None -> proxys.failed  // TODO Unbox.apply?
-        | Some o -> o |> API.Out.D0.Reg.out unwrapoptions rfid proxys
+        | Some o -> o |> API.Out.D0.Reg.out false unwrapoptions rfid proxys
 
     [<ExcelFunction(Category="Array2D", Description="Returns a sub-array of a R-object array.")>]
     let a2_sub
@@ -3302,7 +3307,7 @@ module MAP =
             | :? 'K1 as key1 ->
                 match map |> Map.tryFind key1 with
                 | None -> proxys.failed
-                | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false false refKey proxys)
             | _ -> proxys.failed
 
         /// wording : returns values 1D array to Excel
@@ -3314,7 +3319,7 @@ module MAP =
                 | (:? 'K1 as key1), (:? 'K2 as key2) ->
                     match map |> Map.tryFind (key1, key2) with
                     | None -> proxys.failed
-                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false false refKey proxys)
                 | _ -> proxys.failed
 
         static member find3<'K1,'K2,'K3,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison> 
@@ -3325,7 +3330,7 @@ module MAP =
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3) ->
                     match map |> Map.tryFind (key1, key2, key3) with
                     | None -> proxys.failed
-                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false false refKey proxys)
                 | _ -> proxys.failed
 
         static member find4<'K1,'K2,'K3,'K4,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison> 
@@ -3336,7 +3341,7 @@ module MAP =
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4) ->
                     match map |> Map.tryFind (key1, key2, key3, key4) with
                     | None -> proxys.failed
-                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false false refKey proxys)
                 | _ -> proxys.failed
 
         static member find5<'K1,'K2,'K3,'K4,'K5,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison> 
@@ -3347,7 +3352,7 @@ module MAP =
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5) ->
                     match map |> Map.tryFind (key1, key2, key3, key4, key5) with
                     | None -> proxys.failed
-                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false false refKey proxys)
                 | _ -> proxys.failed
 
         static member find6<'K1,'K2,'K3,'K4,'K5,'K6,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison> 
@@ -3358,7 +3363,7 @@ module MAP =
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6) ->
                     match map |> Map.tryFind (key1, key2, key3, key4, key5, key6) with
                     | None -> proxys.failed
-                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false false refKey proxys)
                 | _ -> proxys.failed
 
         static member find7<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison> 
@@ -3369,7 +3374,7 @@ module MAP =
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6), (:? 'K7 as key7) ->
                     match map |> Map.tryFind (key1, key2, key3, key4, key5, key6, key7) with
                     | None -> proxys.failed
-                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false false refKey proxys)
                 | _ -> proxys.failed
 
         static member find8<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison> 
@@ -3380,7 +3385,7 @@ module MAP =
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6), (:? 'K7 as key7), (:? 'K8 as key8) ->
                     match map |> Map.tryFind (key1, key2, key3, key4, key5, key6, key7, key8) with
                     | None -> proxys.failed
-                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false false refKey proxys)
                 | _ -> proxys.failed
 
         static member find9<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison> 
@@ -3391,7 +3396,7 @@ module MAP =
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6), (:? 'K7 as key7), (:? 'K8 as key8), (:? 'K9 as key9) ->
                     match map |> Map.tryFind (key1, key2, key3, key4, key5, key6, key7, key8, key9) with
                     | None -> proxys.failed
-                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false false refKey proxys)
                 | _ -> proxys.failed
 
         static member find10<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'K10,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison and 'K10: comparison> 
@@ -3402,7 +3407,7 @@ module MAP =
                 | (:? 'K1 as key1), (:? 'K2 as key2), (:? 'K3 as key3), (:? 'K4 as key4), (:? 'K5 as key5), (:? 'K6 as key6), (:? 'K7 as key7), (:? 'K8 as key8), (:? 'K9 as key9), (:? 'K10 as key10) ->
                     match map |> Map.tryFind (key1, key2, key3, key4, key5, key6, key7, key8, key9, key10) with
                     | None -> proxys.failed
-                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false refKey proxys)
+                    | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false false refKey proxys)
                 | _ -> proxys.failed
 
         // -----------------------------------

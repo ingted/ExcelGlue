@@ -52,6 +52,8 @@ type Registry() =
         reg.Add(regKey, regObject)
         regKey
 
+    member this.registerBxd (refKey: string) (regObject: obj) : obj = this.register refKey regObject |> box
+
     /// Adds a R-object to the registry given a xl-cell reference, 
     /// without removing existing R-objects filed under the same reference.
     member this.append (refKey: string) (regObject: obj) : string = 
@@ -69,11 +71,15 @@ type Registry() =
     member this.count = reg.Count
 
     /// Returns a R-object, given its associated registry-guid.
-    member this.tryFind (regKey: string) : obj option =
+    member this.tryGet (regKey: string) : obj option =
         if reg.ContainsKey regKey then
             reg.Item(regKey) |> Some
         else
             None
+
+    /// Returns a R-object's type, given its associated registry-guid.
+    member this.tryType (regKey: string) : Type option =
+        regKey |> this.tryGet |> Option.map (fun o -> o.GetType())
 
     /// Returns a corresponding xl-reference, given a registry-guid.
     member private this.tryFindRef (regKey: string) : string option = 
@@ -88,7 +94,7 @@ type Registry() =
     /// Given a registry-guid, if its associated R-object is a 1D array,
     /// returns the array element type and the array.
     member this.tryFind1D (regKey: string) : ((Type[])*obj) option =
-        match this.tryFind regKey with
+        match this.tryGet regKey with
         | None -> None
         | Some regObj ->
             let ty = regObj.GetType()
@@ -103,7 +109,7 @@ type Registry() =
     /// Given a registry-guid, if its associated R-object is a 2D array,
     /// returns the array element type and the array.
     member this.tryFind2D (regKey: string) : ((Type[])*obj) option =
-        match this.tryFind regKey with
+        match this.tryGet regKey with
         | None -> None
         | Some regObj ->
             let ty = regObj.GetType()
@@ -115,13 +121,9 @@ type Registry() =
             else
                 None
 
-    /// Returns a R-object's type, given its associated registry-guid.
-    member this.tryType (regKey: string) : Type option =
-        regKey |> this.tryFind |> Option.map (fun o -> o.GetType())
-
     /// Checks if 2 R-objects are equal.
     member this.equal (regKey1: string) (regKey2: string) : bool = 
-        match this.tryFind regKey1, this.tryFind regKey2 with
+        match this.tryGet regKey1, this.tryGet regKey2 with
         | Some o1, Some o2 -> o1 = o2
         | _ -> false
 
@@ -141,7 +143,7 @@ type Registry() =
     member this.tryExtract<'a> (xlValue: obj) : 'a option =
         match xlValue with
         | :? string as regKey ->
-            match this.tryFind regKey with
+            match this.tryGet regKey with
             | None ->
                 if typeof<'a> = typeof<string> then Some (unbox xlValue) else None
             | Some regObj -> 
@@ -153,7 +155,7 @@ type Registry() =
 
     member this.tryExtractO (xlValue: obj) : obj option =
         match xlValue with
-        | :? string as regKey -> this.tryFind regKey
+        | :? string as regKey -> this.tryGet regKey
         | _ -> None
 
     // https://docs.microsoft.com/en-us/dotnet/framework/reflection-and-codedom/how-to-examine-and-instantiate-generic-types-with-reflection
@@ -163,7 +165,7 @@ type Registry() =
         if not targetGenType.IsGenericType then
             None
         else
-            match this.tryFind xlValue with
+            match this.tryGet xlValue with
             | None -> None
             | Some regObj -> 
                 let ty = regObj.GetType()
@@ -252,12 +254,12 @@ type Registry() =
     /// Pretty-prints a R-object, given its associated registry-guid.
     /// Using F# default formatting.
     member this.tryShow (key: string) : string option =
-        this.tryFind key |> Option.map (fun o -> sprintf "%A" o)
+        this.tryGet key |> Option.map (fun o -> sprintf "%A" o)
 
     /// Pretty-prints a R-object, given its associated registry-guid.
     /// Using .Net default formatting.
     member this.tryString (key: string) : string option =
-        this.tryFind key |> Option.map (fun o -> o.ToString())
+        this.tryGet key |> Option.map (fun o -> o.ToString())
 
     // -----------------------------
     // -- Miscellaneous
@@ -270,7 +272,7 @@ type Registry() =
 
     /// Saves a R-object to disk.
     member this.ioWriteBin (fpath: string) (regKey: string) : DateTime option =
-        match regKey |> this.tryFind with
+        match regKey |> this.tryGet with
         | None -> None
         | Some o ->
             use stream = new FileStream(fpath, FileMode.Create)
@@ -1070,13 +1072,30 @@ module API =
                 /// optional-type default
                 module Opt = 
                     /// Converts an obj[] to a ('a option)[], given a default-value for non-string elements.
-                    let def (defValue: string option) (o1D: obj[]) = Opt.def defValue o1D
+                    let def (defValue: string option) (o1D: obj[]) = Opt.def<string> defValue o1D
 
                 /// Converts an obj[] to a string[], removing any non-string element.
                 let filter (o1D: obj[]) = filter<string> o1D
 
                 /// Converts an obj[] to an optional 'a[]. All the elements must be string, otherwise defValue array is returned. 
                 let tryDV (defValue1D: string[] option) (o1D: obj[])  = tryDV<string> defValue1D o1D
+
+            /// Similar to Stg, but with an xl-value as primary input.
+            [<RequireQualifiedAccess>]
+            module OStg =
+                /// Converts an obj[] to a string[], given a default-value for non-string elements.
+                let def (rowWiseDef: bool) (defValue: string) (xlValue: obj) = Cast.to1D rowWiseDef xlValue |> Stg.def defValue 
+
+                /// optional-type default
+                module Opt = 
+                    /// Converts an obj[] to a ('a option)[], given a default-value for non-string elements.
+                    let def (rowWiseDef: bool) (defValue: string option) (xlValue: obj) = Cast.to1D rowWiseDef xlValue |> Stg.Opt.def defValue 
+
+                /// Converts an obj[] to a string[], removing any non-string element.
+                let filter (rowWiseDef: bool) (xlValue: obj) = Cast.to1D rowWiseDef xlValue |> Stg.filter
+
+                /// Converts an obj[] to an optional 'a[]. All the elements must be string, otherwise defValue array is returned. 
+                let tryDV (rowWiseDef: bool) (defValue1D: string[] option) (xlValue: obj)  = Cast.to1D rowWiseDef xlValue |> Stg.tryDV defValue1D
 
             [<RequireQualifiedAccess>]
             module Dbl =
@@ -1514,7 +1533,9 @@ module API =
 
                 /// Converts an obj[,] to an optional 'a[,]. All the elements must be doubles, otherwise defValue array is returned. 
                 let tryDV (xlKinds: Set<Kind>) (defValue2D: double[,] option) (o2D: obj[,]) : double[,] option = 
-                    tryDV<double> defValue2D o2D
+                    o2D 
+                    |> Array2D.map (D0.Nan.nanify xlKinds)
+                    |> tryDV<double> defValue2D
 
             [<RequireQualifiedAccess>]
             module Intg = 
@@ -2366,6 +2387,7 @@ module Cast_XL =
         let proxys = { def with empty = empty; failed = "<failed>"; none = none }
 
         // result
+        // TODO replace with In.D1.OStg.filter range
         let o1D = In.Cast.to1D rowwise range  // FIXME - should not use to1D but another In.D1.x function
         // the type annotations are NOT necessary (but are used here for readability).
         match replmethod.ToUpper().Substring(0,1) with
@@ -2599,6 +2621,345 @@ module Cast_XL =
         | _ -> let xa2D = In.D2.Tag.Any.def xlkinds defVal typeTag range
                xa2D |> (Out.D2.Unbox.apply proxys (Out.D2.Prm.out proxys))
 
+module FSI =
+    // https://fsharp.github.io/FSharp.Compiler.Service/interactive.html
+    open System.Text
+    open FSharp.Compiler.Interactive.Shell
+
+    // -----------------------------
+    // -- Initializations
+    // -----------------------------
+
+    // Initializes output and input streams
+    let sbOut = new StringBuilder()
+    let sbErr = new StringBuilder()
+    let inStream = new StringReader("")
+    let outStream = new StringWriter(sbOut)
+    let errStream = new StringWriter(sbErr)
+
+    // Builds command line arguments & start FSI session
+    let argv = [| "C:\\fsi.exe" |]
+    let allArgs = Array.append argv [| "--noninteractive" |]
+    let config = FsiEvaluationSession.GetDefaultConfiguration()
+
+    let mutable session = FsiEvaluationSession.Create(config, allArgs, inStream, outStream, errStream)
+    session.EvalInteraction("open System")
+    
+    [<RequireQualifiedAccess>]
+    module Session =
+        let set (newSession: FsiEvaluationSession) = 
+            session <- newSession
+            session.EvalInteraction("open System")
+
+        let reset = 
+            session <- FsiEvaluationSession.Create(config, allArgs, inStream, outStream, errStream)
+            session.EvalInteraction("open System")
+
+module Fun =
+    // https://fsharp.github.io/FSharp.Compiler.Service/interactive.html
+    open System.Text
+    open FSharp.Compiler.Interactive.Shell
+
+    // -----------------------------
+    // -- Initializations
+    // -----------------------------
+
+    // Initializes output and input streams
+    let sbOut = new StringBuilder()
+    let sbErr = new StringBuilder()
+    let inStream = new StringReader("")
+    let outStream = new StringWriter(sbOut)
+    let errStream = new StringWriter(sbErr)
+
+    // Builds command line arguments & start FSI session
+    let argv = [| "C:\\fsi.exe" |]
+    let allArgs = Array.append argv [| "--noninteractive" |]
+    
+    let fsiConfig = FsiEvaluationSession.GetDefaultConfiguration()
+    //let fsiSession = FsiEvaluationSession.Create(fsiConfig, allArgs, inStream, outStream, errStream)
+
+    let diagnose (prefix: string) (diagnostics: FSharp.Compiler.SourceCodeServices.FSharpDiagnostic[]) : string[] =
+        [| for w in diagnostics -> sprintf "[[%d,%d]] %s" w.StartLineAlternate w.StartColumn w.Message |]
+        |> Array.map (fun s -> prefix + s)
+
+    //// let loc = System.Reflection.Assembly.GetExecutingAssembly().Location
+    ////fsiSession.EvalInteraction(sprintf "#r @\"%s\"" loc)
+
+    /// Evaluates an expression and returns its type and value, as well as warnings.
+    /// E.g. expr = "\ x y -> x + y" or expr = "fun x y -> x + y".
+    let evaluate (session: FsiEvaluationSession ) (expression: string) : ((Type*obj) option)*string[] =
+        let fullexpr = let e = expression.Trim() in (if e.Substring(0,1) = @"\" then "fun " + e.Substring(1) else e)
+        let result, diagnostics = session.EvalExpressionNonThrowing(fullexpr)
+        let warnings = diagnose "" diagnostics
+
+        match result with
+        | Choice1Of2 (Some fsivalue) ->
+            let res = fsivalue.ReflectionValue 
+            let ty = res.GetType()
+            (ty, res) |> Some, warnings
+        | _ -> None, warnings
+
+    /// Convenience functions for building Excel UDFs.
+    [<RequireQualifiedAccess>]
+    module Reg =
+        /// Returns either the result of an evaluation, or its warnings.
+        /// Outputs can be registered. 
+        let evalExpression (registry: Registry) (failIndic: obj) (refKey: String) (register: bool) (outputWarnings: bool) (expression: string) (session: byref<FsiEvaluationSession>) =
+            match outputWarnings, evaluate session expression with
+            // warnings requested, boxeds as string[]
+            | true, (_, warnings) -> warnings |> registry.registerBxd refKey
+            // result requested
+            // failure
+            | false, (None, _) -> failIndic
+            // success
+            | false, (Some (_, value), _) ->
+                if register then
+                    value |> registry.registerBxd refKey
+                else
+                    value
+
+        /// Returns a (boxed) fsi function given:
+        ///    - either an (string) expression and (possibly) a fsi session R-object.
+        ///    - or a FSharpFunc R-object.
+        /// If both are provided, only the FSharpFunc R-object is active and the expression is ignored.
+        let fsiFunction (registry: Registry) (failIndic: obj) (refKey: String) (rgFsiSession: obj) (expression: string option) (rgFSharpFunc: string option) : obj option =
+            match rgFSharpFunc with
+            | None ->
+                match expression with
+                | Some expr -> 
+                    let mutable fsisession = registry.tryExtract<FsiEvaluationSession> rgFsiSession |> Option.defaultValue FSI.session
+                    evalExpression registry failIndic refKey false false expr &fsisession |> Some
+                | None -> None
+            | Some regKey -> registry.tryExtractO regKey
+
+
+    // -----------------------------
+    // -- Reflection functions
+    // -----------------------------
+
+    /// Returns true if ofun is a FSharpFunc object.
+    let isFunction (ofun: obj) : bool =
+        let TYPE_NAME = "FSharpFunc`"
+        (ofun.GetType().BaseType.Name).Substring(0,TYPE_NAME.Length) = TYPE_NAME
+
+    /// Returns the arity of a FsharpFunc object.
+    let arity (ofun: obj) : int option =
+        if not (isFunction ofun) then
+            None
+        else
+            let gentys = ofun.GetType().BaseType.GetGenericArguments()
+            gentys.Length - 1 // the last argument is the type of the function result (not part of the arity).
+            |> Some
+
+    type Apply =
+        static member Apply1<'A1,'B> (f: 'A1 -> 'B) (x1: 'A1) : 'B = f x1
+        static member Apply2<'A1,'A2,'B> (f: 'A1 -> 'A2 -> 'B) (x1: 'A1) (x2: 'A2) : 'B = f x1 x2
+        static member Apply3<'A1,'A2,'A3,'B> (f: 'A1 -> 'A2 -> 'A3 -> 'B) (x1: 'A1) (x2: 'A2) (x3: 'A3) : 'B = f x1 x2 x3
+        static member Apply4<'A1,'A2,'A3,'A4,'B> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'B) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) : 'B = f x1 x2 x3 x4
+        static member Apply5<'A1,'A2,'A3,'A4,'A5,'B> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'B) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) : 'B = f x1 x2 x3 x4 x5
+
+
+
+    let apply (ofun: obj) (args: obj[]) : obj option = // (Type*obj) option =
+        match arity ofun with
+        | None -> None
+        | Some rank when rank > 5 -> None
+        | Some rank -> 
+            let argtys = args |> Array.map (fun arg -> arg.GetType())
+            let funtys = ofun.GetType().BaseType.GetGenericArguments()
+            if (argtys.Length > rank) || (argtys <> (funtys |> Array.take argtys.Length)) then
+                None
+            else
+                let methodNm = sprintf "Apply%d" rank
+                let res = Useful.Generics.invoke<Apply> methodNm funtys (Array.append [| ofun |] args)
+                Some res
+
+module Fun_XL =
+    open Registry
+    open type API.Out.Proxys
+    open FSharp.Compiler.Interactive.Shell
+
+    [<ExcelFunction(Category="Fun", Description="Resets the internal FSI session.")>]
+    let fn_sessionReset
+        ([<ExcelArgument(Description= "Dependency.")>] dependency: obj)
+        : obj =
+
+        //result
+        FSI.Session.reset
+        box DateTime.Now
+
+    [<ExcelFunction(Category="Fun", Description="Returns an ad hoc FSI session R-object.")>]
+    let fn_sessionAdhoc
+        ([<ExcelArgument(Description= "Dependency.")>] dependency: obj)
+        : obj =
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+ 
+        //result
+        try
+           let fsisession = FsiEvaluationSession.Create(Fun.fsiConfig, Fun.allArgs, Fun.inStream, Fun.outStream, Fun.errStream)
+           fsisession.EvalInteraction("open System")
+           fsisession |> MRegistry.registerBxd rfid
+
+        with
+        | _ -> def.failed
+
+    type private State = | Success of int*(string[]) | Failure of int*(string[]) with
+        static member initial = Success (0, [||])
+
+    [<ExcelFunction(Category="Fun", Description="Returns a FSI session R-object.")>]
+    let fn_addDirectives
+        ([<ExcelArgument(Description= "FSI session R-object, or TRUE for internal session.")>] rgFsiSession: string)
+        ([<ExcelArgument(Description= "Directives array. E.g. #r, #I, #load. Default \"#r\".]")>] directives: obj)
+        ([<ExcelArgument(Description= "Path or code array. E.g. C:\\...\\ExcelDna.Interop.1.2.3\\SomeDna.dll.")>] pathOrCodes: obj)
+        ([<ExcelArgument(Description= "[Output warnings. Default is false.]")>] outputWarnings: obj)
+        : obj =
+
+        // intermediary stage
+        let useInternalSession = API.In.D0.Bool.def false rgFsiSession
+        let directive1D = API.In.D1.OStg.tryDV false None directives
+        let path1D = API.In.D1.OStg.tryDV false None pathOrCodes
+        let outputWs = API.In.D0.Bool.def false outputWarnings
+
+        let reference (directive: string, path: string) =
+            if directive.Substring(0,1) = "#" then
+                let path = "@\"" + path.Trim() + "\""
+                directive.Trim() + " " + path
+            else
+                path.Trim()
+
+        let chain (fsisession: FsiEvaluationSession) (state: State) (reference: string) : State = 
+            match state with 
+            | Failure _ -> state
+            | Success (acc, prevWarnings) ->                
+                let result, diagnostics = fsisession.EvalInteractionNonThrowing(reference)
+                let newWarnings = 
+                    Array.append
+                        [| sprintf "== STAGE %d ==" acc |]
+                        // [| for w in diagnostics ->  sprintf "   [[%d,%d]] %s" w.StartLineAlternate w.StartColumn w.Message |]
+                        (Fun.diagnose "   " diagnostics)
+                let warnings = Array.append newWarnings prevWarnings
+                match result with
+                | Choice1Of2 _ -> Success (acc + 1, warnings)
+                | _ -> Failure (acc + 1, warnings)
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+ 
+        //result
+        match directive1D, path1D, MRegistry.tryExtract<FsiEvaluationSession> rgFsiSession with
+        | Some d1D, Some p1D, Some fsisession ->
+            let references = Array.zip d1D p1D |> Array.map reference
+            let addReferences = references |> Array.fold (chain fsisession) State.initial
+            match outputWs, addReferences with
+            | true, Failure (_, warnings) -> warnings |> MRegistry.registerBxd rfid
+            | true, Success (_, warnings) -> warnings |> MRegistry.registerBxd rfid
+            | false, Failure _ -> def.failed
+            | false, Success _ -> fsisession |> MRegistry.registerBxd rfid
+
+        | _ -> def.failed
+
+    [<ExcelFunction(Category="Fn", Description="Creates a FSharpFunc R-object.")>]
+    let fn_expr
+        ([<ExcelArgument(Description= "Multiline expression. E.g. \"\\ x y -> x + y\"")>] expression: obj)
+        ([<ExcelArgument(Description= "[Creates a R-object. Default is true.]")>] registerObject: obj)
+        ([<ExcelArgument(Description= "[Output warnings. Default is false.]")>] outputWarnings: obj)
+        ([<ExcelArgument(Description= "Ad hoc FSI session R-object.")>] rgFsiSession: obj)
+        : obj =
+
+        // intermediary stage
+        let register = API.In.D0.Bool.def true registerObject
+        let outputWs = API.In.D0.Bool.def false outputWarnings
+        let expression = API.In.D1.OStg.tryDV false None expression |> Option.map (fun exprs -> String.Join("\n", exprs))
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match expression with
+        | None -> def.failed
+        | Some expr ->
+            let mutable fsisession = MRegistry.tryExtract<FsiEvaluationSession> rgFsiSession |> Option.defaultValue FSI.session
+            Fun.Reg.evalExpression MRegistry def.failed rfid register outputWs expr &fsisession
+
+    [<ExcelFunction(Category="Fn", Description="Creates a function object.")>]
+    let fn_apply
+        ([<ExcelArgument(Description= "Multiline expression. E.g. \"\\ x -> 2.0 * x\"")>] expression: obj)        
+        ([<ExcelArgument(Description= "Argument 1.")>] argument1: obj)
+        ([<ExcelArgument(Description= "Argument 2.")>] argument2: obj)
+        ([<ExcelArgument(Description= "Argument 3.")>] argument3: obj)
+        ([<ExcelArgument(Description= "Argument 4.")>] argument4: obj)
+        ([<ExcelArgument(Description= "Argument 5.")>] argument5: obj)
+        ([<ExcelArgument(Description= "[Creates a R-object. Default is true.]")>] registerObject: obj)
+        ([<ExcelArgument(Description= "[FSharpFunc R-object. Disable expression if present. Default is none.]")>] rgFSharpFunc: obj)
+        ([<ExcelArgument(Description= "[Ad hoc FSI session R-object. Inactive if FSharpFunc object provided. Default is internal session.]")>] rgFsiSession: obj)
+        : obj =
+
+        // intermediary stage
+        let arg1 = API.In.D0.Absent.Obj.tryO argument1
+        let arg2 = if arg1 |> Option.isNone then None else API.In.D0.Absent.Obj.tryO argument2
+        let arg3 = if arg2 |> Option.isNone then None else API.In.D0.Absent.Obj.tryO argument3
+        let arg4 = if arg3 |> Option.isNone then None else API.In.D0.Absent.Obj.tryO argument4
+        let arg5 = if arg4 |> Option.isNone then None else API.In.D0.Absent.Obj.tryO argument5
+        let args = [| arg1; arg2; arg3; arg4; arg5 |] |> Array.choose id
+        let register = API.In.D0.Bool.def true registerObject
+
+        // intermediary stage
+        let expression = API.In.D1.OStg.tryDV false None expression |> Option.map (fun exprs -> String.Join("\n", exprs))
+        let rgFSharpFunc = API.In.D0.Stg.Opt.def None rgFSharpFunc
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match Fun.Reg.fsiFunction MRegistry def.failed rfid rgFsiSession expression rgFSharpFunc with
+        | None -> def.failed
+        | Some ofun ->
+            match Fun.apply ofun args with
+            | None -> def.failed
+            | Some res ->
+                if register then
+                    res |> MRegistry.registerBxd rfid
+                else
+                    res
+            
+    [<ExcelFunction(Category="Fn", Description="Creates a function object.")>]
+    let fn_applyOLD
+        ([<ExcelArgument(Description= "FSharpFunc R-object.")>] rgFSharpFunc: string)
+        ([<ExcelArgument(Description= "Argument 1.")>] argument1: obj)
+        ([<ExcelArgument(Description= "Argument 2.")>] argument2: obj)
+        ([<ExcelArgument(Description= "Argument 3.")>] argument3: obj)
+        ([<ExcelArgument(Description= "Argument 4.")>] argument4: obj)
+        ([<ExcelArgument(Description= "Argument 5.")>] argument5: obj)
+        ([<ExcelArgument(Description= "[Creates a R-object. Default is true.]")>] registerObject: obj)
+        : obj =
+
+        // intermediary stage
+        let arg1 = API.In.D0.Absent.Obj.tryO argument1
+        let arg2 = if arg1 |> Option.isNone then None else API.In.D0.Absent.Obj.tryO argument2
+        let arg3 = if arg2 |> Option.isNone then None else API.In.D0.Absent.Obj.tryO argument3
+        let arg4 = if arg3 |> Option.isNone then None else API.In.D0.Absent.Obj.tryO argument4
+        let arg5 = if arg4 |> Option.isNone then None else API.In.D0.Absent.Obj.tryO argument5
+        let args = [| arg1; arg2; arg3; arg4; arg5 |] |> Array.choose id
+        let register = API.In.D0.Bool.def true registerObject
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match MRegistry.tryExtractO rgFSharpFunc with
+        | None -> def.failed
+        | Some ofun ->
+            match Fun.apply ofun args with
+            | None -> def.failed
+            | Some res ->
+                if register then
+                    res |> MRegistry.registerBxd rfid
+                else
+                    res
+
+
 module A1D = 
     //open type Registry
     open Registry
@@ -2759,7 +3120,10 @@ module A1D =
             
         static member count<'A> (a1D: 'A[]) : int = a1D |> Array.length
 
-        static member elem<'A> (a1D: 'A[]) (index: int) : 'A = a1D  |> Array.item index
+        static member tryElem<'A> (a1D: 'A[]) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) (index: int) : obj = 
+            match a1D  |> Array.tryItem index with
+            | None -> proxys.failed
+            | Some elem -> elem |> API.Out.D0.Reg.out<'A> false unwrapOptions refKey proxys
 
         static member sub<'A> (a1D: 'A[]) (startIndex: int option) (count: int option) : 'A[] =
             a1D |> sub startIndex count
@@ -2769,6 +3133,14 @@ module A1D =
 
         static member append3<'A> (a1D1: 'A[]) (a1D2: 'A[]) (a1D3: 'A[]) : 'A[] =
             Array.append (Array.append a1D1 a1D2) a1D3
+
+        static member sort<'A when 'A: comparison> (a1D: 'A[]) (descending: bool) : 'A[] = 
+            if descending then a1D |> Array.sortDescending else a1D |> Array.sort
+
+        static member map1<'A1,'B> (f: 'A1 -> 'B) (a1D: 'A1[]) : 'B[] = a1D |> Array.map f
+        static member map2<'A1,'A2,'B> (f: 'A1 -> 'A2 -> 'B) (a1D1: 'A1[]) (a1D2: 'A2[]) : 'B[] = Array.map2 f a1D1 a1D2
+
+        static member filter<'A1> (f: 'A1 -> bool) (a1D: 'A1[]) : 'A1[] = a1D |> Array.filter f
 
     // -----------------------------------
     // -- Registry functions
@@ -2786,10 +3158,10 @@ module A1D =
                 MRegistry.tryFind1D xlValue
                 |> Option.map (apply<GenFn> methodNm [||] [||])
 
-            let elem (index: int) (xlValue: string) : obj option =
-                let methodNm = "elem"
+            let tryElem (unwrapOptions: bool) (refKey: String) (proxys: Proxys) (index: int) (xlValue: string) : obj option =
+                let methodNm = "tryElem"
                 MRegistry.tryFind1D xlValue
-                |> Option.map (apply<GenFn> methodNm [||] [| index |])
+                |> Option.map (apply<GenFn> methodNm [||] [| unwrapOptions; refKey; proxys; index |])
 
             let sub (regKey: string) (startIndex: int option) (count: int option) : obj option =
                 let methodNm = "sub"
@@ -2827,6 +3199,44 @@ module A1D =
                     else
                         applyMulti<GenFn> methodNm [||] [||] tys1 [| o1; o2; o3 |]
                         |> Some
+            
+            // TODO : should not be in Out module (Better in Reg module?)
+            let sort (descending: bool) (xlValue: string) : obj option =
+                let methodNm = "sort"
+                MRegistry.tryFind1D xlValue
+                |> Option.map (apply<GenFn> methodNm [||] [| descending |])
+
+            let map1 (ofun: obj) (xlValue: string) : obj option =
+                match MRegistry.tryFind1D xlValue with
+                | None -> None
+                | Some (elemtys, xa1D) ->
+                    match Fun.arity ofun with                    
+                    | Some rank when rank = 1 -> 
+                        let elemty = elemtys.[0]
+                        let funtys = ofun.GetType().BaseType.GetGenericArguments()
+                        if funtys.[0] <> elemty then
+                            None
+                        else
+                            let methodNm = "map1"
+                            let res = Useful.Generics.invoke<GenFn> methodNm funtys [| ofun; xa1D |]
+                            Some res
+                    | _ -> None
+
+            let filter (ofun: obj) (xlValue: string) : obj option =
+                match MRegistry.tryFind1D xlValue with
+                | None -> None
+                | Some (elemtys, xa1D) ->
+                    match Fun.arity ofun with                    
+                    | Some rank when rank = 1 -> 
+                        let elemty = elemtys.[0]
+                        let funtys = ofun.GetType().BaseType.GetGenericArguments()
+                        if (funtys.[0] <> elemty) || (funtys |> Array.last <> typeof<bool>) then
+                            None
+                        else
+                            let methodNm = "filter"
+                            let res = Useful.Generics.invoke<GenFn> methodNm (funtys |> Array.take 1) [| ofun; xa1D |]
+                            Some res
+                    | _ -> None
 
 module A1D_XL =
     open Registry
@@ -2834,6 +3244,7 @@ module A1D_XL =
     open API.Out
     open type Variant
     open type Out.Proxys
+    open FSharp.Compiler.Interactive.Shell
 
     // open API.In.D0
 
@@ -2844,7 +3255,7 @@ module A1D_XL =
         ([<ExcelArgument(Description= "[Replacement method for wrong-type elements. \"[R]eplace\", \"[F]ilter\", \"[S]trict\", \"[E]mptyStrict\". Default is \"Strict\".]")>] replaceMethod: obj)
         ([<ExcelArgument(Description= "[Default Value (only for non-optional types, optional types default to None).]")>] defaultValue: obj)
         ([<ExcelArgument(Description= "Row wise direction. For 2D ranges only.")>] rowWiseDirection: obj)
-        ([<ExcelArgument(Description= "[Failed value. Default is #N/A.]")>] failedValue: obj)
+        ([<ExcelArgument(Description= "[Failure value. Default is #N/A.]")>] failureValue: obj)
         ([<ExcelArgument(Description= "[Only doubleNaN tag: Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... Default is none.]")>] xlKinds: obj)
         : obj  =
 
@@ -2852,7 +3263,7 @@ module A1D_XL =
         let rowwise = In.D0.Bool.Opt.def None rowWiseDirection
         let replmethod = In.D0.Stg.def "STRICT" replaceMethod
         let defVal = In.D0.Absent.Obj.tryO defaultValue
-        let failedval = In.D0.Missing.Obj.subst Proxys.def.failed failedValue
+        let failureVal = In.D0.Missing.Obj.subst Proxys.def.failed failureValue
         let isoptional = isOptionalType typeTag
         let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Kind.ofLabel
         
@@ -2876,7 +3287,7 @@ module A1D_XL =
             box res
         | "S", _ -> 
             match In.D1.Tag.Try.tryDV xlkinds rowwise None typeTag range with
-            | None -> failedval
+            | None -> failureVal
             | Some xa1D -> 
                 let res = xa1D |> MRegistry.register rfid
                 box res
@@ -2930,22 +3341,24 @@ module A1D_XL =
         ([<ExcelArgument(Description= "[Index. Default is 0.]")>] index: obj)
         ([<ExcelArgument(Description= "[None indicator. Default is \"<none>\".]")>] noneIndicator: obj)
         ([<ExcelArgument(Description= "[Unwrap optional types. Default is true.]")>] unwrapOptions: obj)
+        ([<ExcelArgument(Description= "[Failure value. Default is #N/A.]")>] failureValue: obj)
         : obj = 
 
         // intermediary stage
         let index = In.D0.Intg.def 0 index
 
         let none = In.D0.Stg.def "<none>" noneIndicator
-        let proxys = { def with none = none }
+        let failureVal = In.D0.Missing.Obj.subst Proxys.def.failed failureValue
+        let proxys = { def with none = none; failed = failureVal }
         let unwrapoptions = In.D0.Bool.def true unwrapOptions
 
         // caller cell's reference ID (necessary when the elements are not primitive types)
         let rfid = MRegistry.refID
         
         // result
-        match A1D.Reg.Out.elem index rgA1D with
+        match A1D.Reg.Out.tryElem unwrapoptions rfid proxys index rgA1D with
         | None -> proxys.failed  // TODO Unbox.apply?
-        | Some o -> o |> API.Out.D0.Reg.out false unwrapoptions rfid proxys
+        | Some xo0D -> xo0D
 
     [<ExcelFunction(Category="Array1D", Description="Returns the sub-array of a R-object array.")>]
     let a1_sub
@@ -2989,6 +3402,86 @@ module A1D_XL =
             match A1D.Reg.Out.append3 rgA1D1 rgA1D2 rO3 with
             | None -> Proxys.def.failed  // TODO Unbox.apply?
             | Some o -> o |> MRegistry.register rfid |> box
+
+    [<ExcelFunction(Category="Array1D", Description="Sort a R-object array.")>]
+    let a1_sort
+        ([<ExcelArgument(Description= "1D array R-object.")>] rgA1D: string) 
+        ([<ExcelArgument(Description= "[Descending. Default is false.]")>] descending: obj)
+        : obj = 
+
+        // intermediary stage
+        let desc = In.D0.Bool.def false descending
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match A1D.Reg.Out.sort desc rgA1D with
+        | None -> Proxys.def.failed
+        | Some xa1D -> xa1D |> MRegistry.registerBxd rfid
+
+    [<ExcelFunction(Category="Array1D", Description="Applies a function to each element of the array.")>]
+    let a1_map
+        ([<ExcelArgument(Description= "1D array R-object.")>] rgA1D: string) 
+        ([<ExcelArgument(Description= "Multiline expression. E.g. \"\\ x -> 2.0 * x\"")>] expression: obj)
+        ([<ExcelArgument(Description= "[FSharpFunc R-object. Disable expression if present. Default is none.]")>] rgFSharpFunc: obj)
+        ([<ExcelArgument(Description= "[Ad hoc FSI session R-object. Inactive if FSharpFunc object provided. Default is internal session.]")>] rgFsiSession: obj)
+        : obj =
+
+        // intermediary stage
+        let expression = API.In.D1.OStg.tryDV false None expression |> Option.map (fun exprs -> String.Join("\n", exprs))
+        let rgFSharpFunc = API.In.D0.Stg.Opt.def None rgFSharpFunc
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match Fun.Reg.fsiFunction MRegistry def.failed rfid rgFsiSession expression rgFSharpFunc with
+        | None -> def.failed
+        | Some ofun ->
+            match A1D.Reg.Out.map1 ofun rgA1D with
+            | None -> def.failed
+            | Some res -> res |> MRegistry.registerBxd rfid
+
+    [<ExcelFunction(Category="Array1D", Description="Filters the array given a predicate function.")>]
+    let a1_filter
+        ([<ExcelArgument(Description= "1D array R-object.")>] rgA1D: string) 
+        ([<ExcelArgument(Description= "Multiline expression. E.g. \"\\ x -> 2.0 * x\"")>] expression: obj)
+        ([<ExcelArgument(Description= "[FSharpFunc R-object. Disable expression if present. Default is none.]")>] rgFSharpFunc: obj)
+        ([<ExcelArgument(Description= "[Ad hoc FSI session R-object. Inactive if FSharpFunc object provided. Default is internal session.]")>] rgFsiSession: obj)
+        : obj =
+
+        // intermediary stage
+        let expression = API.In.D1.OStg.tryDV false None expression |> Option.map (fun exprs -> String.Join("\n", exprs))
+        let rgFSharpFunc = API.In.D0.Stg.Opt.def None rgFSharpFunc
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match Fun.Reg.fsiFunction MRegistry def.failed rfid rgFsiSession expression rgFSharpFunc with
+        | None -> def.failed
+        | Some ofun ->
+            match A1D.Reg.Out.filter ofun rgA1D with
+            | None -> def.failed
+            | Some res -> res |> MRegistry.registerBxd rfid
+
+    [<ExcelFunction(Category="Array1D", Description="Applies a function to each element of the array.")>]
+    let a1_mapOLD
+        ([<ExcelArgument(Description= "1D array R-object.")>] rgA1D: string)
+        ([<ExcelArgument(Description= "FSharpFunc R-object.")>] rgFSharpFunc: string)
+        : obj =
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match MRegistry.tryExtractO rgFSharpFunc with
+        | None -> def.failed
+        | Some ofun ->
+            match A1D.Reg.Out.map1 ofun rgA1D with
+            | None -> def.failed
+            | Some res -> res |> MRegistry.registerBxd rfid
 
 module A2D = 
     // open type Registry
@@ -3046,6 +3539,18 @@ module A2D =
 
         static member sub<'A> (a2D: 'A[,]) (rowStartIndex: int option) (colStartIndex: int option) (rowCount: int option) (colCount: int option) : 'A[,] =
             a2D |> sub rowStartIndex colStartIndex rowCount colCount
+
+        static member sort<'A when 'A: comparison> (a2D: 'A[,]) (descending: bool) : 'A[,] = 
+            let len1, len2 = a2D |> Array2D.length1, a2D |> Array2D.length2
+            if (len1 = 0) || (len2 = 0) then
+                a2D
+            else
+                let a2sort = if descending then Array.sortDescending else Array.sort
+                // works only rowwise TODO: transpose
+                [| for i in a2D.GetLowerBound(0) .. a2D.GetUpperBound(0) -> a2D.[i,*] |]
+                |> a2sort
+                |> array2D
+
 
         //static member append2<'A> (a1D1: 'A[,]) (a1D2: 'A[,]) : 'A[,] =
         //    Array.append a1D1 a1D2
@@ -3115,6 +3620,11 @@ module A2D =
                     else
                         applyMulti<GenFn> methodNm [||] [||] tys1 [| o1; o2; o3 |]
                         |> Some
+
+            let sort (descending: bool) (xlValue: string) : obj option =
+                let methodNm = "sort"
+                MRegistry.tryFind2D xlValue
+                |> Option.map (apply<GenFn> methodNm [||] [| descending |])
 
 module A2D_XL =
     open Registry
@@ -3230,7 +3740,7 @@ module A2D_XL =
         | None -> proxys.failed  // TODO Unbox.apply?
         | Some o -> o |> API.Out.D0.Reg.out false unwrapoptions rfid proxys
 
-    [<ExcelFunction(Category="Array2D", Description="Returns a sub-array of a R-object array.")>]
+    [<ExcelFunction(Category="Array2D", Description="Returns a sub-array of a R-object 2D-array.")>]
     let a2_sub
         ([<ExcelArgument(Description= "2D array R-object.")>] rgA2D: string) 
         ([<ExcelArgument(Description= "[Sub row count. Default is full length.]")>] rowCount: obj)
@@ -3252,6 +3762,23 @@ module A2D_XL =
         match A2D.Reg.Out.sub rgA2D rowstart colstart rowcount colcount with
         | None -> Proxys.def.failed  // TODO Unbox.apply?
         | Some o -> o |> MRegistry.register rfid |> box
+
+    [<ExcelFunction(Category="Array1D", Description="Sort a R-object 2D-array.")>]
+    let a2_sort
+        ([<ExcelArgument(Description= "2D array R-object.")>] rgA2D: string) 
+        ([<ExcelArgument(Description= "[Descending. Default is false.]")>] descending: obj)
+        : obj = 
+
+        // intermediary stage
+        let desc = In.D0.Bool.def false descending
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match A2D.Reg.Out.sort desc rgA2D with
+        | None -> Proxys.def.failed
+        | Some xa2D -> xa2D |> MRegistry.registerBxd rfid
 
 module MAP = 
     open Registry
@@ -3302,13 +3829,17 @@ module MAP =
             else
                 okey
 
-        static member find1<'K1,'V when 'K1: comparison> (map: Map<'K1,'V>) (proxys: Proxys) (refKey: String) (okey1: obj) : obj =
+        static member find1<'K1,'V when 'K1: comparison> (map: Map<'K1,'V>) (append: bool) (proxys: Proxys) (refKey: String) (okey1: obj) : obj =
             match GenFn.cast<'K1> okey1 with 
             | :? 'K1 as key1 ->
                 match map |> Map.tryFind key1 with
                 | None -> proxys.failed
-                | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> false false refKey proxys)
+                | Some a0D -> a0D |> box |> (API.Out.D0.Reg.out<'V> append false refKey proxys)
             | _ -> proxys.failed
+
+        static member find1D1<'K1,'V when 'K1: comparison> (map: Map<'K1,'V>) (proxys: Proxys) (refKey: String) (okeys1: obj[]) : obj[] =
+            Registry.MRegistry.removeReferencedObjects refKey
+            okeys1 |> Array.map (GenFn.find1 map true proxys refKey)
 
         /// wording : returns values 1D array to Excel
         static member find2<'K1,'K2,'V when 'K1: comparison and 'K2: comparison> 
@@ -4110,8 +4641,9 @@ module MAP =
 
             let find1 (regKey: string) (proxys: Proxys) (refKey: string) (okey1: obj) : obj option =
                 let methodNm = "find1"
+                let okey1' = Registry.MRegistry.tryExtractO okey1 |> Option.defaultValue okey1
                 MRegistry.tryExtractGen genType regKey
-                |> Option.map (apply<GenFn> methodNm [||] [| proxys; refKey; okey1 |])
+                |> Option.map (apply<GenFn> methodNm [||] [| false; proxys; refKey; okey1' |])
 
             let findN (regKey: string) (proxys: Proxys) (refKey: string) (okeys: obj[]) : obj option =
                 let args : obj[] = Array.append [| proxys; refKey |] okeys
@@ -4127,6 +4659,11 @@ module MAP =
                         let genTypeRObj = (Array.append elemTys [| tys.[1] |], o)
                         apply<GenFn> methodNm [||] args genTypeRObj
                         |> Some
+
+            let find1D1 (regKey: string) (proxys: Proxys) (refKey: string) (okeys1: obj[]) : obj option =
+                let methodNm = "find1D1"
+                MRegistry.tryExtractGen genType regKey
+                |> Option.map (apply<GenFn> methodNm [||] [| proxys; refKey; okeys1 |])
 
 module MAP_XL =
     open Registry
@@ -4607,7 +5144,7 @@ module MAP_XL =
         | None -> [| Proxys.def.failed |]  // TODO Unbox.apply?
         | Some o1D -> o1D
 
-    [<ExcelFunction(Category="Map", Description="Returns a R-object map's values array.")>]
+    [<ExcelFunction(Category="Map", Description="Returns the value associated to a tuple of keys.")>]
     let map_find
         ([<ExcelArgument(Description= "Map R-object.")>] rgMap: string) 
         ([<ExcelArgument(Description= "Map key1.")>] mapKey1: obj)
@@ -4620,13 +5157,12 @@ module MAP_XL =
         ([<ExcelArgument(Description= "Map key8.")>] mapKey8: obj)
         ([<ExcelArgument(Description= "Map key9.")>] mapKey9: obj)
         ([<ExcelArgument(Description= "Map key10.")>] mapKey10: obj)
-        ([<ExcelArgument(Description= "[Failed value. Default is #N/A.]")>] failedValue: obj)
-        ([<ExcelArgument(Description= "[Tuppled. Default is true.]")>] tuppled: obj)  
+        ([<ExcelArgument(Description= "[Failure value. Default is #N/A.]")>] failureValue: obj)
         : obj = 
 
         // caller cell's reference ID
         let rfid = MRegistry.refID
-
+        
         // intermediary stage
         let mapkey2 = In.D0.Missing.Obj.tryO mapKey2
         let mapkey3 = In.D0.Missing.Obj.tryO mapKey3
@@ -4637,8 +5173,8 @@ module MAP_XL =
         let mapkey8 = In.D0.Missing.Obj.tryO mapKey8
         let mapkey9 = In.D0.Missing.Obj.tryO mapKey9
         let mapkey10 = In.D0.Missing.Obj.tryO mapKey10
-        let failedval = In.D0.Missing.Obj.subst Proxys.def.failed failedValue
-        let proxys = { def with failed = failedval }
+        let failureVal = In.D0.Missing.Obj.subst Proxys.def.failed failureValue
+        let proxys = { def with failed = failureVal }
 
         let okeys =
             // result
@@ -4665,43 +5201,32 @@ module MAP_XL =
                 [| mapKey1 |]
 
         if okeys.Length = 1 then
-            match MAP.Reg.Out.find1 rgMap Proxys.def rfid okeys.[0] with
+            match MAP.Reg.Out.find1 rgMap proxys rfid okeys.[0] with
             | None -> proxys.failed
             | Some o0D -> o0D
         else
-            match MAP.Reg.Out.findN rgMap Proxys.def rfid okeys with
+            match MAP.Reg.Out.findN rgMap proxys rfid okeys with
             | None -> proxys.failed
             | Some o0D -> o0D
 
-        
-        //match mapkey2, mapkey3, mapkey4, mapkey5, mapkey6, mapkey7, mapkey8, mapkey9, mapkey10 with
-        //| Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, Some key9, Some key10 -> 
-        //    box "9 keys case here"
-        //| Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, Some key9, None -> 
-        //    box "9 keys case here"
-        //| Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, Some key8, None, None -> 
-        //    box "8 keys case here"
-        //| Some key2, Some key3, Some key4, Some key5, Some key6, Some key7, None, None, None -> 
-        //    box "7 keys case here"
-        //| Some key2, Some key3, Some key4, Some key5, Some key6, None, None, None, None -> 
-        //    box "6 keys case here"
-        //| Some key2, Some key3, Some key4, Some key5, None, None, None, None, None -> 
-        //    box "5 keys case here"
-        //| Some key2, Some key3, Some key4, None, None, None, None, None, None -> 
-        //    box "4 keys case here"
-        //| Some key2, Some key3, None, None, None, None, None, None, None -> 
-        //    match MAP.Reg.Out.findN rgMap Proxys.def rfid [| mapKey1; key2; key3 |] with
-        //    | None -> proxys.failed
-        //    | Some o0D -> o0D
-        //| Some key2, None, None, None, None, None, None, None, None -> 
-        //    match MAP.Reg.Out.findN rgMap Proxys.def rfid [| mapKey1; key2 |] with
-        //    | None -> proxys.failed
-        //    | Some o0D -> o0D
-        //| _ -> 
-        //    match MAP.Reg.Out.find1 rgMap Proxys.def rfid mapKey1 with
-        //    | None -> proxys.failed
-        //    | Some o0D -> o0D
+    [<ExcelFunction(Category="Map", Description="Returns the value associated to an array of keys.")>]
+    let map_find1D
+        ([<ExcelArgument(Description= "Map R-object.")>] rgMap: string) 
+        ([<ExcelArgument(Description= "Array of keys.")>] keys1D: obj)
+        ([<ExcelArgument(Description= "[Failure value. Default is #N/A.]")>] failureValue: obj)
+        : obj[] = 
 
+        // intermediary stage
+        let okeys = In.Cast.to1D false keys1D
+        let failureVal = In.D0.Missing.Obj.subst Proxys.def.failed failureValue
+        let proxys = { def with failed = failureVal }
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        match MAP.Reg.Out.find1D1 rgMap proxys rfid okeys with
+        | None -> [| proxys.failed |]
+        | Some xo1D -> xo1D |> Out.D1.Unbox.apply proxys id
 
     [<ExcelFunction(Category="Map", Description="Returns the union of many compatible Map<K,V> R-objects.")>]
     let map_pool

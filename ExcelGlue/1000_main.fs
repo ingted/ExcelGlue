@@ -305,7 +305,7 @@ module Useful =
         let (|NONE|_|) : obj -> obj option =
           fun (a:obj) -> if a = null then Some (box "None detected here") else None
 
-        let unbox (o: obj) : obj option =   
+        let unwrap (o: obj) : obj option =   
             match o with    
             | NONE(_) -> None  // NONE first
             | SOME(x) -> Some x // SOME second
@@ -379,6 +379,21 @@ module Useful =
                  .Replace("FSharpOption`1","Option")
                  .Replace("FSharpMap`2","Map")
             pp
+
+    module Array =
+        let empty2D<'a> : 'a[,] = [||] |> array2D
+
+        /// Creates a 2D array from an array of 1D arrays.
+        /// All the inner arrays must have the same length.
+        let array2D (rowWise: bool) (a1Ds: ('a[]) []): 'a[,] =
+            if a1Ds.Length = 0 then
+                empty2D<'a>
+            elif a1Ds.[0].Length = 0 then
+                empty2D<'a>
+            elif rowWise then
+                a1Ds |> array2D
+            else
+                Array2D.init a1Ds.[0].Length a1Ds.Length (fun i j -> a1Ds.[j].[i])
 
 module API = 
 
@@ -1301,10 +1316,16 @@ module API =
                         | Some _ -> defValue1D
                     | _ -> None
 
+                static member tryDVBxd<'A> (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: 'A[] option) (typeTag: string) (xlValue: obj) : obj[] option = 
+                    TagFn.tryDV<'A> xlKinds rowWiseDef defValue1D typeTag xlValue
+                    |> Option.map (Array.map box)
+
                 static member tryEmpty<'A> (xlKinds: Set<Kind>) (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : 'A[] = 
                     let defValue1D : 'A[] = [||]
                     TagFn.tryDV<'A> xlKinds rowWiseDef (Some defValue1D) typeTag xlValue
                     |> Option.get
+
+
 
                 ///// TODO: wording
                 //static member empty<'A> (typeTag: string) : 'A[] = [||]
@@ -1373,22 +1394,43 @@ module API =
                 let filter (xlKinds: Set<Kind>) (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : obj = 
                     filter' xlKinds rowWiseDef false typeTag xlValue |> snd
 
-                // FIXME: wording
-                let tryDV' (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : Type*obj = 
+                let tryDV' (methodName: string) (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : Type*obj = 
                     let gentype =
                         if typeTag.ToUpper() = "OBJ" then
                             Registry.MRegistry.trySampleType false xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
                         else
                             typeTag |> Variant.labelType false
                     let args : obj[] = [| xlKinds; rowWiseDef; defValue1D; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<TagFn> "tryDV" [| gentype |] args
+                    let res = Useful.Generics.invoke<TagFn> methodName [| gentype |] args
                     gentype, res
 
-                // FIXME: wording
-                let tryDV (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : obj = 
-                    tryDV' xlKinds rowWiseDef defValue1D typeTag xlValue |> snd
+                /// Given a type-tag, which determines the expected array's element-type, 'a, converts an xl-value to a boxed (Some 'a[]) on success 
+                /// or returns defValue1D, a boxed ('a[] option), on failure.
+                /// Only works with non-optional type-tags, e.g. "string", but not "#string".
+                /// Recap: 
+                ///    - On success, returns boxed ('a, boxed ('a[] option)), where 'a is the array's element-type.
+                ///    - On failure, returns boxed (obj, defValue1D), where defValue1D is a boxed ('a[] option).
+                let tryDV (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : Type*obj = 
+                    tryDV' "tryDV" xlKinds rowWiseDef defValue1D typeTag xlValue
 
-                let tryEmpty (xlKinds: Set<Kind>) (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : obj = 
+                /// Similiar to tryDV but with boxed elements.
+                /// Given a type-tag, which determines the expected array's element-type, 'a, converts an xl-value to a boxed (Some (boxed 'a)[]) on success 
+                /// or returns defValue1D, a boxed ('a[] option), on failure.
+                /// Only works with non-optional type-tags, e.g. "string", but not "#string".
+                /// Recap: 
+                ///    - On success, returns boxed ('a, boxed ((boxed 'a)[] option)), where 'a is the array's element-type.
+                ///    - On failure, returns boxed (obj, defValue1D), where defValue1D is a boxed ('a[] option).
+                let tryDVBxd (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : Type*obj = 
+                    tryDV' "tryDVBxd" xlKinds rowWiseDef defValue1D typeTag xlValue
+
+                /// Similiar tryDV but returns an empty array on failure.
+                /// Given a type-tag, which determines the expected array's element-type, 'a, converts an xl-value to a boxed ('a[]) on success 
+                /// or returns boxed (empty [||]), on failure.
+                /// Only works with non-optional type-tags, e.g. "string", but not "#string".
+                /// Recap: 
+                ///    - On success, returns boxed ('a, boxed ('a[])), where 'a is the array's element-type.
+                ///    - On failure, returns boxed (obj, boxed [||]).
+                let tryEmpty (xlKinds: Set<Kind>) (rowWiseDef: bool option) (typeTag: string) (xlValue: obj) : obj = // TODO : for consistency, should add the type?
                     let gentype =
                         if typeTag.ToUpper() = "OBJ" then
                             Registry.MRegistry.trySampleType false xlValue |> Option.get // assumes a type is found. TODO: improve this? (when type not found)
@@ -1398,17 +1440,32 @@ module API =
                     let res = Useful.Generics.invoke<TagFn> "tryEmpty" [| gentype |] args
                     res
 
-                // FIXME: wording. Same as tryDV' with unboxing
+                // Same as the tryDV' functions above but with unboxing of the results.
                 module Try =
-                    let tryDV' (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : (Type*obj) option = 
-                        let genty, xa1D = tryDV' xlKinds rowWiseDef defValue1D typeTag xlValue
-                        Useful.Option.unbox xa1D
+                    /// Given a type-tag, which determines the expected array's element-type, 'a, converts an xl-value to an optional 'a[] on success 
+                    /// or returns defValue1D, a boxed ('a[] option), on failure.
+                    /// Only works with non-optional type-tags, e.g. "string", but not "#string".
+                    /// Recap: 
+                    ///    - Returns Some ('a, boxed ('a[]) or Some (obj, defValue1D unwrapped), where 'a is the array's element-type and defValue1D is a boxed ('a[] option).
+                    ///    - or returns None on failure, and if defValue is (boxed) None.
+                    let tryDV (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : (Type*obj) option = 
+                        let genty, xa1D = tryDV xlKinds rowWiseDef defValue1D typeTag xlValue
+                        Useful.Option.unwrap xa1D
                         |> Option.map (fun res -> (genty, res))
 
-                    let tryDV (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : obj option = 
-                        let xa1D = tryDV xlKinds rowWiseDef defValue1D typeTag xlValue
-                        let res = Useful.Option.unbox xa1D
-                        res
+                    /// Same as tryDV but with boxed elements.
+                    /// Given a type-tag, which determines the expected array's element-type, 'a, converts an xl-value to an optional (boxed 'a)[] on success 
+                    /// or returns defValue1D, a boxed ('a[] option), on failure.
+                    /// Only works with non-optional type-tags, e.g. "string", but not "#string".
+                    /// Recap: 
+                    ///    - Returns Some ('a, (boxed 'a)[]) or Some (obj, defValue1D unwrapped), where 'a is the array's element-type and defValue1D is a boxed ('a[] option).
+                    ///    - or returns None on failure, and if defValue is (boxed) None.
+                    let tryDVBxd (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : (Type*(obj[])) option = 
+                        let genty, xo1D = tryDVBxd xlKinds rowWiseDef defValue1D typeTag xlValue
+                        Useful.Option.unwrap xo1D
+                        |> Option.map (fun res -> (genty, res :?> obj[]))
+
+
 
         /// Obj[] input functions.
         module D2 =
@@ -1689,21 +1746,21 @@ module API =
                         a2D |> Array2D.map (fun x -> (box x) :?> 'A option)
                     | _ -> empty2D<'A option>
                 
-                static member filter<'A> (xlKinds: Set<Kind>) (rowWise: bool option) (typeTag: string) (xlValue: obj) : 'A[,] = 
+                static member filter<'A> (xlKinds: Set<Kind>) (rowWise: bool) (typeTag: string) (xlValue: obj) : 'A[,] = 
                     let o2D = Cast.to2D xlValue
 
                     match typeTag |> Variant.ofTag with
-                    | BOOL -> filter<'A> (rowWise |> Option.defaultValue true) o2D
-                    | STRING -> filter<'A> (rowWise |> Option.defaultValue true) o2D
-                    | DOUBLE -> filter<'A> (rowWise |> Option.defaultValue true) o2D
+                    | BOOL -> filter<'A> rowWise o2D
+                    | STRING -> filter<'A> rowWise o2D
+                    | DOUBLE -> filter<'A> rowWise o2D
                     | DOUBLENAN -> 
-                        let a2D = Nan.filter xlKinds (rowWise |> Option.defaultValue true) o2D
+                        let a2D = Nan.filter xlKinds rowWise o2D
                         a2D |> Array2D.map (fun x -> (box x) :?> 'A)
                     | INT -> 
-                        let a2D = Intg.filter (rowWise |> Option.defaultValue true) o2D
+                        let a2D = Intg.filter rowWise o2D
                         a2D |> Array2D.map (fun x -> (box x) :?> 'A)
                     | DATE -> 
-                        let a2D = Dte.filter (rowWise |> Option.defaultValue true) o2D
+                        let a2D = Dte.filter rowWise o2D
                         a2D |> Array2D.map (fun x -> (box x) :?> 'A)
                     | _ -> empty2D<'A>
 
@@ -1764,7 +1821,7 @@ module API =
                                 Useful.Generics.invoke<TagFn> "def" [| gentype |] args
                         res
 
-                let filter (xlKinds: Set<Kind>) (rowWise: bool option) (typeTag: string) (xlValue: obj) : obj = 
+                let filter (xlKinds: Set<Kind>) (rowWise: bool) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype = typeTag |> Variant.labelType false
                     let args : obj[] = [| xlKinds; rowWise; typeTag; xlValue |]
                     let res = Useful.Generics.invoke<TagFn> "filter" [| gentype |] args
@@ -1793,13 +1850,38 @@ module API =
                 module Try =
                     let tryDV' (xlKinds: Set<Kind>) (defValue2D: obj) (typeTag: string) (xlValue: obj) : (Type*obj) option = 
                         let genty, xa2D = tryDV' xlKinds defValue2D typeTag xlValue
-                        Useful.Option.unbox xa2D
+                        Useful.Option.unwrap xa2D
                         |> Option.map (fun res -> (genty, res))
 
                     let tryDV (xlKinds: Set<Kind>) (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj option = 
                         let xa2D = tryDV xlKinds defValue2D typeTag xlValue
-                        let res = Useful.Option.unbox xa2D
+                        let res = Useful.Option.unwrap xa2D
                         res
+
+                /// 2D arrays with row-wise (column-wise) typed elements, where elements in a given row (given column) have the same type.
+                module Multi = 
+                    // TODO : wording
+                    /// Converts an obj[,] to an optional 'a[,]. 
+                    /// rowWise = true: All elements in a given row must match the correspongind type-tag, for all rows, otherwise defValue2D array is returned. 
+                    /// rowWise = false: All elements in a given column must match the correspongind type-tag, for all columns, otherwise defValue2D array is returned. 
+                    let tryDV (defValue2D: obj[,] option) (xlKinds: Set<Kind>) (rowWise: bool) (typeTags: string[]) (xlValue: obj) : (Type[]*(obj[,])) option =
+                        let o2D = Cast.to2D xlValue
+                        //let len1, len2 = o2D |> Array2D.length1, o2D |> Array2D.length2
+
+                        let tyxs' = 
+                            if rowWise then
+                                [| for i in o2D.GetLowerBound(0) .. o2D.GetUpperBound(0) -> D1.Tag.Try.tryDVBxd xlKinds None (box None) typeTags.[i] o2D.[i,*] |]
+                            else
+                                [| for j in o2D.GetLowerBound(1) .. o2D.GetUpperBound(1) -> D1.Tag.Try.tryDVBxd xlKinds None (box None) typeTags.[j] o2D.[*,j] |]
+
+                        match tyxs' |> Array.tryFind Option.isNone with
+                        | Some _ -> 
+                            defValue2D |> Option.map (fun a2D -> ([||], a2D)) // TODO: must extract the types list from defValue2D? ([||] will only work when defValue2D is None)
+                        | None -> 
+                            let tyxs = tyxs' |> Array.map Option.get
+                            let (gentys, xa1Ds) = Array.unzip tyxs
+                            (gentys, Useful.Array.array2D rowWise xa1Ds)
+                            |> Some
 
     /// Functions to retun values to Excel.
     module Out =
@@ -2026,7 +2108,7 @@ module API =
                     /// In other words, casts a obj into a obj[].
                     /// Returns None for None inputs OR if the casting fails.
                     let o1D (boxedOptArray: obj) : obj[] option = 
-                        match Useful.Option.unbox boxedOptArray with
+                        match Useful.Option.unwrap boxedOptArray with
                         | None -> None
                         | Some boxedArray -> o1D boxedArray
 
@@ -2143,7 +2225,7 @@ module API =
                     /// In other words, casts a obj into a obj[].
                     /// Returns None for None inputs OR if the casting fails.
                     let o2D (boxedOptArray: obj) : obj[,] option = 
-                        match Useful.Option.unbox boxedOptArray with
+                        match Useful.Option.unwrap boxedOptArray with
                         | None -> None
                         | Some boxedArray -> o2D boxedArray
 
@@ -2581,7 +2663,7 @@ module Cast_XL =
                  xa1D |> (Out.D1.Unbox.apply proxys (Out.D1.Prm.out proxys))
 
         // strict method: either all the array's elements are of type int, or return None (here the 1-elem array [| proxys.failed |])
-        | "S" -> let xa1D = In.D1.Tag.tryDV xlkinds rowwise None typeTag range
+        | "S" -> let xa1D = In.D1.Tag.tryDV xlkinds rowwise None typeTag range |> snd
                  xa1D |> (Out.D1.Unbox.Opt.apply proxys (Out.D1.Prm.out proxys))
 
         | _ -> let xa1D = In.D1.Tag.Any.def xlkinds rowwise defVal typeTag range
@@ -2595,12 +2677,12 @@ module Cast_XL =
         ([<ExcelArgument(Description= "[Default Value (only for non-optional types, optional types default to None). Must be of the appropriate type, else it will fail.]")>] defaultValue: obj)
         ([<ExcelArgument(Description= "[None Value. Default is \"<none>\".]")>] noneValue: obj)
         ([<ExcelArgument(Description= "[Empty array value. Default is \"<empty>\".]")>] emptyValue: obj)
-        ([<ExcelArgument(Description= "[Row wise direction. Default is none.]")>] rowWiseDirection: obj)
+        ([<ExcelArgument(Description= "[Row wise direction for filtering. Default is true.]")>] rowWiseDirection: obj)
         ([<ExcelArgument(Description= "[Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... (comma separated). Default is none.]")>] xlKinds: obj)
         : obj[,]  =
 
         // intermediary stage
-        let rowwise = In.D0.Bool.Opt.def None rowWiseDirection
+        let rowWise = In.D0.Bool.def true rowWiseDirection
         let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
         let none = In.D0.Stg.def "<none>" noneValue
         let empty = In.D0.Stg.def "<empty>" emptyValue
@@ -2611,7 +2693,7 @@ module Cast_XL =
         // for demo purpose only: takes an Excel range input,
         // converts it into a (boxed) typed 2D array, then outputs it back to Excel.
         match replmethod.ToUpper().Substring(0,1) with
-        | "F" -> let xa2D = In.D2.Tag.filter xlkinds rowwise typeTag range
+        | "F" -> let xa2D = In.D2.Tag.filter xlkinds rowWise typeTag range
                  xa2D |> (Out.D2.Unbox.apply proxys (Out.D2.Prm.out proxys))
 
         // strict method: either all the array's elements are of type int, or return None (here the 1-elem array [| proxys.failed |])
@@ -2682,6 +2764,7 @@ module Fun =
         [| for w in diagnostics -> sprintf "[[%d,%d]] %s" w.StartLineAlternate w.StartColumn w.Message |]
         |> Array.map (fun s -> prefix + s)
 
+    // TODO: get binary's location and outputs it to user
     //// let loc = System.Reflection.Assembly.GetExecutingAssembly().Location
     ////fsiSession.EvalInteraction(sprintf "#r @\"%s\"" loc)
 
@@ -2958,7 +3041,6 @@ module Fun_XL =
                     res |> MRegistry.registerBxd rfid
                 else
                     res
-
 
 module A1D = 
     //open type Registry
@@ -3286,7 +3368,7 @@ module A1D_XL =
             let res = xa1D |> MRegistry.register rfid
             box res
         | "S", _ -> 
-            match In.D1.Tag.Try.tryDV xlkinds rowwise None typeTag range with
+            match In.D1.Tag.Try.tryDV xlkinds rowwise None typeTag range |> Option.map snd with
             | None -> failureVal
             | Some xa1D -> 
                 let res = xa1D |> MRegistry.register rfid
@@ -3484,14 +3566,13 @@ module A1D_XL =
             | Some res -> res |> MRegistry.registerBxd rfid
 
 module A2D = 
-    // open type Registry
     open Registry
     open Useful.Generics
     open API.Out
 
-    // -----------------------------------
+    // -----------------------------
     // -- Main functions
-    // -----------------------------------
+    // -----------------------------
 
     /// Empty 2D array.
     let empty2D<'a> : 'a[,] = [|[||]|] |> array2D
@@ -3523,7 +3604,6 @@ module A2D =
         let colcnt = colCount |> Option.defaultValue colLen
         sub' a2D rowidx colidx rowcnt colcnt
         
-
     // -----------------------------------
     // -- Reflection functions
     // -----------------------------------
@@ -3638,12 +3718,12 @@ module A2D_XL =
         ([<ExcelArgument(Description= "Type tag: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj")>] typeTag: string)
         ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Filter\" or \"Strict\". Default is \"Replace\".]")>] replaceMethod: obj)
         ([<ExcelArgument(Description= "[Default Value (only for non-optional types, optional types default to None). Must be of the appropriate type, else it will fail.]")>] defaultValue: obj)
-        ([<ExcelArgument(Description= "[Row wise direction. Default is none.]")>] rowWiseDirection: obj)
+        ([<ExcelArgument(Description= "[Row wise direction for filtering. Default is true.]")>] rowWiseDirection: obj)
         ([<ExcelArgument(Description= "[Only doubleNaN tag: Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... Default is none.]")>] xlKinds: obj)
         : obj  =
 
         // intermediary stage
-        let rowwise = In.D0.Bool.Opt.def None rowWiseDirection
+        let rowWise = In.D0.Bool.def true rowWiseDirection
         let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
         let defVal = In.D0.Absent.Obj.tryO defaultValue
         let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Kind.ofLabel
@@ -3652,7 +3732,7 @@ module A2D_XL =
         let rfid = MRegistry.refID
         // TODO: strict method?
         match replmethod.ToUpper().Substring(0,1) with
-        | "F" -> let xa2D = (In.D2.Tag.filter xlkinds rowwise typeTag range)
+        | "F" -> let xa2D = (In.D2.Tag.filter xlkinds rowWise typeTag range)
                  let res = xa2D |> MRegistry.register rfid 
                  box res
         | _ -> let res = (In.D2.Tag.Any.def xlkinds defVal typeTag range) |> MRegistry.register rfid
@@ -3779,6 +3859,32 @@ module A2D_XL =
         match A2D.Reg.Out.sort desc rgA2D with
         | None -> Proxys.def.failed
         | Some xa2D -> xa2D |> MRegistry.registerBxd rfid
+
+    [<ExcelFunction(Category="Array2D", Description="Cast a 2D xl-range to a generic type array.")>]
+    let a2_ofRngMulti
+        ([<ExcelArgument(Description= "2D xl-range.")>] range: obj)
+        ([<ExcelArgument(Description= "Type tag: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj")>] typeTag: string)
+        ([<ExcelArgument(Description= "[Replacement method for non-date elements. \"Replace\", \"Filter\" or \"Strict\". Default is \"Replace\".]")>] replaceMethod: obj)
+        ([<ExcelArgument(Description= "[Default Value (only for non-optional types, optional types default to None). Must be of the appropriate type, else it will fail.]")>] defaultValue: obj)
+        ([<ExcelArgument(Description= "[Row wise direction for filtering. Default is true.]")>] rowWiseDirection: obj)
+        ([<ExcelArgument(Description= "[Only doubleNaN tag: Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... Default is none.]")>] xlKinds: obj)
+        : obj  =
+
+        // intermediary stage
+        let rowWise = In.D0.Bool.def true rowWiseDirection
+        let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
+        let defVal = In.D0.Absent.Obj.tryO defaultValue
+        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Kind.ofLabel
+        
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+        // TODO: strict method?
+        match replmethod.ToUpper().Substring(0,1) with
+        | "F" -> let xa2D = (In.D2.Tag.filter xlkinds rowWise typeTag range)
+                 let res = xa2D |> MRegistry.register rfid 
+                 box res
+        | _ -> let res = (In.D2.Tag.Any.def xlkinds defVal typeTag range) |> MRegistry.register rfid
+               box res
 
 module MAP = 
     open Registry
@@ -4716,17 +4822,17 @@ module MAP_XL =
         let gtykeys_keys_gtyvals_vals =
             match ktag2, ktag3, ktag4, ktag5, ktag6, ktag7, ktag8, ktag9, ktag10 with
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, Some ktg8, Some ktg9, Some ktg10 -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg6 mapKeys6
-                let trykeys7 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg7 mapKeys7
-                let trykeys8 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg8 mapKeys8
-                let trykeys9 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg9 mapKeys9
-                let trykeys10 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg10 mapKeys10
-                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg7 mapKeys7
+                let trykeys8 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg8 mapKeys8
+                let trykeys9 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg9 mapKeys9
+                let trykeys10 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg10 mapKeys10
+                let tryvals =  API.In.D1.Tag.Try.tryDV xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, trykeys8, trykeys9, trykeys10, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtykey8, keys8), Some (gtykey9, keys9), Some (gtykey10, keys10), Some (gtyval, vals) -> 
@@ -4736,16 +4842,16 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, Some ktg8, Some ktg9, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg6 mapKeys6
-                let trykeys7 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg7 mapKeys7
-                let trykeys8 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg8 mapKeys8
-                let trykeys9 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg9 mapKeys9
-                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg7 mapKeys7
+                let trykeys8 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg8 mapKeys8
+                let trykeys9 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg9 mapKeys9
+                let tryvals =  API.In.D1.Tag.Try.tryDV xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, trykeys8, trykeys9, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtykey8, keys8), Some (gtykey9, keys9), Some (gtyval, vals) -> 
@@ -4755,15 +4861,15 @@ module MAP_XL =
                 | _ -> None
                 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, Some ktg8, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg6 mapKeys6
-                let trykeys7 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg7 mapKeys7
-                let trykeys8 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg8 mapKeys8
-                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg7 mapKeys7
+                let trykeys8 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg8 mapKeys8
+                let tryvals =  API.In.D1.Tag.Try.tryDV xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, trykeys8, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtykey8, keys8), Some (gtyval, vals) -> 
@@ -4773,14 +4879,14 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, Some ktg7, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg6 mapKeys6
-                let trykeys7 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg7 mapKeys7
-                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg6 mapKeys6
+                let trykeys7 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg7 mapKeys7
+                let tryvals =  API.In.D1.Tag.Try.tryDV xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, trykeys7, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtykey7, keys7), Some (gtyval, vals) -> 
@@ -4790,13 +4896,13 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, Some ktg6, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg5 mapKeys5
-                let trykeys6 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg6 mapKeys6
-                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg5 mapKeys5
+                let trykeys6 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg6 mapKeys6
+                let tryvals =  API.In.D1.Tag.Try.tryDV xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6), Some (gtyval, vals) -> 
@@ -4806,12 +4912,12 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, Some ktg5, None, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
-                let trykeys5 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg5 mapKeys5
-                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg4 mapKeys4
+                let trykeys5 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg5 mapKeys5
+                let tryvals =  API.In.D1.Tag.Try.tryDV xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtyval, vals) -> 
@@ -4821,11 +4927,11 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, Some ktg4, None, None, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
-                let trykeys4 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg4 mapKeys4
-                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg3 mapKeys3
+                let trykeys4 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg4 mapKeys4
+                let tryvals =  API.In.D1.Tag.Try.tryDV xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, trykeys4, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtyval, vals) -> 
@@ -4835,10 +4941,10 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, Some ktg3, None, None, None, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
-                let trykeys3 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg3 mapKeys3
-                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg2 mapKeys2
+                let trykeys3 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg3 mapKeys3
+                let tryvals =  API.In.D1.Tag.Try.tryDV xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, trykeys3, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtyval, vals) -> 
@@ -4848,9 +4954,9 @@ module MAP_XL =
                 | _ -> None
 
             | Some ktg2, None, None, None, None, None, None, None, None -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
-                let trykeys2 =  API.In.D1.Tag.Try.tryDV' xlkinds None None ktg2 mapKeys2
-                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV xlkinds None None k1TypeTag mapKeys1
+                let trykeys2 =  API.In.D1.Tag.Try.tryDV xlkinds None None ktg2 mapKeys2
+                let tryvals =  API.In.D1.Tag.Try.tryDV xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, trykeys2, tryvals with
                 | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtyval, vals) -> 
@@ -4860,8 +4966,8 @@ module MAP_XL =
                 | _ -> None
 
             | _ -> 
-                let trykeys1 =  API.In.D1.Tag.Try.tryDV' xlkinds None None k1TypeTag mapKeys1
-                let tryvals =  API.In.D1.Tag.Try.tryDV' xlkinds None None valueTypeTag mapValues
+                let trykeys1 =  API.In.D1.Tag.Try.tryDV xlkinds None None k1TypeTag mapKeys1
+                let tryvals =  API.In.D1.Tag.Try.tryDV xlkinds None None valueTypeTag mapValues
 
                 match trykeys1, tryvals with
                 | Some (gtykey1, keys1), Some (gtyval, vals) -> 
@@ -4932,12 +5038,12 @@ module MAP_XL =
             let vgtykeys_keys =
                 match vktag2, vktag3, vktag4, vktag5, vktag6 with
                 | Some vktg2, Some vktg3, Some vktg4, Some vktg5, Some vktg6 -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktag1 mapVKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg2 mapVKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg3 mapVKeys3
-                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg4 mapVKeys4
-                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg5 mapVKeys5
-                    let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg6 mapVKeys6
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg2 mapVKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg3 mapVKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg4 mapVKeys4
+                    let trykeys5 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg5 mapVKeys5
+                    let trykeys6 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg6 mapVKeys6
 
                     match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6) -> 
@@ -4947,11 +5053,11 @@ module MAP_XL =
                     | _ -> None
 
                 | Some vktg2, Some vktg3, Some vktg4, Some vktg5, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktag1 mapVKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg2 mapVKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg3 mapVKeys3
-                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg4 mapVKeys4
-                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg5 mapVKeys5
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg2 mapVKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg3 mapVKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg4 mapVKeys4
+                    let trykeys5 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg5 mapVKeys5
 
                     match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5) -> 
@@ -4961,10 +5067,10 @@ module MAP_XL =
                     | _ -> None
 
                 | Some vktg2, Some vktg3, Some vktg4, None, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktag1 mapVKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg2 mapVKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg3 mapVKeys3
-                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg4 mapVKeys4
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg2 mapVKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg3 mapVKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg4 mapVKeys4
 
                     match trykeys1, trykeys2, trykeys3, trykeys4 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4) -> 
@@ -4974,9 +5080,9 @@ module MAP_XL =
                     | _ -> None
 
                 | Some vktg2, Some vktg3, None, None, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktag1 mapVKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg2 mapVKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg3 mapVKeys3
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg2 mapVKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg3 mapVKeys3
 
                     match trykeys1, trykeys2, trykeys3 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3) -> 
@@ -4986,8 +5092,8 @@ module MAP_XL =
                     | _ -> None
 
                 | Some vktg2, None, None, None, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktag1 mapVKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktg2 mapVKeys2
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktag1 mapVKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktg2 mapVKeys2
 
                     match trykeys1, trykeys2 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2) -> 
@@ -4997,7 +5103,7 @@ module MAP_XL =
                     | _ -> None
 
                 | _ -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None vktag1 mapVKeys1
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV Set.empty None None vktag1 mapVKeys1
 
                     match trykeys1 with
                     | Some (gtykey1, keys1) -> 
@@ -5009,12 +5115,12 @@ module MAP_XL =
             let hgtykeys_keys =
                 match hktag2, hktag3, hktag4, hktag5, hktag6 with
                 | Some hktg2, Some hktg3, Some hktg4, Some hktg5, Some hktg6 -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktag1 mapHKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg2 mapHKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg3 mapHKeys3
-                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg4 mapHKeys4
-                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg5 mapHKeys5
-                    let trykeys6 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg6 mapHKeys6
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg2 mapHKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg3 mapHKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg4 mapHKeys4
+                    let trykeys5 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg5 mapHKeys5
+                    let trykeys6 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg6 mapHKeys6
 
                     match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5, trykeys6 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5), Some (gtykey6, keys6) -> 
@@ -5024,11 +5130,11 @@ module MAP_XL =
                     | _ -> None
 
                 | Some hktg2, Some hktg3, Some hktg4, Some hktg5, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktag1 mapHKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg2 mapHKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg3 mapHKeys3
-                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg4 mapHKeys4
-                    let trykeys5 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg5 mapHKeys5
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg2 mapHKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg3 mapHKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg4 mapHKeys4
+                    let trykeys5 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg5 mapHKeys5
 
                     match trykeys1, trykeys2, trykeys3, trykeys4, trykeys5 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4), Some (gtykey5, keys5) -> 
@@ -5038,10 +5144,10 @@ module MAP_XL =
                     | _ -> None
 
                 | Some hktg2, Some hktg3, Some hktg4, None, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktag1 mapHKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg2 mapHKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg3 mapHKeys3
-                    let trykeys4 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg4 mapHKeys4
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg2 mapHKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg3 mapHKeys3
+                    let trykeys4 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg4 mapHKeys4
 
                     match trykeys1, trykeys2, trykeys3, trykeys4 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3), Some (gtykey4, keys4) -> 
@@ -5051,9 +5157,9 @@ module MAP_XL =
                     | _ -> None
 
                 | Some hktg2, Some hktg3, None, None, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktag1 mapHKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg2 mapHKeys2
-                    let trykeys3 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg3 mapHKeys3
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg2 mapHKeys2
+                    let trykeys3 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg3 mapHKeys3
 
                     match trykeys1, trykeys2, trykeys3 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2), Some (gtykey3, keys3) -> 
@@ -5063,8 +5169,8 @@ module MAP_XL =
                     | _ -> None
 
                 | Some hktg2, None, None, None, None -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktag1 mapHKeys1
-                    let trykeys2 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktg2 mapHKeys2
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktag1 mapHKeys1
+                    let trykeys2 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktg2 mapHKeys2
 
                     match trykeys1, trykeys2 with
                     | Some (gtykey1, keys1), Some (gtykey2, keys2) -> 
@@ -5074,7 +5180,7 @@ module MAP_XL =
                     | _ -> None
 
                 | _ -> 
-                    let trykeys1 =  API.In.D1.Tag.Try.tryDV' Set.empty None None hktag1 mapHKeys1
+                    let trykeys1 =  API.In.D1.Tag.Try.tryDV Set.empty None None hktag1 mapHKeys1
 
                     match trykeys1 with
                     | Some (gtykey1, keys1) -> 
@@ -5242,11 +5348,599 @@ module MAP_XL =
         | Some regObjMap -> regObjMap |> MRegistry.register rfid |> box
 
 
+module Rel2 =
+    open API
+    open System.Collections
+
+    // a custom compare function is needed because we use F# Set<Elem>, which requires a comparison constraint on its elements.
+    [<RequireQualifiedAccess>]
+    module Compare =
+        // -----------------------------
+        // -- Comparaison functions
+        // -----------------------------
+
+        // write your custom compare function here.
+        /// Used if Structural Equality does not apply.
+        let custom (o1: obj) (o2: obj) : int =
+            match (o1, o2) with
+            //| (:? Foo), (:? Foo) -> 0
+            //| (:? Foo), _ -> -1
+            //| _ , (:? Foo) -> 1
+            | _ -> failwith "System.ArgumentException: Object must be of type IComparable or IStructuralComparable.\nat oCompare (Object value1) (Object value2)"
+    
+        let compare (o1: obj) (o2: obj) : int =
+            match (o1, o2) with
+            | (:? IComparable as c1), (:? IComparable as c2) -> 
+                try 
+                    c1.CompareTo(c2)
+                with
+                | e -> failwith e.Message
+            | (:? IStructuralComparable as c1), (:? IStructuralComparable as c2) -> 
+                try 
+                    Operators.compare c1 c2
+                with
+                | e -> failwith e.Message
+            | _ ->
+                custom o1 o2
+
+
+    // we need to define comparison for Field, since the relation object is Set<Elem>, and F# Set requires comparison.
+    // the Relation object will not allow two Fields with the same name in its header.
+    // so we can compare fields wrt their name only (and ignore their type, which we cannot compare).
+    [<CustomEquality; CustomComparison>]
+    type Field = { fname: string; ftype: Type } with
+        override f1.Equals(o2) =
+            match o2 with 
+            | :? Field as f2 -> f1 = f2
+            | _ -> false
+        override f.GetHashCode() = hash f
+
+        interface System.IComparable with
+            member f1.CompareTo o2 =
+                match o2 with 
+                | :? Field as f2 -> f1.fname.CompareTo(f2.fname)
+                | _ -> invalidArg "o2" "Field: Cannot compare values of different types."
+
+        static member ofArrays (fieldNames: string[]) (fieldTypes: Type[]) : Set<Field> =
+            Array.map2 (fun fname ftype -> { fname = fname ; ftype = ftype }) fieldNames fieldTypes
+            |> Set.ofArray
+
+        /// Returns all field-names, sorted.
+        static member names (fields: Set<Field>) : Set<string> = fields |> Set.map (fun field -> field.fname)
+
+        /// Returns all fields, which fname is included in keepNames.
+        static member project (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : Set<Field> =
+            let fnames =
+                if away then
+                    Set.difference (Field.names fields) keepNames
+                else
+                    Set.intersect (Field.names fields) keepNames
+
+            fields |> Set.filter (fun field -> fnames |> Set.contains field.fname)
+
+        /// Returns the array indices of the fields, which fname is included in keepNames.
+        static member indexs (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : int[] =
+            let indexedNames = fields |> Field.names |> Set.toArray |> Array.indexed
+            let projectNames = Field.project fields away keepNames |> Field.names
+            indexedNames |> Array.filter (fun (idx, fnm) -> projectNames |> Set.contains fnm) |> Array.map fst
+
+        /// Returns true if two fields or more have same name but different type.
+        static member incompatible (fields1: Set<Field>) (fields2: Set<Field>) : bool =
+            let fNames1 = fields1 |> Field.names
+            let fNames2 = fields2 |> Field.names
+            let comNames = Set.intersect fNames1 fNames2
+            if comNames |> Set.isEmpty then
+                false
+            else
+                let comFields1 = fields1 |> Set.filter (fun field -> comNames |> Set.contains field.fname)
+                let comFields2 = fields2 |> Set.filter (fun field -> comNames |> Set.contains field.fname)
+                comFields2 = comFields1
+
+        /// Returns fields common to both fields sets.
+        /// Incompatible fields will be excluded.
+        static member common (fields1: Set<Field>) (fields2: Set<Field>) : Set<Field> = Set.intersect fields1 fields1
+
+        /// Returns true if the two fields sets are disjoint.
+        /// Incompatible sets might return true.
+        static member disjoint (fields1: Set<Field>) (fields2: Set<Field>) : bool = Field.common fields1 fields1 |> Set.isEmpty
 
 
 
+    [<CustomEquality; CustomComparison>]
+    type Elem = { fname: string; value: obj } with
+        override e1.Equals(o2) =
+            match o2 with 
+            | :? Elem as e2 -> (e1.fname = e2.fname) && (e1.value = e2.value)
+            | _ -> false
 
+        override e.GetHashCode() = hash e.value
 
+        interface System.IComparable with
+            member e1.CompareTo o2 =
+                match o2 with 
+                | :? Elem as e2 -> 
+                    if e1.fname <> e2.fname then 
+                        e1.fname.CompareTo(e2.fname)
+                    else 
+                        // should never reach there for valid relation since field names are unique
+                        // Compare.compare e1.value e2.value // RESTORE ME
+                        failwith "should never reach there for valid relation since field names are unique"
+                | _ -> invalidArg "o2" "Elem: Cannot compare values of different types."
+
+        static member zip (fieldNames: string[]) (elems: obj[]) : Elem[] =
+            Array.zip fieldNames elems |> Array.sortBy fst |> Array.map (fun (fname, o) -> { fname = fname; value = o })
+
+        //static member ofArrays (names: string[]) (types: Type[]) (values: obj[]) : Elem[] =
+        //    Array.map3 
+        //        (fun nm ty value -> let field = { nm = nm ; ty = ty } in { field = field; value = value})
+        //        names types values
+    
+    /// Row is an (unordered) set of Elem-s. Similar to C.J. Date's concept of Tuple.
+    type Row = Elem[]
+
+    module Row =
+        let sort (row: Row) : Row = row |> Array.sortBy (fun elem -> elem.fname)
+
+        let ofPositions (positions: int[]) (row: Row) : Row = positions |> Array.map (fun i -> row.[i])
+        let ofPositions2 (positions1: int[]) (positions2: int[]) (row: Row) : Row = Array.append (ofPositions positions1 row) (ofPositions positions2 row)
+
+        /// Returns a lookup index of (hashed) row-value -> row indexes
+        let index (mapping: Row -> Row) (rows: Row[]) : Dictionary<int, int[]> =
+            let dc = new Dictionary<int, int[]>()
+            let addEntry index row = 
+                let rowHash = mapping row |> hash
+                if dc.ContainsKey(rowHash) then 
+                    dc.[rowHash] <- Array.append dc.[rowHash] [| index |]
+                else
+                    dc.Add(rowHash, [| index |])
+            rows |> Array.iteri addEntry
+            dc
+
+    /// A relation, Rel is:
+    /// 1. A header, a set of fields.
+    /// 2. A body, a set of Row-s, compatible with the header.
+    type Rel = { fields: Set<Field>; body: Set<Row> } with
+        static member DEE : Rel = { fields = Set.empty; body = [||] |> Set.singleton }
+        static member DUM : Rel = { fields = Set.empty; body = Set.empty }
+
+        static member ofRng (xlKinds: Set<Kind>) (fieldNames: string[]) (typeTags: string[]) (o2D: obj[,]) : Rel option = 
+            let len = fieldNames.Length
+            let valid = (typeTags.Length = len) && (o2D |> Array2D.length2 = len) && (fieldNames |> Array.distinct |> Array.length = len)
+
+            if not valid then
+                None
+            else
+                match In.D2.Tag.Multi.tryDV None xlKinds false typeTags o2D with
+                | None -> None
+                | Some (gentys, o2D) ->
+                    let fields = Field.ofArrays fieldNames gentys
+                    let body : Set<Row> = [| for i in o2D.GetLowerBound(0) .. o2D.GetUpperBound(0) -> Elem.zip fieldNames o2D.[i,*] |] |> Set.ofArray
+
+                    let rel : Rel = { fields = fields; body = body }
+                    rel |> Some
+
+        /// Returns true if two fields or more have same name but different type.
+        static member incompatible (r1: Rel) (r2: Rel) : bool = Field.incompatible r1.fields r2.fields
+
+        /// Returns true if two relations have the same header (fields / attributes).
+        static member rmatch (r1: Rel) (r2: Rel) : bool = r1.fields = r2.fields
+
+        /// Returns true if the relations do not share any common field / attribute.
+        static member disjoint (r1: Rel) (r2: Rel) : bool = Field.disjoint r1.fields r2.fields
+
+        /// Returns fields common to both relations.
+        static member commonFields (r1: Rel) (r2: Rel) : Set<Field> = Field.common r1.fields r2.fields
+
+    /// Union operator.
+    /// The fields (attributes) of the two relation operands must be equal.
+    let union (r1: Rel) (r2: Rel) : Rel option =
+        if Rel.incompatible r1 r2 then
+            None
+        else
+            if Rel.rmatch r1 r2 then
+                let body = Set.union r1.body r2.body
+                let rel : Rel = { fields = r1.fields; body = body }
+                rel |> Some
+            else
+                None
+
+    /// Intersection operator.
+    /// The fields (attributes) of the two relation operands must be equal.
+    let inter (r1: Rel) (r2: Rel) : Rel option =
+        if Rel.incompatible r1 r2 then
+            None
+        else
+            if Rel.rmatch r1 r2 then
+                let body = Set.intersect r1.body r2.body
+                let rel : Rel = { fields = r1.fields; body = body }
+                rel |> Some
+            else
+                None
+
+    /// Difference operator.
+    /// The fields (attributes) of the two relation operands must be equal.
+    let minus (r1: Rel) (r2: Rel) : Rel option =
+        if Rel.incompatible r1 r2 then
+            None
+        else
+            if Rel.rmatch r1 r2 then
+                let body = Set.difference r1.body r2.body
+                let rel : Rel = { fields = r1.fields; body = body }
+                rel |> Some
+            else
+                None
+
+    /// Product operator.
+    /// The fields (attributes) of the two relation operands must be disjoint.
+    let prod (r1: Rel) (r2: Rel) : Rel option =
+        if Rel.incompatible r1 r2 then
+            None
+        elif r1 = Rel.DEE then Some r2
+        elif r2 = Rel.DEE then Some r1
+        elif r1 = Rel.DUM then Some { r2 with body = Set.empty }
+        elif r2 = Rel.DUM then Some { r1 with body = Set.empty }
+        else
+            if Rel.disjoint r1 r2 then
+                let pairedFields = Set.union r1.fields r2.fields
+                let pairedRows : Row[] = Array.allPairs (r1.body |> Set.toArray) (r2.body |> Set.toArray) |> Array.map (fun (a1, a2) -> Array.append a1 a2 |> Array.sort)
+                let rel : Rel = { fields = pairedFields; body = pairedRows |> Set.ofArray }
+                rel |> Some
+            else
+                None
+
+    /// Rename operator.
+    let rename (r: Rel) (mapping: Map<string,string>) : Rel =
+        let rname (old: string) = mapping |> Map.tryFind old |> Option.defaultValue old
+
+        let fields = r.fields |> Set.map (fun field -> { field with fname = rname field.fname })
+        let body = r.body |> Set.map (fun row -> row |> Array.map (fun elem -> { elem with fname = rname elem.fname }) |> Row.sort)
+
+        let rel : Rel = { fields = fields; body = body }
+        rel
+
+    /// Project operator.
+    let project (away: bool) (r: Rel) (keepNames: Set<string>) : Rel =
+        let fields = Field.project r.fields away keepNames
+        let indexs = Field.indexs r.fields away keepNames
+
+        let body = r.body |> Set.map (fun row -> indexs |> Array.map (fun i -> row.[i]))
+
+        let rel : Rel = { fields = fields; body = body }
+        rel
+
+    /// Join operator.
+    let join (r1: Rel) (r2: Rel) : Rel option = 
+        if Rel.incompatible r1 r2 then
+            None
+        else
+            if Rel.rmatch r1 r2 then
+                inter r1 r2
+            else
+                match Rel.commonFields r1 r2 with
+                // disjoint relations
+                | x when x |> Set.isEmpty -> prod r1 r2
+                // share common fields
+                | commonFields ->
+                    let keepNames = commonFields |> Field.names
+                    let comIdxs1 = Field.indexs r1.fields false keepNames
+                    let outIdxs1 = Field.indexs r1.fields true keepNames
+                    let comIdxs2 = Field.indexs r2.fields false keepNames
+                    let outIdxs2 = Field.indexs r2.fields true keepNames
+
+                    let rows1 = r1.body |> Set.toArray
+                    let rows2 = r2.body |> Set.toArray
+                    let map1 = Row.index (Row.ofPositions comIdxs1) rows1
+                    let map2 = Row.index (Row.ofPositions comIdxs1) rows2
+
+                    let comHash = Set.intersect (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
+
+                    let ofHash (rowHash: int) : Row[] =
+                        let rows1 = map1.[rowHash] |> Array.map (fun idx -> let row = rows1.[idx] in Row.ofPositions2 comIdxs1 outIdxs1 row)
+                        let rows2 = map2.[rowHash] |> Array.map (fun idx -> let row = rows2.[idx] in Row.ofPositions outIdxs2 row)
+                        let pairs = Array.allPairs rows1 rows2
+                        let rows = pairs |> Array.map (fun (row1, row2) -> Array.append row1 row2 |> Row.sort)
+                        rows
+
+                    let body = comHash |> Array.collect ofHash |> Set.ofArray
+
+                    let rel : Rel = { fields = Set.union r1.fields r2.fields; body = body }
+                    rel |> Some
+
+    /// Semi operator. Only valid when there are common fields.
+    ///    - semi = true: implements semi-minus.
+    ///    - semi = false: implements semi-join.
+    let private semi (difference: bool) (r1: Rel) (r2: Rel) : Rel option = 
+        match Rel.commonFields r1 r2 with
+        // disjoint relations
+        | x when x |> Set.isEmpty -> if difference then r1 |> Some else { r1 with body = Set.empty } |> Some
+        // share common fields
+        | commonFields ->
+            let keepNames = commonFields |> Field.names
+            let comIdxs1 = Field.indexs r1.fields false keepNames
+            let outIdxs1 = Field.indexs r1.fields true keepNames
+            let comIdxs2 = Field.indexs r2.fields false keepNames
+            let outIdxs2 = Field.indexs r2.fields true keepNames
+
+            let rows1 = r1.body |> Set.toArray
+            let rows2 = r2.body |> Set.toArray
+            let map1 = Row.index (Row.ofPositions comIdxs1) rows1
+            let map2 = Row.index (Row.ofPositions comIdxs1) rows2
+
+            let oper = if difference then Set.difference else Set.intersect
+            let comHash = oper (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
+
+            let ofHash (rowHash: int) : Row[] =
+                let rows1 = map1.[rowHash] |> Array.map (fun idx -> rows1.[idx])
+                rows1
+
+            let body = comHash |> Array.collect ofHash |> Set.ofArray
+
+            let rel : Rel = { fields = Set.union r1.fields r2.fields; body = body }
+            rel |> Some
+
+    /// Semi-join operator.
+    /// All rows / tuples of r1 which have a counterpart in r2.
+    let semiJoin (r1: Rel) (r2: Rel) : Rel option = 
+        if Rel.incompatible r1 r2 then
+            None
+        else
+            if Rel.rmatch r1 r2 then
+                inter r1 r2
+            else
+                semi false r1 r2
+
+    /// Semi-join operator.
+    /// All rows / tuples of r1 which have a counterpart in r2.
+    let semiMinus (r1: Rel) (r2: Rel) : Rel option = 
+        if Rel.incompatible r1 r2 then
+            None
+        else
+            if Rel.rmatch r1 r2 then
+                minus r1 r2
+            else
+                semi true r1 r2
+
+    /// Left outer join operator.
+    /// defaultValue maps r2-specific fields (which aren't not r1's) to a default value.
+    let leftJoin (defaultValues: Field -> obj) (r1: Rel) (r2: Rel) : Rel option = 
+        if Rel.incompatible r1 r2 then
+            None
+        else
+            if Rel.rmatch r1 r2 then
+                None // inter r1 r2 // WRONG! TO: check if it's capture by the below
+            else
+                match Rel.commonFields r1 r2 with
+                // disjoint relations
+                | x when x |> Set.isEmpty -> prod r1 r2
+                // share common fields
+                | commonFields ->
+                    let keepNames = commonFields |> Field.names
+                    let comIdxs1 = Field.indexs r1.fields false keepNames
+                    let outIdxs1 = Field.indexs r1.fields true keepNames
+                    let comIdxs2 = Field.indexs r2.fields false keepNames
+                    let outIdxs2 = Field.indexs r2.fields true keepNames
+
+                    let rows1 = r1.body |> Set.toArray
+                    let rows2 = r2.body |> Set.toArray
+                    let map1 = Row.index (Row.ofPositions comIdxs1) rows1
+                    let map2 = Row.index (Row.ofPositions comIdxs1) rows2
+
+                    // 1- common rows
+                    let comHash = Set.intersect (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
+
+                    let ofHash (rowHash: int) : Row[] =
+                        let rows1 = map1.[rowHash] |> Array.map (fun idx -> let row = rows1.[idx] in Row.ofPositions2 comIdxs1 outIdxs1 row)
+                        let rows2 = map2.[rowHash] |> Array.map (fun idx -> let row = rows2.[idx] in Row.ofPositions outIdxs2 row)
+                        let pairs = Array.allPairs rows1 rows2
+                        let rows = pairs |> Array.map (fun (row1, row2) -> Array.append row1 row2 |> Row.sort)
+                        rows
+
+                    let comRows = comHash |> Array.collect ofHash
+
+                    // 2- rows in r1 which do not have a counterpart in r2 over their common fields
+                    let diffHash = Set.difference (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
+                    let defRow = Set.difference r2.fields r1.fields |> Set.map (fun field -> { fname = field.fname; value = field |> defaultValues}) |> Set.toArray
+
+                    let ofHash (rowHash: int) : Row[] =
+                        let rows1 : Row[] = map1.[rowHash] |> Array.map (fun idx -> Array.append rows1.[idx] defRow |> Row.sort)
+                        rows1
+
+                    let diffRows = diffHash |> Array.collect ofHash
+
+                    // union of common and difference rows
+                    let body = Array.append comRows diffRows |> Set.ofArray
+
+                    let rel : Rel = { fields = Set.union r1.fields r2.fields; body = body }
+                    rel |> Some
+
+    let restrict : Rel option = None
+    let group : Rel option = None
+    let ungroup : Rel option = None
+    let summarize : Rel option = None
+    let unpivot : Rel option = None
+    let display : Rel option = None
+
+    // ofMaps
+
+module Rel =
+    open API
+    open System.Collections
+
+    // a custom compare function is needed because we use F# Set<Elem>, which requires a comparison constraint on its elements.
+    [<RequireQualifiedAccess>]
+    module Compare =
+        // -----------------------------
+        // -- Comparaison functions
+        // -----------------------------
+
+        // write your custom compare function here.
+        /// Used if Structural Equality does not apply.
+        let custom (o1: obj) (o2: obj) : int =
+            match (o1, o2) with
+            //| (:? Foo), (:? Foo) -> 0
+            //| (:? Foo), _ -> -1
+            //| _ , (:? Foo) -> 1
+            | _ -> failwith "System.ArgumentException: Object must be of type IComparable or IStructuralComparable.\nat oCompare (Object value1) (Object value2)"
+    
+        let compare (o1: obj) (o2: obj) : int =
+            match (o1, o2) with
+            | (:? IComparable as c1), (:? IComparable as c2) -> 
+                try 
+                    c1.CompareTo(c2)
+                with
+                | e -> failwith e.Message
+            | (:? IStructuralComparable as c1), (:? IStructuralComparable as c2) -> 
+                try 
+                    Operators.compare c1 c2
+                with
+                | e -> failwith e.Message
+            | _ ->
+                custom o1 o2
+
+    // we need to define comparison for Field, since the relation object is Set<Elem>, and F# Set requires comparison.
+    // the Relation object will not allow two Fields with the same name in its header.
+    // so we can compare fields wrt their name only (and ignore their type, which we cannot compare).
+    [<CustomEquality; CustomComparison>]
+    type Field = { nm: string; ty: Type } with
+        override f1.Equals(o2) =
+            match o2 with 
+            | :? Field as f2 -> f1 = f2
+            | _ -> false
+        override f.GetHashCode() = hash f
+
+        interface System.IComparable with
+            member f1.CompareTo o2 =
+                match o2 with 
+                | :? Field as f2 -> f1.nm.CompareTo(f2.nm)
+                | _ -> invalidArg "o2" "Field: Cannot compare values of different types."
+
+        static member ofArray (names: string[]) (types: Type[]) : Field[] =
+            Array.map2 (fun nm ty -> { nm = nm ; ty = ty }) names types
+
+    [<CustomEquality; CustomComparison>]
+    type Elem = { field: Field; value: obj } with
+        override e1.Equals(o2) =
+            match o2 with 
+            | :? Elem as e2 -> (e1.field = e2.field) && (e1.value = e2.value)
+            | _ -> false
+
+        override e.GetHashCode() = hash e.value
+
+        interface System.IComparable with
+            member e1.CompareTo o2 =
+                match o2 with 
+                | :? Elem as e2 -> 
+                    if e1.field.nm <> e2.field.nm then 
+                        e1.field.nm.CompareTo(e2.field.nm)
+                    else 
+                        Compare.compare e1.value e2.value
+                | _ -> invalidArg "o2" "Elem: Cannot compare values of different types."
+
+        static member ofArrays (names: string[]) (types: Type[]) (values: obj[]) : Elem[] =
+            Array.map3 
+                (fun nm ty value -> let field = { nm = nm ; ty = ty } in { field = field; value = value})
+                names types values
+    
+    /// Row is an (unordered) set of Elem-s. Similar to C.J. Date's concept of Tuple.
+    type Row = Set<Elem>
+
+    /// A relation, Rel is:
+    /// 1. A header, a set of fields.
+    /// 2. A body, a set of Row-s, compatible with the header.
+    type Rel = { head: Set<Field>; body: Set<Row> } with
+        static member DEE : Rel = { head = Set.empty; body = Set.empty |> Set.singleton }
+        static member DUM : Rel = { head = Set.empty; body = Set.empty }
+        member r.count = r.body.Count
+        member r.card = r.head.Count
+        member r.isEmtpy = r.body.IsEmpty
+
+        member r.toRng =
+            let body = r.body |> Set.toArray |> Array.map Set.toArray |> array2D |> Array2D.map (fun elem -> elem.value)
+            body
+
+    module Row =
+        let ofArrays (names: string[]) (types: Type[]) (values: obj[]) : Row = Elem.ofArrays names types values |> Set.ofArray
+
+    let ofRng (xlKinds: Set<Kind>) (fieldNames: string[]) (typeTags: string[]) (o2D: obj[,]) : Rel option =
+        let valid = (typeTags.Length = fieldNames.Length) && (o2D |> Array2D.length2 = fieldNames.Length)
+
+        if not valid then
+            None
+        else
+            match In.D2.Tag.Multi.tryDV None xlKinds false typeTags o2D with
+            | None -> None
+            | Some (gentys, o2D) ->
+                let fields = Field.ofArray fieldNames gentys
+                let body = [| for i in o2D.GetLowerBound(0) .. o2D.GetUpperBound(0) -> Row.ofArrays fieldNames gentys o2D.[i,*] |]
+
+                let rel : Rel = { head = fields |> Set.ofArray; body = body |> Set.ofArray }
+                rel |> Some
+
+module Rel_XL =
+    open Registry
+    open API
+    open API.Out
+    open type Out.Proxys
+
+    [<ExcelFunction(Category="Relation", Description="Cast a 2D xl-range to a generic type array.")>]
+    let rel_ofRng
+        ([<ExcelArgument(Description= "Field names array.")>] fieldNames: obj[])
+        ([<ExcelArgument(Description= "Type tags array: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj")>] typeTags: obj[])
+        ([<ExcelArgument(Description= "2D xl-range.")>] range: obj[,])
+        ([<ExcelArgument(Description= "[Only for doubleNaN tags: Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... Default is none.]")>] xlKinds: obj)
+        : obj  =
+
+        // intermediary stage
+        //let rowWise = In.D0.Bool.def true rowWiseDirection
+        //let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
+        //let defVal = In.D0.Absent.Obj.tryO defaultValue
+        let fieldNames = API.In.D1.Stg.tryDV None fieldNames
+        let typeTags = API.In.D1.Stg.tryDV None typeTags
+        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Kind.ofLabel
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+        
+        // result
+        match fieldNames, typeTags with
+        | None, _ -> Proxys.def.failed
+        | _, None -> Proxys.def.failed
+        | Some fieldnames, Some typetags ->
+            //match In.D2.Tag.Multi.tryDV None xlkinds false typetags range with
+            //| None -> Proxys.def.failed
+            //| Some (gentys, o2D) ->
+            match Rel.ofRng xlkinds fieldnames typetags range with
+            | None -> Proxys.def.failed
+            | Some rel ->
+                rel |> MRegistry.registerBxd rfid 
+
+    [<ExcelFunction(Category="Relation", Description="Extracts a relation out of a R-object.")>]
+    let rel_toRng
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        ([<ExcelArgument(Description= "[Show head. Default is true.]")>] showHead: obj)
+        ([<ExcelArgument(Description= "[None indicator. Default is \"<none>\".]")>] noneIndicator: obj)
+        ([<ExcelArgument(Description= "[Empty array indicator. Default is \"<empty>\".]")>] emptyIndicator: obj)
+        ([<ExcelArgument(Description= "[Unwrap optional types. Default is true.]")>] unwrapOptions: obj)
+        : obj[,] = 
+
+        // intermediary stage
+        let none = In.D0.Stg.def "<none>" noneIndicator
+        let empty = In.D0.Stg.def "<empty>" emptyIndicator
+        let proxys = { def with none = none; empty = empty }
+        let unwrapoptions = In.D0.Bool.def true unwrapOptions
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match MRegistry.tryExtract<Rel.Rel> rgRel with
+        | None -> Array2D.create 1 1 Proxys.def.failed
+        | Some rel -> //Array2D.create 1 1 Proxys.def.failed
+            rel.toRng
+            //let body = rel.body
+        //match A2D.Reg.Out.out rgRel unwrapoptions rfid proxys with
+        //| None -> box ExcelError.ExcelErrorNA |> A2D.singleton
+        //| Some o2d -> o2d
 
 /// Simple template for generics
 module GenMtrx =

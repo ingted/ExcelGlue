@@ -395,6 +395,13 @@ module Useful =
             else
                 Array2D.init a1Ds.[0].Length a1Ds.Length (fun i j -> a1Ds.[j].[i])
 
+        let unzip4 (xs : ('a1*'a2*'a3*'a4)[]) : 'a1[]*'a2[]*'a3[]*'a4[] =
+            let xs1 = xs |> Array.map (fun x -> let (x1, _ , _ , _ ) = x in x1)
+            let xs2 = xs |> Array.map (fun x -> let (_ , x2, _ , _ ) = x in x2)
+            let xs3 = xs |> Array.map (fun x -> let (_ , _ , x3, _ ) = x in x3)
+            let xs4 = xs |> Array.map (fun x -> let (_ , _ , _ , x4) = x in x4)
+            (xs1, xs2, xs3, xs4)
+
 module API = 
 
     /// F# types for the xl-spreadsheet values we want to capture.
@@ -5409,20 +5416,31 @@ module Rel2 =
         static member names (fields: Set<Field>) : Set<string> = fields |> Set.map (fun field -> field.fname)
 
         /// Returns all fields, which fname is included in keepNames.
+        /// Discards all of keepNames names which are not included in fields's names. 
         static member project (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : Set<Field> =
             let fnames =
                 if away then
-                    Set.difference (Field.names fields) keepNames
+                    Set.difference (fields |> Field.names) keepNames
                 else
-                    Set.intersect (Field.names fields) keepNames
+                    Set.intersect (fields |> Field.names) keepNames
 
             fields |> Set.filter (fun field -> fnames |> Set.contains field.fname)
 
-        /// Returns the array indices of the fields, which fname is included in keepNames.
-        static member indexs (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : int[] =
+        /// Returns fields's name and index, for which the field's fname is included in keepNames.
+        /// Discards all of keepNames names which are not included in fields's names.
+        static member private indexing (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : (int*string)[] =
             let indexedNames = fields |> Field.names |> Set.toArray |> Array.indexed
             let projectNames = Field.project fields away keepNames |> Field.names
-            indexedNames |> Array.filter (fun (idx, fnm) -> projectNames |> Set.contains fnm) |> Array.map fst
+            indexedNames |> Array.filter (fun (idx, fnm) -> projectNames |> Set.contains fnm)
+
+        /// Returns fields's indices, for which the field's fname is included in keepNames.
+        /// Discards all of keepNames names which are not included in fields's names.
+        static member indexs (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : int[] = 
+            Field.indexing fields away keepNames |> Array.map fst
+
+        /// Returns a fields's name -> index map.
+        static member indexMap (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : Map<string,int> =
+            Field.indexing fields away keepNames |> Array.map (fun (x, y) -> (y, x)) |> Map.ofArray
 
         /// Returns true if two fields or more have same name but different type.
         static member incompatible (fields1: Set<Field>) (fields2: Set<Field>) : bool =
@@ -5443,6 +5461,12 @@ module Rel2 =
         /// Returns true if the two fields sets are disjoint.
         /// Incompatible sets might return true.
         static member disjoint (fields1: Set<Field>) (fields2: Set<Field>) : bool = Field.common fields1 fields1 |> Set.isEmpty
+
+        /// Returns true if fields2 is included in fields1.
+        static member isSuperset (fields1: Set<Field>) (fields2: Set<Field>) : bool = Set.isSuperset fields1 fields1
+
+        /// Returns true if one of the fields' names match fname. 
+        static member contains (fnames: Set<string>) (fields: Set<Field>) : bool = Set.isSuperset (fields |> Field.names) fnames
 
 
 
@@ -5484,7 +5508,8 @@ module Rel2 =
         let ofPositions (positions: int[]) (row: Row) : Row = positions |> Array.map (fun i -> row.[i])
         let ofPositions2 (positions1: int[]) (positions2: int[]) (row: Row) : Row = Array.append (ofPositions positions1 row) (ofPositions positions2 row)
 
-        /// Returns a lookup index of (hashed) row-value -> row indexes
+        /// Returns a lookup index of (hashed) row-value -> row indexes.
+        /// map each row index to the indices of all rows which have common mapping image (that is, each row where (row |> mapping) is the same).
         let index (mapping: Row -> Row) (rows: Row[]) : Dictionary<int, int[]> =
             let dc = new Dictionary<int, int[]>()
             let addEntry index row = 
@@ -5530,6 +5555,14 @@ module Rel2 =
 
         /// Returns fields common to both relations.
         static member commonFields (r1: Rel) (r2: Rel) : Set<Field> = Field.common r1.fields r2.fields
+
+        /// Returns true if *all* of r2's fields are included in r1's.
+        /// Usage r2 |> isCompatibleWith <| r1
+        static member isCompatibleWith (r2: Rel) (r1: Rel) = Set.isSuperset r1.fields r2.fields
+
+        member this.card : int = this.fields |> Set.count
+
+        member this.count : int = this.body |> Set.count
 
     /// Union operator.
     /// The fields (attributes) of the two relation operands must be equal.
@@ -5598,7 +5631,8 @@ module Rel2 =
         let rel : Rel = { fields = fields; body = body }
         rel
 
-    /// Project operator.
+    /// Project operator. // TODO : check if code works when keepNames are not included in r's fields
+    /// Discards all of keepNames names which are not r's field names.
     let project (away: bool) (r: Rel) (keepNames: Set<string>) : Rel =
         let fields = Field.project r.fields away keepNames
         let indexs = Field.indexs r.fields away keepNames
@@ -5670,8 +5704,8 @@ module Rel2 =
             let comHash = oper (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
 
             let ofHash (rowHash: int) : Row[] =
-                let rows1 = map1.[rowHash] |> Array.map (fun idx -> rows1.[idx])
-                rows1
+                let rows = map1.[rowHash] |> Array.map (fun idx -> rows1.[idx])
+                rows
 
             let body = comHash |> Array.collect ofHash |> Set.ofArray
 
@@ -5753,10 +5787,124 @@ module Rel2 =
                     let rel : Rel = { fields = Set.union r1.fields r2.fields; body = body }
                     rel |> Some
 
+    /// Group operator.
+    let group (r: Rel) (perNames: Set<string>) (groupName: string) : Rel option =
+        let perFields = Field.project r.fields false perNames           
+        let restFields = Field.project r.fields true perNames
+
+        if perFields |> Field.contains (groupName |> Set.singleton) then
+            None
+        else
+            let perIdxs = Field.indexs r.fields false perNames
+            let restIdxs = Field.indexs r.fields true perNames
+
+            // group relation fields
+            let fields = Set.union perFields ({ fname = groupName; ftype = typeof<Rel> } |> Set.singleton)
+        
+            // group relation body
+            let grpRel (restRows: Row[]) : Rel = { fields = restFields; body = restRows |> Set.ofArray }
+            let grpElem (restRows: Row[]) : Row = { fname = groupName; value = grpRel restRows } |> Array.singleton
+            let body = 
+                r.body 
+                |> Set.toArray
+                |> Array.map (fun row -> (perIdxs |> Array.map (fun i -> row.[i]), Row.ofPositions restIdxs row))
+                |> Array.groupBy fst
+                |> Array.map (fun (perrow, tpldrows) -> Array.append perrow (tpldrows |> Array.map snd |> grpElem) |> Row.sort)
+                |> Set.ofArray
+
+            let rel : Rel = { fields = fields; body = body }
+            rel |> Some
+
+    /// Ungroup operator.
+    let ungroup (r: Rel) (groupName: string) : Rel option =        
+        let groupField = { fname = groupName; ftype = typeof<Rel> }
+
+        if r.count = 0 then
+            None
+        elif r.fields |> Set.contains groupField |> not then
+            None
+        else
+            let groupIdxs = Field.indexs r.fields false (groupName |> Set.singleton)
+            let restIdxs = Field.indexs r.fields true (groupName |> Set.singleton)
+
+            let groupIdx = groupIdxs |> Array.head
+            let sampleRel = let elem = r.body |> Set.toArray |> Array.head |> Array.item groupIdx in elem.value :?> Rel
+
+            // ungroup relation fields
+            let fields = Set.union sampleRel.fields (Set.difference r.fields (groupField |> Set.singleton))
+
+            // ungroup relation body
+            let body = 
+                [| for row in r.body do
+                    let restrow = Row.ofPositions restIdxs row
+                    let rel = let elem = Row.ofPositions groupIdxs row |> Array.head in elem.value :?> Rel
+                    yield! [| for relrow in rel.body -> Array.append restrow relrow |> Row.sort |]
+                |]
+                |> Set.ofArray
+
+            let rel : Rel = { fields = fields; body = body }
+            rel |> Some
+
+    /// Summarize operator.
+    /// operations = operators, operNames, resultNames, resultTypes
+    /// operator should be typeof<operName> -> resultType
+    let summarize (r: Rel) (perRel: Rel) (operations: ((obj[] -> obj)*string*string*Type)[]) : Rel option =
+        let operators, operNames, resultNames, resultTypes = operations |> Useful.Array.unzip4
+
+        if (perRel.count = 0) && (perRel.card = 0) && (operations.Length = 0) then
+            None
+        elif resultNames |> Array.distinct |> Array.length <> (resultNames |> Array.length) then
+            None
+        elif not <| (perRel |> Rel.isCompatibleWith <| r) then
+            None
+        elif (not <| (r.fields |> Field.contains (operNames |> Set.ofArray))) && (perRel.fields |> Field.contains (operNames |> Set.ofArray)) && (r.fields |> Field.contains (resultNames |> Set.ofArray)) then
+            None
+        else
+            let commonFields = Rel.commonFields r perRel
+
+            // summarize relation fields
+            let resultFields : Set<Field> = Array.zip resultNames resultTypes |> Array.map (fun (resname, restype) -> { fname = resname; ftype = restype } ) |> Set.ofArray
+            let fields = Set.union commonFields resultFields
+
+            let comNames = commonFields |> Field.names
+            let rComIdxs = Field.indexs r.fields false comNames
+            
+            let rRows = r.body |> Set.toArray
+            let perRows = perRel.body |> Set.toArray
+
+            // map row index -> indexes of all rows which match over comIdxs positions
+            let rMap = Row.index (Row.ofPositions rComIdxs) rRows
+            let perMap = Row.index id perRows  // TODO: optimization: better to hash directly perRows' rows.
+            let comHash = Set.intersect (rMap.Keys |> Seq.cast<int> |> Set.ofSeq) (perMap.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
+
+            // map (oper index, operName) -> (operator, operName, resultName, resultType) 
+            let operMap = Array.zip (operNames |> Array.indexed) operations |> Map.ofArray
+            // map operName -> column (field) index 
+            let rOperIndexMap = Field.indexMap r.fields false (operNames |> Set.ofArray)
+            let oper (rows: Row[]) (key: (int*string)) : Elem = 
+                let _, opName = key
+                let operator, _, resName, resType = operMap |> Map.find key
+                let colidx = rOperIndexMap |> Map.find opName
+                let res = rows |> Array.map (Array.item colidx) |> Array.map (fun elem -> elem.value) |> operator
+                let elem : Elem = { fname = resName; value = res }
+                elem
+
+            let ofHash (rowHash: int) : Row =
+                let hashes = rMap.[rowHash]
+                let idx0 = hashes.[0]
+                let comRow = Row.ofPositions rComIdxs rRows.[idx0]
+                let operRows = hashes |> Array.map (fun idx -> rRows.[idx])
+                let resRow : Row = 
+                    [| for kvp in operMap -> kvp.Key |]
+                    |> Array.map (oper operRows)
+                Array.append comRow resRow |> Row.sort
+
+            let body = comHash |> Array.map ofHash |> Set.ofArray
+
+            let rel : Rel = { fields = fields; body = body }
+            rel |> Some
+
     let restrict : Rel option = None
-    let group : Rel option = None
-    let ungroup : Rel option = None
-    let summarize : Rel option = None
     let unpivot : Rel option = None
     let display : Rel option = None
 
@@ -6197,3 +6345,7 @@ module TEST_XL =
 
 
 
+// Set.indexed + Set.item(i) or at least Set.head
+// Set.groupBy
+// Set.allPair
+// array2D trans

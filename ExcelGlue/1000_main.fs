@@ -5361,21 +5361,21 @@ module Rel2 =
 
     // a custom compare function is needed because we use F# Set<Elem>, which requires a comparison constraint on its elements.
     [<RequireQualifiedAccess>]
-    module Compare =
+    module CompareTBD = // still needed??
         // -----------------------------
         // -- Comparaison functions
         // -----------------------------
 
         // write your custom compare function here.
         /// Used if Structural Equality does not apply.
-        let custom (o1: obj) (o2: obj) : int =
+        let customTBD (o1: obj) (o2: obj) : int =
             match (o1, o2) with
             //| (:? Foo), (:? Foo) -> 0
             //| (:? Foo), _ -> -1
             //| _ , (:? Foo) -> 1
             | _ -> failwith "System.ArgumentException: Object must be of type IComparable or IStructuralComparable.\nat oCompare (Object value1) (Object value2)"
     
-        let compare (o1: obj) (o2: obj) : int =
+        let compareTBD (o1: obj) (o2: obj) : int =
             match (o1, o2) with
             | (:? IComparable as c1), (:? IComparable as c2) -> 
                 try 
@@ -5388,12 +5388,11 @@ module Rel2 =
                 with
                 | e -> failwith e.Message
             | _ ->
-                custom o1 o2
+                customTBD o1 o2
 
-
-    // we need to define comparison for Field, since the relation object is Set<Elem>, and F# Set requires comparison.
-    // the Relation object will not allow two Fields with the same name in its header.
-    // so we can compare fields wrt their name only (and ignore their type, which we cannot compare).
+    // F# Set requires comparison, and the relation object is defined as Set<Elem>, so custom comparison is necessary for Elem and Field.
+    // As the Relation object does not allow two Fields with the same name in its header,
+    // we can compare fields with respect to their name only (and ignore their type, which we cannot compare).
     [<CustomEquality; CustomComparison>]
     type Field = { fname: string; ftype: Type } with
         override f1.Equals(o2) =
@@ -5408,15 +5407,15 @@ module Rel2 =
                 | :? Field as f2 -> f1.fname.CompareTo(f2.fname)
                 | _ -> invalidArg "o2" "Field: Cannot compare values of different types."
 
-        static member ofArrays (fieldNames: string[]) (fieldTypes: Type[]) : Set<Field> =
+        static member zip (fieldNames: string[]) (fieldTypes: Type[]) : Set<Field> =
             Array.map2 (fun fname ftype -> { fname = fname ; ftype = ftype }) fieldNames fieldTypes
             |> Set.ofArray
 
         /// Returns all field-names, sorted.
         static member names (fields: Set<Field>) : Set<string> = fields |> Set.map (fun field -> field.fname)
 
-        /// Returns all fields, which fname is included in keepNames.
-        /// Discards all of keepNames names which are not included in fields's names. 
+        /// Returns all fields, which fname is included in keepNames (away = false).
+        /// Discards all of keepNames names which are not included in fields's names (away = true). 
         static member project (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : Set<Field> =
             let fnames =
                 if away then
@@ -5426,19 +5425,26 @@ module Rel2 =
 
             fields |> Set.filter (fun field -> fnames |> Set.contains field.fname)
 
-        /// Returns fields's name and index, for which the field's fname is included in keepNames.
-        /// Discards all of keepNames names which are not included in fields's names.
+        /// Returns fields' name and index,
+        /// for which the field's fname is included in keepNames (away = false),
+        /// or for which the field's fname is not included in keepNames (away = true).
+        /// Indexing is done following F# sets natural order.
         static member private indexing (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : (int*string)[] =
             let indexedNames = fields |> Field.names |> Set.toArray |> Array.indexed
             let projectNames = Field.project fields away keepNames |> Field.names
             indexedNames |> Array.filter (fun (idx, fnm) -> projectNames |> Set.contains fnm)
 
-        /// Returns fields's indices, for which the field's fname is included in keepNames.
-        /// Discards all of keepNames names which are not included in fields's names.
-        static member indexs (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : int[] = 
+        /// Returns fields' indices,
+        /// for which the field's fname is included in keepNames (away = false),
+        /// or for which the field's fname is not included in keepNames (away = true).
+        /// Indexing is done following F# sets natural order.
+        static member indices (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : int[] = 
             Field.indexing fields away keepNames |> Array.map fst
 
-        /// Returns a fields's name -> index map.
+        /// Returns a fields's (name -> index) mapping,
+        /// for which the field's fname is included in keepNames (away = false),
+        /// or for which the field's fname is not included in keepNames (away = true).
+        /// Indexing is done following F# sets natural order.
         static member indexMap (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : Map<string,int> =
             Field.indexing fields away keepNames |> Array.map (fun (x, y) -> (y, x)) |> Map.ofArray
 
@@ -5452,7 +5458,7 @@ module Rel2 =
             else
                 let comFields1 = fields1 |> Set.filter (fun field -> comNames |> Set.contains field.fname)
                 let comFields2 = fields2 |> Set.filter (fun field -> comNames |> Set.contains field.fname)
-                comFields2 = comFields1
+                comFields2 <> comFields1
 
         /// Returns fields common to both fields sets.
         /// Incompatible fields will be excluded.
@@ -5468,8 +5474,7 @@ module Rel2 =
         /// Returns true if one of the fields' names match fname. 
         static member contains (fnames: Set<string>) (fields: Set<Field>) : bool = Set.isSuperset (fields |> Field.names) fnames
 
-
-
+    // F# Set requires comparison, and the relation object is defined as Set<Elem>, so custom comparison is necessary for Elem and Field.
     [<CustomEquality; CustomComparison>]
     type Elem = { fname: string; value: obj } with
         override e1.Equals(o2) =
@@ -5486,20 +5491,15 @@ module Rel2 =
                     if e1.fname <> e2.fname then 
                         e1.fname.CompareTo(e2.fname)
                     else 
-                        // should never reach there for valid relation since field names are unique
-                        // Compare.compare e1.value e2.value // RESTORE ME
-                        failwith "should never reach there for valid relation since field names are unique"
+                        // should never reach there for valid relation
+                        // CompareTBD.compareTBD e1.value e2.value // RESTORE ME?
+                        failwith "should never reach there for valid relation."
                 | _ -> invalidArg "o2" "Elem: Cannot compare values of different types."
 
         static member zip (fieldNames: string[]) (elems: obj[]) : Elem[] =
             Array.zip fieldNames elems |> Array.sortBy fst |> Array.map (fun (fname, o) -> { fname = fname; value = o })
-
-        //static member ofArrays (names: string[]) (types: Type[]) (values: obj[]) : Elem[] =
-        //    Array.map3 
-        //        (fun nm ty value -> let field = { nm = nm ; ty = ty } in { field = field; value = value})
-        //        names types values
     
-    /// Row is an (unordered) set of Elem-s. Similar to C.J. Date's concept of Tuple.
+    /// Row is an (unordered) set of Elem-s. Similar to C.J. Date's concept of 'Tuple'.
     type Row = Elem[]
 
     module Row =
@@ -5509,7 +5509,8 @@ module Rel2 =
         let ofPositions2 (positions1: int[]) (positions2: int[]) (row: Row) : Row = Array.append (ofPositions positions1 row) (ofPositions positions2 row)
 
         /// Returns a lookup index of (hashed) row-value -> row indexes.
-        /// map each row index to the indices of all rows which have common mapping image (that is, each row where (row |> mapping) is the same).
+        /// Maps each row index to the indices of all rows which have common mapping image (that is, each row where (row |> mapping) is the same).
+        /// Will only works if the rows are sorted by fname.
         let index (mapping: Row -> Row) (rows: Row[]) : Dictionary<int, int[]> =
             let dc = new Dictionary<int, int[]>()
             let addEntry index row = 
@@ -5521,30 +5522,34 @@ module Rel2 =
             rows |> Array.iteri addEntry
             dc
 
-    /// A relation, Rel is:
+    /// A relation, Rel, is:
     /// 1. A header, a set of fields.
     /// 2. A body, a set of Row-s, compatible with the header.
     type Rel = { fields: Set<Field>; body: Set<Row> } with
         static member DEE : Rel = { fields = Set.empty; body = [||] |> Set.singleton }
         static member DUM : Rel = { fields = Set.empty; body = Set.empty }
 
-        static member ofRng (xlKinds: Set<Kind>) (fieldNames: string[]) (typeTags: string[]) (o2D: obj[,]) : Rel option = 
+        static member ofRng (xlNanKinds: Set<Kind>) (fieldNames: string[]) (typeTags: string[]) (o2D: obj[,]) : Rel option = 
             let len = fieldNames.Length
             let valid = (typeTags.Length = len) && (o2D |> Array2D.length2 = len) && (fieldNames |> Array.distinct |> Array.length = len)
 
             if not valid then
                 None
             else
-                match In.D2.Tag.Multi.tryDV None xlKinds false typeTags o2D with
+                match In.D2.Tag.Multi.tryDV None xlNanKinds false typeTags o2D with
                 | None -> None
                 | Some (gentys, o2D) ->
-                    let fields = Field.ofArrays fieldNames gentys
+                    let fields = Field.zip fieldNames gentys
                     let body : Set<Row> = [| for i in o2D.GetLowerBound(0) .. o2D.GetUpperBound(0) -> Elem.zip fieldNames o2D.[i,*] |] |> Set.ofArray
 
                     let rel : Rel = { fields = fields; body = body }
                     rel |> Some
 
-        /// Returns true if two fields or more have same name but different type.
+        member r.toRng =
+            let body = r.body |> Set.toArray |> array2D |> Array2D.map (fun elem -> elem.value)
+            body
+
+        /// Returns true if some fields have the same name but have different types.
         static member incompatible (r1: Rel) (r2: Rel) : bool = Field.incompatible r1.fields r2.fields
 
         /// Returns true if two relations have the same header (fields / attributes).
@@ -5553,55 +5558,57 @@ module Rel2 =
         /// Returns true if the relations do not share any common field / attribute.
         static member disjoint (r1: Rel) (r2: Rel) : bool = Field.disjoint r1.fields r2.fields
 
-        /// Returns fields common to both relations.
+        /// Returns the fields common to both relations.
         static member commonFields (r1: Rel) (r2: Rel) : Set<Field> = Field.common r1.fields r2.fields
 
         /// Returns true if *all* of r2's fields are included in r1's.
         /// Usage r2 |> isCompatibleWith <| r1
         static member isCompatibleWith (r2: Rel) (r1: Rel) = Set.isSuperset r1.fields r2.fields
 
+        /// Returns the number of fields / attributes.
         member this.card : int = this.fields |> Set.count
 
+        /// Returns the number of rows.
         member this.count : int = this.body |> Set.count
 
     /// Union operator.
     /// The fields (attributes) of the two relation operands must be equal.
     let union (r1: Rel) (r2: Rel) : Rel option =
-        if Rel.incompatible r1 r2 then
-            None
+        //if Rel.incompatible r1 r2 then
+        //    None
+        //else
+        if Rel.rmatch r1 r2 then
+            let body = Set.union r1.body r2.body
+            let rel : Rel = { fields = r1.fields; body = body }
+            rel |> Some
         else
-            if Rel.rmatch r1 r2 then
-                let body = Set.union r1.body r2.body
-                let rel : Rel = { fields = r1.fields; body = body }
-                rel |> Some
-            else
-                None
+            None
 
     /// Intersection operator.
     /// The fields (attributes) of the two relation operands must be equal.
     let inter (r1: Rel) (r2: Rel) : Rel option =
-        if Rel.incompatible r1 r2 then
-            None
+        //if Rel.incompatible r1 r2 then
+        //    None
+        //else
+        if Rel.rmatch r1 r2 then
+            let body = Set.intersect r1.body r2.body
+            let rel : Rel = { fields = r1.fields; body = body }
+            rel |> Some
         else
-            if Rel.rmatch r1 r2 then
-                let body = Set.intersect r1.body r2.body
-                let rel : Rel = { fields = r1.fields; body = body }
-                rel |> Some
-            else
-                None
+            None
 
     /// Difference operator.
     /// The fields (attributes) of the two relation operands must be equal.
     let minus (r1: Rel) (r2: Rel) : Rel option =
-        if Rel.incompatible r1 r2 then
-            None
+        //if Rel.incompatible r1 r2 then
+        //    None
+        //else
+        if Rel.rmatch r1 r2 then
+            let body = Set.difference r1.body r2.body
+            let rel : Rel = { fields = r1.fields; body = body }
+            rel |> Some
         else
-            if Rel.rmatch r1 r2 then
-                let body = Set.difference r1.body r2.body
-                let rel : Rel = { fields = r1.fields; body = body }
-                rel |> Some
-            else
-                None
+            None
 
     /// Product operator.
     /// The fields (attributes) of the two relation operands must be disjoint.
@@ -5612,14 +5619,13 @@ module Rel2 =
         elif r2 = Rel.DEE then Some r1
         elif r1 = Rel.DUM then Some { r2 with body = Set.empty }
         elif r2 = Rel.DUM then Some { r1 with body = Set.empty }
+        elif Rel.disjoint r1 r2 then
+            let pairedFields = Set.union r1.fields r2.fields
+            let pairedRows : Row[] = Array.allPairs (r1.body |> Set.toArray) (r2.body |> Set.toArray) |> Array.map (fun (a1, a2) -> Array.append a1 a2 |> Array.sort)
+            let rel : Rel = { fields = pairedFields; body = pairedRows |> Set.ofArray }
+            rel |> Some
         else
-            if Rel.disjoint r1 r2 then
-                let pairedFields = Set.union r1.fields r2.fields
-                let pairedRows : Row[] = Array.allPairs (r1.body |> Set.toArray) (r2.body |> Set.toArray) |> Array.map (fun (a1, a2) -> Array.append a1 a2 |> Array.sort)
-                let rel : Rel = { fields = pairedFields; body = pairedRows |> Set.ofArray }
-                rel |> Some
-            else
-                None
+            None
 
     /// Rename operator.
     let rename (r: Rel) (mapping: Map<string,string>) : Rel =
@@ -5631,13 +5637,14 @@ module Rel2 =
         let rel : Rel = { fields = fields; body = body }
         rel
 
-    /// Project operator. // TODO : check if code works when keepNames are not included in r's fields
-    /// Discards all of keepNames names which are not r's field names.
+    /// Project operator.
+    /// Keeps all of r's fields which name are included in R's field names (away = false).
+    /// Discards all of r's fields which name are not included in keepNames (away = true).
     let project (away: bool) (r: Rel) (keepNames: Set<string>) : Rel =
         let fields = Field.project r.fields away keepNames
-        let indexs = Field.indexs r.fields away keepNames
+        let indices = Field.indices r.fields away keepNames
 
-        let body = r.body |> Set.map (fun row -> indexs |> Array.map (fun i -> row.[i]))
+        let body = r.body |> Set.map (fun row -> indices |> Array.map (fun i -> row.[i]))
 
         let rel : Rel = { fields = fields; body = body }
         rel
@@ -5646,59 +5653,58 @@ module Rel2 =
     let join (r1: Rel) (r2: Rel) : Rel option = 
         if Rel.incompatible r1 r2 then
             None
+        elif Rel.rmatch r1 r2 then
+            inter r1 r2
         else
-            if Rel.rmatch r1 r2 then
-                inter r1 r2
-            else
-                match Rel.commonFields r1 r2 with
-                // disjoint relations
-                | x when x |> Set.isEmpty -> prod r1 r2
-                // share common fields
-                | commonFields ->
-                    let keepNames = commonFields |> Field.names
-                    let comIdxs1 = Field.indexs r1.fields false keepNames
-                    let outIdxs1 = Field.indexs r1.fields true keepNames
-                    let comIdxs2 = Field.indexs r2.fields false keepNames
-                    let outIdxs2 = Field.indexs r2.fields true keepNames
+            match Rel.commonFields r1 r2 with
+            // disjoint relations
+            | x when x |> Set.isEmpty -> prod r1 r2
 
-                    let rows1 = r1.body |> Set.toArray
-                    let rows2 = r2.body |> Set.toArray
-                    let map1 = Row.index (Row.ofPositions comIdxs1) rows1
-                    let map2 = Row.index (Row.ofPositions comIdxs1) rows2
+            // relations which share common fields
+            | commonFields ->
+                let comNames = commonFields |> Field.names
+                let comIdxs1 = Field.indices r1.fields false comNames
+                let outIdxs1 = Field.indices r1.fields true comNames
+                let comIdxs2 = Field.indices r2.fields false comNames
+                let outIdxs2 = Field.indices r2.fields true comNames
 
-                    let comHash = Set.intersect (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
+                let rows1 = r1.body |> Set.toArray
+                let rows2 = r2.body |> Set.toArray
+                let map1 = Row.index (Row.ofPositions comIdxs1) rows1 // (hashvalue -> rows1 indices) mapping
+                let map2 = Row.index (Row.ofPositions comIdxs2) rows2 // (hashvalue -> rows2 indices) mapping
 
-                    let ofHash (rowHash: int) : Row[] =
-                        let rows1 = map1.[rowHash] |> Array.map (fun idx -> let row = rows1.[idx] in Row.ofPositions2 comIdxs1 outIdxs1 row)
-                        let rows2 = map2.[rowHash] |> Array.map (fun idx -> let row = rows2.[idx] in Row.ofPositions outIdxs2 row)
-                        let pairs = Array.allPairs rows1 rows2
-                        let rows = pairs |> Array.map (fun (row1, row2) -> Array.append row1 row2 |> Row.sort)
-                        rows
+                let comHash = Set.intersect (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq) |> Set.toArray
 
-                    let body = comHash |> Array.collect ofHash |> Set.ofArray
+                let ofHash (rowHash: int) : Row[] =
+                    let rws1 = map1.[rowHash] |> Array.map (fun idx -> let row = rows1.[idx] in Row.ofPositions2 comIdxs1 outIdxs1 row)
+                    let rws2 = map2.[rowHash] |> Array.map (fun idx -> let row = rows2.[idx] in Row.ofPositions outIdxs2 row)
+                    let pairs = Array.allPairs rws1 rws2
+                    let rows = pairs |> Array.map (fun (row1, row2) -> Array.append row1 row2 |> Row.sort)
+                    rows
 
-                    let rel : Rel = { fields = Set.union r1.fields r2.fields; body = body }
-                    rel |> Some
+                let body = comHash |> Array.collect ofHash |> Set.ofArray
+
+                let rel : Rel = { fields = Set.union r1.fields r2.fields; body = body }
+                rel |> Some
 
     /// Semi operator. Only valid when there are common fields.
-    ///    - semi = true: implements semi-minus.
-    ///    - semi = false: implements semi-join.
+    ///    - difference = true: implements semi-minus.
+    ///    - difference = false: implements semi-join.
     let private semi (difference: bool) (r1: Rel) (r2: Rel) : Rel option = 
         match Rel.commonFields r1 r2 with
         // disjoint relations
         | x when x |> Set.isEmpty -> if difference then r1 |> Some else { r1 with body = Set.empty } |> Some
-        // share common fields
+
+        // relations which share common fields
         | commonFields ->
-            let keepNames = commonFields |> Field.names
-            let comIdxs1 = Field.indexs r1.fields false keepNames
-            let outIdxs1 = Field.indexs r1.fields true keepNames
-            let comIdxs2 = Field.indexs r2.fields false keepNames
-            let outIdxs2 = Field.indexs r2.fields true keepNames
+            let comNames = commonFields |> Field.names
+            let comIdxs1 = Field.indices r1.fields false comNames
+            let comIdxs2 = Field.indices r2.fields false comNames
 
             let rows1 = r1.body |> Set.toArray
             let rows2 = r2.body |> Set.toArray
-            let map1 = Row.index (Row.ofPositions comIdxs1) rows1
-            let map2 = Row.index (Row.ofPositions comIdxs1) rows2
+            let map1 = Row.index (Row.ofPositions comIdxs1) rows1 // (hashvalue -> rows1 indices) mapping
+            let map2 = Row.index (Row.ofPositions comIdxs2) rows2 // (hashvalue -> rows2 indices) mapping
 
             let oper = if difference then Set.difference else Set.intersect
             let comHash = oper (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
@@ -5709,7 +5715,7 @@ module Rel2 =
 
             let body = comHash |> Array.collect ofHash |> Set.ofArray
 
-            let rel : Rel = { fields = Set.union r1.fields r2.fields; body = body }
+            let rel : Rel = { r1 with body = body }
             rel |> Some
 
     /// Semi-join operator.
@@ -5717,75 +5723,73 @@ module Rel2 =
     let semiJoin (r1: Rel) (r2: Rel) : Rel option = 
         if Rel.incompatible r1 r2 then
             None
+        elif Rel.rmatch r1 r2 then
+            inter r1 r2
         else
-            if Rel.rmatch r1 r2 then
-                inter r1 r2
-            else
-                semi false r1 r2
+            semi false r1 r2
 
-    /// Semi-join operator.
-    /// All rows / tuples of r1 which have a counterpart in r2.
+    /// Semi-minus operator.
+    /// TODO.
     let semiMinus (r1: Rel) (r2: Rel) : Rel option = 
         if Rel.incompatible r1 r2 then
             None
+        elif Rel.rmatch r1 r2 then
+            minus r1 r2
         else
-            if Rel.rmatch r1 r2 then
-                minus r1 r2
-            else
-                semi true r1 r2
+            semi true r1 r2
 
     /// Left outer join operator.
     /// defaultValue maps r2-specific fields (which aren't not r1's) to a default value.
     let leftJoin (defaultValues: Field -> obj) (r1: Rel) (r2: Rel) : Rel option = 
         if Rel.incompatible r1 r2 then
             None
+        elif Rel.rmatch r1 r2 then
+            None // inter r1 r2 // WRONG! TO: check if it's capture by the below
         else
-            if Rel.rmatch r1 r2 then
-                None // inter r1 r2 // WRONG! TO: check if it's capture by the below
-            else
-                match Rel.commonFields r1 r2 with
-                // disjoint relations
-                | x when x |> Set.isEmpty -> prod r1 r2
-                // share common fields
-                | commonFields ->
-                    let keepNames = commonFields |> Field.names
-                    let comIdxs1 = Field.indexs r1.fields false keepNames
-                    let outIdxs1 = Field.indexs r1.fields true keepNames
-                    let comIdxs2 = Field.indexs r2.fields false keepNames
-                    let outIdxs2 = Field.indexs r2.fields true keepNames
+            match Rel.commonFields r1 r2 with
+            // disjoint relations
+            | x when x |> Set.isEmpty -> prod r1 r2
 
-                    let rows1 = r1.body |> Set.toArray
-                    let rows2 = r2.body |> Set.toArray
-                    let map1 = Row.index (Row.ofPositions comIdxs1) rows1
-                    let map2 = Row.index (Row.ofPositions comIdxs1) rows2
+            // relations which share common fields
+            | commonFields ->
+                let comNames = commonFields |> Field.names
+                let comIdxs1 = Field.indices r1.fields false comNames
+                let outIdxs1 = Field.indices r1.fields true comNames
+                let comIdxs2 = Field.indices r2.fields false comNames
+                let outIdxs2 = Field.indices r2.fields true comNames
 
-                    // 1- common rows
-                    let comHash = Set.intersect (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
+                let rows1 = r1.body |> Set.toArray
+                let rows2 = r2.body |> Set.toArray
+                let map1 = Row.index (Row.ofPositions comIdxs1) rows1 // (hashvalue -> rows1 indices) mapping
+                let map2 = Row.index (Row.ofPositions comIdxs2) rows2 // (hashvalue -> rows2 indices) mapping
 
-                    let ofHash (rowHash: int) : Row[] =
-                        let rows1 = map1.[rowHash] |> Array.map (fun idx -> let row = rows1.[idx] in Row.ofPositions2 comIdxs1 outIdxs1 row)
-                        let rows2 = map2.[rowHash] |> Array.map (fun idx -> let row = rows2.[idx] in Row.ofPositions outIdxs2 row)
-                        let pairs = Array.allPairs rows1 rows2
-                        let rows = pairs |> Array.map (fun (row1, row2) -> Array.append row1 row2 |> Row.sort)
-                        rows
+                // 1- common rows
+                let comHash = Set.intersect (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
 
-                    let comRows = comHash |> Array.collect ofHash
+                let ofHash (rowHash: int) : Row[] =
+                    let rows1 = map1.[rowHash] |> Array.map (fun idx -> let row = rows1.[idx] in Row.ofPositions2 comIdxs1 outIdxs1 row)
+                    let rows2 = map2.[rowHash] |> Array.map (fun idx -> let row = rows2.[idx] in Row.ofPositions outIdxs2 row)
+                    let pairs = Array.allPairs rows1 rows2
+                    let rows = pairs |> Array.map (fun (row1, row2) -> Array.append row1 row2 |> Row.sort)
+                    rows
 
-                    // 2- rows in r1 which do not have a counterpart in r2 over their common fields
-                    let diffHash = Set.difference (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
-                    let defRow = Set.difference r2.fields r1.fields |> Set.map (fun field -> { fname = field.fname; value = field |> defaultValues}) |> Set.toArray
+                let comRows = comHash |> Array.collect ofHash
 
-                    let ofHash (rowHash: int) : Row[] =
-                        let rows1 : Row[] = map1.[rowHash] |> Array.map (fun idx -> Array.append rows1.[idx] defRow |> Row.sort)
-                        rows1
+                // 2- rows in r1 which do not have a counterpart in r2 over their common fields
+                let diffHash = Set.difference (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
+                let defRow = Set.difference r2.fields r1.fields |> Set.map (fun field -> { fname = field.fname; value = field |> defaultValues}) |> Set.toArray
 
-                    let diffRows = diffHash |> Array.collect ofHash
+                let ofHash (rowHash: int) : Row[] =
+                    let rows1 : Row[] = map1.[rowHash] |> Array.map (fun idx -> Array.append rows1.[idx] defRow |> Row.sort)
+                    rows1
 
-                    // union of common and difference rows
-                    let body = Array.append comRows diffRows |> Set.ofArray
+                let diffRows = diffHash |> Array.collect ofHash
 
-                    let rel : Rel = { fields = Set.union r1.fields r2.fields; body = body }
-                    rel |> Some
+                // union of common and difference rows
+                let body = Array.append comRows diffRows |> Set.ofArray
+
+                let rel : Rel = { fields = Set.union r1.fields r2.fields; body = body }
+                rel |> Some
 
     /// Group operator.
     let group (r: Rel) (perNames: Set<string>) (groupName: string) : Rel option =
@@ -5795,8 +5799,8 @@ module Rel2 =
         if perFields |> Field.contains (groupName |> Set.singleton) then
             None
         else
-            let perIdxs = Field.indexs r.fields false perNames
-            let restIdxs = Field.indexs r.fields true perNames
+            let perIdxs = Field.indices r.fields false perNames
+            let restIdxs = Field.indices r.fields true perNames
 
             // group relation fields
             let fields = Set.union perFields ({ fname = groupName; ftype = typeof<Rel> } |> Set.singleton)
@@ -5824,8 +5828,8 @@ module Rel2 =
         elif r.fields |> Set.contains groupField |> not then
             None
         else
-            let groupIdxs = Field.indexs r.fields false (groupName |> Set.singleton)
-            let restIdxs = Field.indexs r.fields true (groupName |> Set.singleton)
+            let groupIdxs = Field.indices r.fields false (groupName |> Set.singleton)
+            let restIdxs = Field.indices r.fields true (groupName |> Set.singleton)
 
             let groupIdx = groupIdxs |> Array.head
             let sampleRel = let elem = r.body |> Set.toArray |> Array.head |> Array.item groupIdx in elem.value :?> Rel
@@ -5867,7 +5871,7 @@ module Rel2 =
             let fields = Set.union commonFields resultFields
 
             let comNames = commonFields |> Field.names
-            let rComIdxs = Field.indexs r.fields false comNames
+            let rComIdxs = Field.indices r.fields false comNames
             
             let rRows = r.body |> Set.toArray
             let perRows = perRel.body |> Set.toArray
@@ -5910,119 +5914,119 @@ module Rel2 =
 
     // ofMaps
 
-module Rel =
-    open API
-    open System.Collections
+//module Rel =
+//    open API
+//    open System.Collections
 
-    // a custom compare function is needed because we use F# Set<Elem>, which requires a comparison constraint on its elements.
-    [<RequireQualifiedAccess>]
-    module Compare =
-        // -----------------------------
-        // -- Comparaison functions
-        // -----------------------------
+//    // a custom compare function is needed because we use F# Set<Elem>, which requires a comparison constraint on its elements.
+//    [<RequireQualifiedAccess>]
+//    module Compare =
+//        // -----------------------------
+//        // -- Comparaison functions
+//        // -----------------------------
 
-        // write your custom compare function here.
-        /// Used if Structural Equality does not apply.
-        let custom (o1: obj) (o2: obj) : int =
-            match (o1, o2) with
-            //| (:? Foo), (:? Foo) -> 0
-            //| (:? Foo), _ -> -1
-            //| _ , (:? Foo) -> 1
-            | _ -> failwith "System.ArgumentException: Object must be of type IComparable or IStructuralComparable.\nat oCompare (Object value1) (Object value2)"
+//        // write your custom compare function here.
+//        /// Used if Structural Equality does not apply.
+//        let custom (o1: obj) (o2: obj) : int =
+//            match (o1, o2) with
+//            //| (:? Foo), (:? Foo) -> 0
+//            //| (:? Foo), _ -> -1
+//            //| _ , (:? Foo) -> 1
+//            | _ -> failwith "System.ArgumentException: Object must be of type IComparable or IStructuralComparable.\nat oCompare (Object value1) (Object value2)"
     
-        let compare (o1: obj) (o2: obj) : int =
-            match (o1, o2) with
-            | (:? IComparable as c1), (:? IComparable as c2) -> 
-                try 
-                    c1.CompareTo(c2)
-                with
-                | e -> failwith e.Message
-            | (:? IStructuralComparable as c1), (:? IStructuralComparable as c2) -> 
-                try 
-                    Operators.compare c1 c2
-                with
-                | e -> failwith e.Message
-            | _ ->
-                custom o1 o2
+//        let compare (o1: obj) (o2: obj) : int =
+//            match (o1, o2) with
+//            | (:? IComparable as c1), (:? IComparable as c2) -> 
+//                try 
+//                    c1.CompareTo(c2)
+//                with
+//                | e -> failwith e.Message
+//            | (:? IStructuralComparable as c1), (:? IStructuralComparable as c2) -> 
+//                try 
+//                    Operators.compare c1 c2
+//                with
+//                | e -> failwith e.Message
+//            | _ ->
+//                custom o1 o2
 
-    // we need to define comparison for Field, since the relation object is Set<Elem>, and F# Set requires comparison.
-    // the Relation object will not allow two Fields with the same name in its header.
-    // so we can compare fields wrt their name only (and ignore their type, which we cannot compare).
-    [<CustomEquality; CustomComparison>]
-    type Field = { nm: string; ty: Type } with
-        override f1.Equals(o2) =
-            match o2 with 
-            | :? Field as f2 -> f1 = f2
-            | _ -> false
-        override f.GetHashCode() = hash f
+//    // we need to define comparison for Field, since the relation object is Set<Elem>, and F# Set requires comparison.
+//    // the Relation object will not allow two Fields with the same name in its header.
+//    // so we can compare fields wrt their name only (and ignore their type, which we cannot compare).
+//    [<CustomEquality; CustomComparison>]
+//    type Field = { nm: string; ty: Type } with
+//        override f1.Equals(o2) =
+//            match o2 with 
+//            | :? Field as f2 -> f1 = f2
+//            | _ -> false
+//        override f.GetHashCode() = hash f
 
-        interface System.IComparable with
-            member f1.CompareTo o2 =
-                match o2 with 
-                | :? Field as f2 -> f1.nm.CompareTo(f2.nm)
-                | _ -> invalidArg "o2" "Field: Cannot compare values of different types."
+//        interface System.IComparable with
+//            member f1.CompareTo o2 =
+//                match o2 with 
+//                | :? Field as f2 -> f1.nm.CompareTo(f2.nm)
+//                | _ -> invalidArg "o2" "Field: Cannot compare values of different types."
 
-        static member ofArray (names: string[]) (types: Type[]) : Field[] =
-            Array.map2 (fun nm ty -> { nm = nm ; ty = ty }) names types
+//        static member ofArray (names: string[]) (types: Type[]) : Field[] =
+//            Array.map2 (fun nm ty -> { nm = nm ; ty = ty }) names types
 
-    [<CustomEquality; CustomComparison>]
-    type Elem = { field: Field; value: obj } with
-        override e1.Equals(o2) =
-            match o2 with 
-            | :? Elem as e2 -> (e1.field = e2.field) && (e1.value = e2.value)
-            | _ -> false
+//    [<CustomEquality; CustomComparison>]
+//    type Elem = { field: Field; value: obj } with
+//        override e1.Equals(o2) =
+//            match o2 with 
+//            | :? Elem as e2 -> (e1.field = e2.field) && (e1.value = e2.value)
+//            | _ -> false
 
-        override e.GetHashCode() = hash e.value
+//        override e.GetHashCode() = hash e.value
 
-        interface System.IComparable with
-            member e1.CompareTo o2 =
-                match o2 with 
-                | :? Elem as e2 -> 
-                    if e1.field.nm <> e2.field.nm then 
-                        e1.field.nm.CompareTo(e2.field.nm)
-                    else 
-                        Compare.compare e1.value e2.value
-                | _ -> invalidArg "o2" "Elem: Cannot compare values of different types."
+//        interface System.IComparable with
+//            member e1.CompareTo o2 =
+//                match o2 with 
+//                | :? Elem as e2 -> 
+//                    if e1.field.nm <> e2.field.nm then 
+//                        e1.field.nm.CompareTo(e2.field.nm)
+//                    else 
+//                        Compare.compare e1.value e2.value
+//                | _ -> invalidArg "o2" "Elem: Cannot compare values of different types."
 
-        static member ofArrays (names: string[]) (types: Type[]) (values: obj[]) : Elem[] =
-            Array.map3 
-                (fun nm ty value -> let field = { nm = nm ; ty = ty } in { field = field; value = value})
-                names types values
+//        static member ofArrays (names: string[]) (types: Type[]) (values: obj[]) : Elem[] =
+//            Array.map3 
+//                (fun nm ty value -> let field = { nm = nm ; ty = ty } in { field = field; value = value})
+//                names types values
     
-    /// Row is an (unordered) set of Elem-s. Similar to C.J. Date's concept of Tuple.
-    type Row = Set<Elem>
+//    /// Row is an (unordered) set of Elem-s. Similar to C.J. Date's concept of Tuple.
+//    type Row = Set<Elem>
 
-    /// A relation, Rel is:
-    /// 1. A header, a set of fields.
-    /// 2. A body, a set of Row-s, compatible with the header.
-    type Rel = { head: Set<Field>; body: Set<Row> } with
-        static member DEE : Rel = { head = Set.empty; body = Set.empty |> Set.singleton }
-        static member DUM : Rel = { head = Set.empty; body = Set.empty }
-        member r.count = r.body.Count
-        member r.card = r.head.Count
-        member r.isEmtpy = r.body.IsEmpty
+//    /// A relation, Rel is:
+//    /// 1. A header, a set of fields.
+//    /// 2. A body, a set of Row-s, compatible with the header.
+//    type Rel = { head: Set<Field>; body: Set<Row> } with
+//        static member DEE : Rel = { head = Set.empty; body = Set.empty |> Set.singleton }
+//        static member DUM : Rel = { head = Set.empty; body = Set.empty }
+//        member r.count = r.body.Count
+//        member r.card = r.head.Count
+//        member r.isEmtpy = r.body.IsEmpty
 
-        member r.toRng =
-            let body = r.body |> Set.toArray |> Array.map Set.toArray |> array2D |> Array2D.map (fun elem -> elem.value)
-            body
+//        member r.toRng =
+//            let body = r.body |> Set.toArray |> Array.map Set.toArray |> array2D |> Array2D.map (fun elem -> elem.value)
+//            body
 
-    module Row =
-        let ofArrays (names: string[]) (types: Type[]) (values: obj[]) : Row = Elem.ofArrays names types values |> Set.ofArray
+//    module Row =
+//        let ofArrays (names: string[]) (types: Type[]) (values: obj[]) : Row = Elem.ofArrays names types values |> Set.ofArray
 
-    let ofRng (xlKinds: Set<Kind>) (fieldNames: string[]) (typeTags: string[]) (o2D: obj[,]) : Rel option =
-        let valid = (typeTags.Length = fieldNames.Length) && (o2D |> Array2D.length2 = fieldNames.Length)
+//    let ofRng (xlKinds: Set<Kind>) (fieldNames: string[]) (typeTags: string[]) (o2D: obj[,]) : Rel option =
+//        let valid = (typeTags.Length = fieldNames.Length) && (o2D |> Array2D.length2 = fieldNames.Length)
 
-        if not valid then
-            None
-        else
-            match In.D2.Tag.Multi.tryDV None xlKinds false typeTags o2D with
-            | None -> None
-            | Some (gentys, o2D) ->
-                let fields = Field.ofArray fieldNames gentys
-                let body = [| for i in o2D.GetLowerBound(0) .. o2D.GetUpperBound(0) -> Row.ofArrays fieldNames gentys o2D.[i,*] |]
+//        if not valid then
+//            None
+//        else
+//            match In.D2.Tag.Multi.tryDV None xlKinds false typeTags o2D with
+//            | None -> None
+//            | Some (gentys, o2D) ->
+//                let fields = Field.ofArray fieldNames gentys
+//                let body = [| for i in o2D.GetLowerBound(0) .. o2D.GetUpperBound(0) -> Row.ofArrays fieldNames gentys o2D.[i,*] |]
 
-                let rel : Rel = { head = fields |> Set.ofArray; body = body |> Set.ofArray }
-                rel |> Some
+//                let rel : Rel = { head = fields |> Set.ofArray; body = body |> Set.ofArray }
+//                rel |> Some
 
 module Rel_XL =
     open Registry
@@ -6057,7 +6061,7 @@ module Rel_XL =
             //match In.D2.Tag.Multi.tryDV None xlkinds false typetags range with
             //| None -> Proxys.def.failed
             //| Some (gentys, o2D) ->
-            match Rel.ofRng xlkinds fieldnames typetags range with
+            match Rel2.Rel.ofRng xlkinds fieldnames typetags range with
             | None -> Proxys.def.failed
             | Some rel ->
                 rel |> MRegistry.registerBxd rfid 
@@ -6081,7 +6085,7 @@ module Rel_XL =
         let rfid = MRegistry.refID
 
         // result
-        match MRegistry.tryExtract<Rel.Rel> rgRel with
+        match MRegistry.tryExtract<Rel2.Rel> rgRel with
         | None -> Array2D.create 1 1 Proxys.def.failed
         | Some rel -> //Array2D.create 1 1 Proxys.def.failed
             rel.toRng
@@ -6349,3 +6353,4 @@ module TEST_XL =
 // Set.groupBy
 // Set.allPair
 // array2D trans
+// Set.disjoint

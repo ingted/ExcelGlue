@@ -2841,6 +2841,86 @@ module Fun =
             gentys.Length - 1 // the last argument is the type of the function result (not part of the arity).
             |> Some
 
+    /// Returns the input arguments' types of a FsharpFunc object.
+    let inputTypes (ofun: obj) : Type[] option =
+        if not (isFunction ofun) then
+            None
+        else
+            let argTypes = ofun.GetType().BaseType.GetGenericArguments() 
+            if argTypes.Length = 1 then
+                Some [||]
+            else
+                argTypes 
+                |> Array.take (argTypes.Length - 1)
+                |> Some
+
+    /// Returns the input arguments' types of a FsharpFunc object.
+    let compatibleArgTypes (ofun: obj) (argTypes: Type[]) : bool =
+        match inputTypes ofun with 
+        | None -> false
+        | Some allInputTypes ->
+            (argTypes.Length <= allInputTypes.Length) && (allInputTypes |> Array.take argTypes.Length = argTypes)
+
+    /// Returns the output type of a FsharpFunc object.
+    let outputType (ofun: obj) : Type option =
+        if not (isFunction ofun) then
+            None
+        else
+            ofun.GetType().BaseType.GetGenericArguments() 
+            |> Array.last
+            |> Some
+
+    // F# functions type naming convention : FSharpFunc`(Arity + 1). (+1 for result type). E.g. FSharpFunc`2 for 'a -> 'b, FSharpFunc`3 for 'a -> 'b -> 'c... 
+    // Arity is (temporarily?) limited to 5 inputs, as F# treats higher arity functions as nested functions.
+    //    - 1 to 5 inputs => no inner function // FSharpFunc`2 to FSharpFunc`6
+    //    - 6 to 10 inputs => 1 inner function
+    //    - 11 to 15 inputs => 2 inner functions
+    //    ...
+
+    let MAX_ARITY_FILTER = 5
+    type Filter =
+        static member Filter1<'A1> (f: 'A1 -> bool) (x1: 'A1) : bool = f x1
+        static member Filter2<'A1,'A2> (f: 'A1 -> 'A2 -> bool) (x1: 'A1) (x2: 'A2) : bool = f x1 x2
+        static member Filter3<'A1,'A2,'A3> (f: 'A1 -> 'A2 -> 'A3 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) : bool = f x1 x2 x3
+        static member Filter4<'A1,'A2,'A3,'A4> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) : bool = f x1 x2 x3 x4
+        static member Filter5<'A1,'A2,'A3,'A4,'A5> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) : bool = f x1 x2 x3 x4 x5
+        //static member Filter6<'A1,'A2,'A3,'A4,'A5,'A6> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) : bool = f x1 x2 x3 x4 x5 x6
+        //static member Filter7<'A1,'A2,'A3,'A4,'A5,'A6,'A7> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> 'A7 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) (x7: 'A7) : bool = f x1 x2 x3 x4 x5 x6 x7
+        //static member Filter8<'A1,'A2,'A3,'A4,'A5,'A6,'A7,'A8> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> 'A7 -> 'A8 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) (x7: 'A7) (x8: 'A8) : bool = f x1 x2 x3 x4 x5 x6 x7 x8
+        //static member Filter9<'A1,'A2,'A3,'A4,'A5,'A6,'A7,'A8,'A9> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> 'A7 -> 'A8 -> 'A9 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) (x7: 'A7) (x8: 'A8) (x9: 'A9) : bool = f x1 x2 x3 x4 x5 x6 x7 x8 x9
+        //static member Filter10<'A1,'A2,'A3,'A4,'A5,'A6,'A7,'A8,'A9,'A10> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> 'A7 -> 'A8 -> 'A9 -> 'A10 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) (x7: 'A7) (x8: 'A8) (x9: 'A9) (x10: 'A10) : bool = f x1 x2 x3 x4 x5 x6 x7 x8 x9 x10
+
+    let filter (ofun: obj) (args: obj[]) : bool =
+        match arity ofun with
+        | None -> false
+        | Some rank when rank > MAX_ARITY_FILTER -> false
+        | Some rank -> 
+            let argTypes = args |> Array.map (fun arg -> arg.GetType())
+            let funtys = ofun.GetType().BaseType.GetGenericArguments()
+            if (argTypes.Length > rank) || (not (compatibleArgTypes ofun argTypes)) then
+                false
+            else
+                let methodNm = sprintf "Filter%d" rank
+                let res = Useful.Generics.invoke<Filter> methodNm funtys (Array.append [| ofun |] args)
+                res :?> bool
+
+    /// Same as Fun.filter but for multi arguments.
+    /// Assumes that each argument set is of the right type - otherwise fails.
+    let filterMulti (ofun: obj)  (argTypes: Type[]) (argss: obj[][]) : bool[] =
+        match arity ofun with
+        | None -> Array.create argss.Length false
+        | Some rank when rank > MAX_ARITY_FILTER -> Array.create argss.Length false
+        | Some rank -> 
+            let funtys = ofun.GetType().BaseType.GetGenericArguments()
+            if (argTypes.Length > rank) || (not (compatibleArgTypes ofun argTypes)) then
+                Array.create argss.Length false
+            else
+                let methodNm = sprintf "Filter%d" rank
+                let filterFun (args: obj[]) = Useful.Generics.invoke<Filter> methodNm funtys (Array.append [| ofun |] args)
+                let res = argss |> Array.map (filterFun >> (fun o -> o :?> bool))
+                res
+
+    let MAX_ARITY_APPLY = 5
     type Apply =
         static member Apply1<'A1,'B> (f: 'A1 -> 'B) (x1: 'A1) : 'B = f x1
         static member Apply2<'A1,'A2,'B> (f: 'A1 -> 'A2 -> 'B) (x1: 'A1) (x2: 'A2) : 'B = f x1 x2
@@ -2848,9 +2928,37 @@ module Fun =
         static member Apply4<'A1,'A2,'A3,'A4,'B> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'B) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) : 'B = f x1 x2 x3 x4
         static member Apply5<'A1,'A2,'A3,'A4,'A5,'B> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'B) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) : 'B = f x1 x2 x3 x4 x5
 
+    let apply (ofun: obj) (args: obj[]) : obj option =
+        match arity ofun with
+        | None -> None
+        | Some rank when rank > MAX_ARITY_APPLY -> None
+        | Some rank -> 
+            let argTypes = args |> Array.map (fun arg -> arg.GetType())
+            let funtys = ofun.GetType().BaseType.GetGenericArguments()
+            if (argTypes.Length > rank) || (not (compatibleArgTypes ofun argTypes)) then
+                None
+            else
+                let methodNm = sprintf "Apply%d" rank
+                let res = Useful.Generics.invoke<Apply> methodNm funtys (Array.append [| ofun |] args)
+                Some res
 
+    /// Same as Fun.apply but for multi arguments.
+    /// Assumes that each argument set is of the right type - otherwise fails.
+    let applyMulti (ofun: obj) (argTypes: Type[]) (argss: obj[][]) : obj[] option =
+        match arity ofun with
+        | None -> None
+        | Some rank when rank > 5 -> None
+        | Some rank -> 
+            let funtys = ofun.GetType().BaseType.GetGenericArguments()
+            if (argTypes.Length > rank) || (not (compatibleArgTypes ofun argTypes)) then
+                None
+            else
+                let methodNm = sprintf "Apply%d" rank
+                let applyFun (args: obj[]) = Useful.Generics.invoke<Apply> methodNm funtys (Array.append [| ofun |] args)
+                let res = argss |> Array.map applyFun
+                Some res
 
-    let apply (ofun: obj) (args: obj[]) : obj option = // (Type*obj) option =
+    let applyOLD (ofun: obj) (args: obj[]) : obj option = // (Type*obj) option =
         match arity ofun with
         | None -> None
         | Some rank when rank > 5 -> None
@@ -5414,6 +5522,16 @@ module Rel2 =
         /// Returns all field-names, sorted.
         static member names (fields: Set<Field>) : Set<string> = fields |> Set.map (fun field -> field.fname)
 
+        /// Returns field-types, given field-names.
+        /// Returns None if any fieldName is not included in fields.
+        static member types (fields: Set<Field>) (fieldNames: string[]) : Type[] option = 
+            let mapping = fields |> Set.toArray |> Array.map (fun field -> (field.fname, field.ftype)) |> Map.ofArray
+            let types = fieldNames |> Array.choose (fun fname -> mapping |> Map.tryFind fname)
+            if types.Length < fieldNames.Length then
+                None
+            else
+                Some types
+
         /// Returns all fields, which fname is included in keepNames (away = false).
         /// Discards all of keepNames names which are not included in fields's names (away = true). 
         static member project (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : Set<Field> =
@@ -5448,6 +5566,15 @@ module Rel2 =
         static member indexMap (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : Map<string,int> =
             Field.indexing fields away keepNames |> Array.map (fun (x, y) -> (y, x)) |> Map.ofArray
 
+        // Same as Field.indices, but with same ordering as keepNames.
+        static member indicesOrdered (fields: Set<Field>) (keepNames: string[]) : int[] option = 
+            let indexmap = Field.indexMap fields false (keepNames |> Set.ofArray)
+            let indices = keepNames |> Array.choose (fun name -> indexmap |> Map.tryFind name)
+            if indices.Length < keepNames.Length then
+                None
+            else
+                Some indices
+
         /// Returns true if two fields or more have same name but different type.
         static member incompatible (fields1: Set<Field>) (fields2: Set<Field>) : bool =
             let fNames1 = fields1 |> Field.names
@@ -5471,8 +5598,8 @@ module Rel2 =
         /// Returns true if fields2 is included in fields1.
         static member isSuperset (fields1: Set<Field>) (fields2: Set<Field>) : bool = Set.isSuperset fields1 fields1
 
-        /// Returns true if one of the fields' names match fname. 
-        static member contains (fnames: Set<string>) (fields: Set<Field>) : bool = Set.isSuperset (fields |> Field.names) fnames
+        /// Returns true if all fnames are all fields' names. 
+        static member containsNames (fnames: Set<string>) (fields: Set<Field>) : bool = Set.isSuperset (fields |> Field.names) fnames
 
     // F# Set requires comparison, and the relation object is defined as Set<Elem>, so custom comparison is necessary for Elem and Field.
     [<CustomEquality; CustomComparison>]
@@ -5794,24 +5921,24 @@ module Rel2 =
     /// Group operator.
     let group (r: Rel) (perNames: Set<string>) (groupName: string) : Rel option =
         let perFields = Field.project r.fields false perNames           
-        let restFields = Field.project r.fields true perNames
+        let grpFields = Field.project r.fields true perNames
 
-        if perFields |> Field.contains (groupName |> Set.singleton) then
+        if perFields |> Field.containsNames (groupName |> Set.singleton) then
             None
         else
             let perIdxs = Field.indices r.fields false perNames
             let restIdxs = Field.indices r.fields true perNames
 
-            // group relation fields
+            // grouped relation fields
             let fields = Set.union perFields ({ fname = groupName; ftype = typeof<Rel> } |> Set.singleton)
         
-            // group relation body
-            let grpRel (restRows: Row[]) : Rel = { fields = restFields; body = restRows |> Set.ofArray }
-            let grpElem (restRows: Row[]) : Row = { fname = groupName; value = grpRel restRows } |> Array.singleton
+            // grouped relation body
+            let grpRel (grpRows: Row[]) : Rel = { fields = grpFields; body = grpRows |> Set.ofArray }
+            let grpElem (grpRows: Row[]) : Row = { fname = groupName; value = grpRel grpRows } |> Array.singleton
             let body = 
                 r.body 
                 |> Set.toArray
-                |> Array.map (fun row -> (perIdxs |> Array.map (fun i -> row.[i]), Row.ofPositions restIdxs row))
+                |> Array.map (fun row -> (Row.ofPositions perIdxs row, Row.ofPositions restIdxs row))
                 |> Array.groupBy fst
                 |> Array.map (fun (perrow, tpldrows) -> Array.append perrow (tpldrows |> Array.map snd |> grpElem) |> Row.sort)
                 |> Set.ofArray
@@ -5861,7 +5988,7 @@ module Rel2 =
             None
         elif not <| (perRel |> Rel.isCompatibleWith <| r) then
             None
-        elif (not <| (r.fields |> Field.contains (operNames |> Set.ofArray))) && (perRel.fields |> Field.contains (operNames |> Set.ofArray)) && (r.fields |> Field.contains (resultNames |> Set.ofArray)) then
+        elif (not <| (r.fields |> Field.containsNames (operNames |> Set.ofArray))) && (perRel.fields |> Field.containsNames (operNames |> Set.ofArray)) && (r.fields |> Field.containsNames (resultNames |> Set.ofArray)) then
             None
         else
             let commonFields = Rel.commonFields r perRel
@@ -5908,8 +6035,108 @@ module Rel2 =
             let rel : Rel = { fields = fields; body = body }
             rel |> Some
 
-    let restrict : Rel option = None
-    let unpivot : Rel option = None
+    /// Un-pivot operator.
+    /// operations = operators, operNames, resultNames, resultTypes
+    /// operator should be typeof<operName> -> resultType
+    let unpivot (r: Rel) (unpivotNames: Set<string>) (resultName: string) (resultValName: string) (groupName: string) : Rel option =
+        let perFields = Field.project r.fields true unpivotNames           
+        let unpivFields = Field.project r.fields false unpivotNames
+        let unpivTypes = unpivFields |> Set.toArray |> Array.map (fun field -> field.ftype) |> Array.distinct
+
+        if unpivTypes.Length = 0 then
+            Some r
+        elif unpivTypes.Length > 1 then
+            None
+        else
+            let unpivType = unpivTypes |> Array.head
+            let perIdxs = Field.indices r.fields true unpivotNames
+            let unpivIdxs = Field.indices r.fields false unpivotNames
+
+            // unpivot relation fields
+            let fields = Set.union perFields ([| { fname = resultName; ftype = typeof<string> }; { fname = resultValName; ftype = unpivType } |] |> Set.ofArray)
+        
+            // grouped relation body
+            let unpivElem (unpivelem: Elem) : Elem[] = [| { fname = resultName; value = unpivelem.fname }; { fname = resultValName; value = unpivelem.value } |]
+            let unpivRow (perrow: Row) (unpivrow: Row) : Row[] = unpivrow |> Array.map (fun elem -> Array.append perrow (unpivElem elem) |> Row.sort) 
+
+            let body = 
+                r.body 
+                |> Set.toArray
+                |> Array.map (fun row -> (Row.ofPositions perIdxs row, Row.ofPositions unpivIdxs row))
+                |> Array.groupBy fst
+                |> Array.collect (fun (perrow, tpldrows) -> (tpldrows |> Array.collect (fun (_, unpivrow) -> unpivRow perrow unpivrow)) )
+                |> Set.ofArray
+
+            let rel : Rel = { fields = fields; body = body }
+            rel |> Some
+
+    /// Extend operator.
+    /// ofun is a FsharpFunc object.
+    let extend (r: Rel) (ofun: obj) (argNames: string[]) (resultName: string) : Rel option =
+        match Field.types r.fields argNames with
+        | None -> None
+        | Some argTypes ->
+            if not (Fun.compatibleArgTypes ofun argTypes) then
+                None
+            elif r.fields |> Field.containsNames (resultName |> Set.singleton) then
+                None
+            else
+                match Field.indicesOrdered r.fields argNames with
+                | None -> None
+                | Some argIdxs ->
+                    let outputType = Fun.outputType ofun |> Option.get
+
+                    // extended relation fields
+                    let fields = Set.union r.fields ({ fname = resultName; ftype = outputType } |> Set.singleton)
+        
+                    // extended relation body
+                    let extendRows (rows: Row[]) : Row[] option = 
+                        let getArgs (row: Row) = Row.ofPositions argIdxs row |> Array.map (fun elem -> elem.value)
+                        let argss = rows |> Array.map getArgs
+                        match Fun.applyMulti ofun argTypes argss with
+                        | None -> None
+                        | Some results ->
+                            let resultElems = results |> Array.map (fun res -> { fname = resultName; value = res })
+                            let resultRows = 
+                                Array.zip rows resultElems 
+                                |> Array.map (fun (row, elem) -> Array.append row [| elem |] |> Row.sort)
+                            resultRows
+                            |> Some
+                
+                    match r.body |> Set.toArray |> extendRows with
+                    | None -> None
+                    | Some extendedRows -> 
+                        let body = extendedRows |> Set.ofArray
+                        let rel : Rel = { fields = fields; body = body }
+                        rel |> Some
+
+    /// Restrict operator.
+    /// ofun is a FsharpFunc object.
+    let restrict (r: Rel) (ofun: obj) (argNames: string[]) (resultName: string) : Rel option =
+        match Field.types r.fields argNames with
+        | None -> None
+        | Some argTypes ->
+            if not (Fun.compatibleArgTypes ofun argTypes) then
+                None
+            elif r.fields |> Field.containsNames (resultName |> Set.singleton) then
+                None
+            else
+                match Field.indicesOrdered r.fields argNames with
+                | None -> None
+                | Some argIdxs ->
+        
+                    // filtered relation body
+                    let filterRows (rows: Row[]) : Row[] = 
+                        let getArgs (row: Row) = Row.ofPositions argIdxs row |> Array.map (fun elem -> elem.value)
+                        let argss = rows |> Array.map getArgs
+                        Array.zip rows (Fun.filterMulti ofun argTypes argss)
+                        |> Array.filter (fun (row, test) -> test)
+                        |> Array.map fst
+                        
+                    let body = r.body |> Set.toArray |> filterRows |> Set.ofArray
+                    let rel : Rel = { r with body = body }
+                    rel |> Some
+
     let display : Rel option = None
 
     // ofMaps

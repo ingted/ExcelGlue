@@ -381,6 +381,28 @@ module Useful =
             pp
 
     module Array =
+        let empty2DX<'a> : 'a[,] = [||] |> array2D
+
+        /// Creates a 2D array from an array of 1D arrays.
+        /// All the inner arrays must have the same length.
+        let array2DX (rowWise: bool) (a1Ds: ('a[]) []): 'a[,] =
+            if a1Ds.Length = 0 then
+                empty2DX<'a>
+            elif a1Ds.[0].Length = 0 then
+                empty2DX<'a>
+            elif rowWise then
+                a1Ds |> array2D
+            else
+                Array2D.init a1Ds.[0].Length a1Ds.Length (fun i j -> a1Ds.[j].[i])
+
+        let unzip4 (xs : ('a1*'a2*'a3*'a4)[]) : 'a1[]*'a2[]*'a3[]*'a4[] =
+            let xs1 = xs |> Array.map (fun x -> let (x1, _ , _ , _ ) = x in x1)
+            let xs2 = xs |> Array.map (fun x -> let (_ , x2, _ , _ ) = x in x2)
+            let xs3 = xs |> Array.map (fun x -> let (_ , _ , x3, _ ) = x in x3)
+            let xs4 = xs |> Array.map (fun x -> let (_ , _ , _ , x4) = x in x4)
+            (xs1, xs2, xs3, xs4)
+
+    module Array2D =
         let empty2D<'a> : 'a[,] = [||] |> array2D
 
         /// Creates a 2D array from an array of 1D arrays.
@@ -395,12 +417,7 @@ module Useful =
             else
                 Array2D.init a1Ds.[0].Length a1Ds.Length (fun i j -> a1Ds.[j].[i])
 
-        let unzip4 (xs : ('a1*'a2*'a3*'a4)[]) : 'a1[]*'a2[]*'a3[]*'a4[] =
-            let xs1 = xs |> Array.map (fun x -> let (x1, _ , _ , _ ) = x in x1)
-            let xs2 = xs |> Array.map (fun x -> let (_ , x2, _ , _ ) = x in x2)
-            let xs3 = xs |> Array.map (fun x -> let (_ , _ , x3, _ ) = x in x3)
-            let xs4 = xs |> Array.map (fun x -> let (_ , _ , _ , x4) = x in x4)
-            (xs1, xs2, xs3, xs4)
+
 
 module API = 
 
@@ -1887,7 +1904,7 @@ module API =
                         | None -> 
                             let tyxs = tyxs' |> Array.map Option.get
                             let (gentys, xa1Ds) = Array.unzip tyxs
-                            (gentys, Useful.Array.array2D rowWise xa1Ds)
+                            (gentys, Useful.Array2D.array2D rowWise xa1Ds)
                             |> Some
 
     /// Functions to retun values to Excel.
@@ -5567,6 +5584,7 @@ module Rel2 =
             Field.indexing fields away keepNames |> Array.map (fun (x, y) -> (y, x)) |> Map.ofArray
 
         // Same as Field.indices, but with same ordering as keepNames.
+        // All of keepNames must be valid field names, otherwise returns None
         static member indicesOrdered (fields: Set<Field>) (keepNames: string[]) : int[] option = 
             let indexmap = Field.indexMap fields false (keepNames |> Set.ofArray)
             let indices = keepNames |> Array.choose (fun name -> indexmap |> Map.tryFind name)
@@ -6136,124 +6154,61 @@ module Rel2 =
                     let body = r.body |> Set.toArray |> filterRows |> Set.ofArray
                     let rel : Rel = { r with body = body }
                     rel |> Some
-
-    let display : Rel option = None
-
-    // ofMaps
-
-//module Rel =
-//    open API
-//    open System.Collections
-
-//    // a custom compare function is needed because we use F# Set<Elem>, which requires a comparison constraint on its elements.
-//    [<RequireQualifiedAccess>]
-//    module Compare =
-//        // -----------------------------
-//        // -- Comparaison functions
-//        // -----------------------------
-
-//        // write your custom compare function here.
-//        /// Used if Structural Equality does not apply.
-//        let custom (o1: obj) (o2: obj) : int =
-//            match (o1, o2) with
-//            //| (:? Foo), (:? Foo) -> 0
-//            //| (:? Foo), _ -> -1
-//            //| _ , (:? Foo) -> 1
-//            | _ -> failwith "System.ArgumentException: Object must be of type IComparable or IStructuralComparable.\nat oCompare (Object value1) (Object value2)"
     
-//        let compare (o1: obj) (o2: obj) : int =
-//            match (o1, o2) with
-//            | (:? IComparable as c1), (:? IComparable as c2) -> 
-//                try 
-//                    c1.CompareTo(c2)
-//                with
-//                | e -> failwith e.Message
-//            | (:? IStructuralComparable as c1), (:? IStructuralComparable as c2) -> 
-//                try 
-//                    Operators.compare c1 c2
-//                with
-//                | e -> failwith e.Message
-//            | _ ->
-//                custom o1 o2
+    let private orderNames (allNames: string[]) (nameOrder: Map<String,int>) : string[] =
+        
+        
 
-//    // we need to define comparison for Field, since the relation object is Set<Elem>, and F# Set requires comparison.
-//    // the Relation object will not allow two Fields with the same name in its header.
-//    // so we can compare fields wrt their name only (and ignore their type, which we cannot compare).
-//    [<CustomEquality; CustomComparison>]
-//    type Field = { nm: string; ty: Type } with
-//        override f1.Equals(o2) =
-//            match o2 with 
-//            | :? Field as f2 -> f1 = f2
-//            | _ -> false
-//        override f.GetHashCode() = hash f
 
-//        interface System.IComparable with
-//            member f1.CompareTo o2 =
-//                match o2 with 
-//                | :? Field as f2 -> f1.nm.CompareTo(f2.nm)
-//                | _ -> invalidArg "o2" "Field: Cannot compare values of different types."
+        [||]
 
-//        static member ofArray (names: string[]) (types: Type[]) : Field[] =
-//            Array.map2 (fun nm ty -> { nm = nm ; ty = ty }) names types
+    let display (r: Rel) (showHead: bool) (rowFrom: int) (rowCount: int) (sortOn: string[]) (descending: bool) (strict: bool) (firstNames: string[]) (lastNames: string[]) : obj[,] =
+        if r.card = 0 then
+            Useful.Array2D.empty2D<obj>
+        else
 
-//    [<CustomEquality; CustomComparison>]
-//    type Elem = { field: Field; value: obj } with
-//        override e1.Equals(o2) =
-//            match o2 with 
-//            | :? Elem as e2 -> (e1.field = e2.field) && (e1.value = e2.value)
-//            | _ -> false
+            // header names
+            let allNames = r.fields |> Field.names |> Set.toArray
+            let fstNames = firstNames |> Array.filter (fun name -> allNames |> Array.contains name)
+            let lstNames = lastNames |> Array.filter (fun name -> (allNames |> Array.contains name) || (fstNames |> Array.contains name |> not))
+            let midNames = 
+                if strict then 
+                    [||]
+                else
+                    allNames |> Array.except (Array.append fstNames lstNames)            
+            let headerNames = Array.append fstNames (Array.append midNames lastNames)
+            let headerBxd = headerNames |> Array.map box
+            let hdrIdxs = Field.indicesOrdered r.fields headerNames |> Option.get
 
-//        override e.GetHashCode() = hash e.value
+            // filter names
+            let sortNames = sortOn |> Array.filter (fun name -> headerNames |> Array.contains name)
+            let sortIdxs = Field.indicesOrdered r.fields sortNames |> Option.get
 
-//        interface System.IComparable with
-//            member e1.CompareTo o2 =
-//                match o2 with 
-//                | :? Elem as e2 -> 
-//                    if e1.field.nm <> e2.field.nm then 
-//                        e1.field.nm.CompareTo(e2.field.nm)
-//                    else 
-//                        Compare.compare e1.value e2.value
-//                | _ -> invalidArg "o2" "Elem: Cannot compare values of different types."
+            if headerNames.Length = 0 then
+                Useful.Array2D.empty2D<obj>
+            else
 
-//        static member ofArrays (names: string[]) (types: Type[]) (values: obj[]) : Elem[] =
-//            Array.map3 
-//                (fun nm ty value -> let field = { nm = nm ; ty = ty } in { field = field; value = value})
-//                names types values
-    
-//    /// Row is an (unordered) set of Elem-s. Similar to C.J. Date's concept of Tuple.
-//    type Row = Set<Elem>
+                // rows                
+                let rowsSorted = 
+                    let allRows = r.body |> Set.toArray
+                    if sortNames.Length = 0 then
+                        allRows
+                    else
+                        let sortBy = if descending then Array.sortByDescending else Array.sortBy
+                        allRows |> sortBy (Row.ofPositions sortIdxs)
 
-//    /// A relation, Rel is:
-//    /// 1. A header, a set of fields.
-//    /// 2. A body, a set of Row-s, compatible with the header.
-//    type Rel = { head: Set<Field>; body: Set<Row> } with
-//        static member DEE : Rel = { head = Set.empty; body = Set.empty |> Set.singleton }
-//        static member DUM : Rel = { head = Set.empty; body = Set.empty }
-//        member r.count = r.body.Count
-//        member r.card = r.head.Count
-//        member r.isEmtpy = r.body.IsEmpty
+                let rowsCropped = rowsSorted.[rowFrom .. (rowFrom + rowCount - 1)]
+                let rowsDisplayColumns = rowsCropped |> Array.map (Row.ofPositions hdrIdxs)
+                let rowsBxd = rowsDisplayColumns |> Array.map (fun row -> row  |> Array.map (fun elem -> elem.value))
 
-//        member r.toRng =
-//            let body = r.body |> Set.toArray |> Array.map Set.toArray |> array2D |> Array2D.map (fun elem -> elem.value)
-//            body
+                if showHead then
+                    Array.append [| headerBxd |] rowsBxd |> array2D
+                else
+                     rowsBxd |> array2D
+            
 
-//    module Row =
-//        let ofArrays (names: string[]) (types: Type[]) (values: obj[]) : Row = Elem.ofArrays names types values |> Set.ofArray
+    // ofMaps, toMaps, ofCSV, toCSV
 
-//    let ofRng (xlKinds: Set<Kind>) (fieldNames: string[]) (typeTags: string[]) (o2D: obj[,]) : Rel option =
-//        let valid = (typeTags.Length = fieldNames.Length) && (o2D |> Array2D.length2 = fieldNames.Length)
-
-//        if not valid then
-//            None
-//        else
-//            match In.D2.Tag.Multi.tryDV None xlKinds false typeTags o2D with
-//            | None -> None
-//            | Some (gentys, o2D) ->
-//                let fields = Field.ofArray fieldNames gentys
-//                let body = [| for i in o2D.GetLowerBound(0) .. o2D.GetUpperBound(0) -> Row.ofArrays fieldNames gentys o2D.[i,*] |]
-
-//                let rel : Rel = { head = fields |> Set.ofArray; body = body |> Set.ofArray }
-//                rel |> Some
 
 module Rel_XL =
     open Registry

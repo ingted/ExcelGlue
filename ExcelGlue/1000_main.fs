@@ -330,17 +330,21 @@ module Useful =
                 None
 
     module Generics =    
+        /// Invoke 'gen's methodName member, over methodTypes generic types for methodArguments.
         let invoke<'gen> (methodName: string) (methodTypes: Type[]) (methodArguments: obj[]) : obj =
             let meth = typeof<'gen>.GetMethod(methodName)
             let genm = meth.MakeGenericMethod(methodTypes)
             let res  = genm.Invoke(null, methodArguments)
             res
 
+        /// Invoke 'gen's methodName member, with:
+        ///    - generic types : fst genTypeRObj
+        ///    - arguments : otherArgumentsLeft; fst genTypeRObj; otherArgumentsRight
         let apply<'gen> (methodName: string) (otherArgumentsLeft: obj[]) (otherArgumentsRight: obj[]) (genTypeRObj: Type[]*obj) : obj =
             let (gentys, robj) = genTypeRObj
             invoke<'gen> methodName gentys ([| otherArgumentsLeft; [| robj |];  otherArgumentsRight |] |> Array.concat)
 
-        let apply2<'gen,'a> (methodName: string) (otherArgumentsLeft: obj[]) (otherArgumentsRight: obj[]) (genTypeRObj: Type[]*obj) : obj =
+        let apply2TBD<'gen,'a> (methodName: string) (otherArgumentsLeft: obj[]) (otherArgumentsRight: obj[]) (genTypeRObj: Type[]*obj) : obj =
             let (gentys, robj) = genTypeRObj
             invoke<'gen> methodName gentys ([| otherArgumentsLeft; [| (robj :?> 'a[]) |> box |];  otherArgumentsRight |] |> Array.concat)
 
@@ -381,19 +385,19 @@ module Useful =
             pp
 
     module Array =
-        let empty2DX<'a> : 'a[,] = [||] |> array2D
+        //let empty2DX<'a> : 'a[,] = [||] |> array2D
 
-        /// Creates a 2D array from an array of 1D arrays.
-        /// All the inner arrays must have the same length.
-        let array2DX (rowWise: bool) (a1Ds: ('a[]) []): 'a[,] =
-            if a1Ds.Length = 0 then
-                empty2DX<'a>
-            elif a1Ds.[0].Length = 0 then
-                empty2DX<'a>
-            elif rowWise then
-                a1Ds |> array2D
-            else
-                Array2D.init a1Ds.[0].Length a1Ds.Length (fun i j -> a1Ds.[j].[i])
+        ///// Creates a 2D array from an array of 1D arrays.
+        ///// All the inner arrays must have the same length.
+        //let array2DX (rowWise: bool) (a1Ds: ('a[]) []): 'a[,] =
+        //    if a1Ds.Length = 0 then
+        //        empty2DX<'a>
+        //    elif a1Ds.[0].Length = 0 then
+        //        empty2DX<'a>
+        //    elif rowWise then
+        //        a1Ds |> array2D
+        //    else
+        //        Array2D.init a1Ds.[0].Length a1Ds.Length (fun i j -> a1Ds.[j].[i])
 
         let unzip4 (xs : ('a1*'a2*'a3*'a4)[]) : 'a1[]*'a2[]*'a3[]*'a4[] =
             let xs1 = xs |> Array.map (fun x -> let (x1, _ , _ , _ ) = x in x1)
@@ -417,7 +421,38 @@ module Useful =
             else
                 Array2D.init a1Ds.[0].Length a1Ds.Length (fun i j -> a1Ds.[j].[i])
 
+    /// CSV files reading functions. 
+    module CSV =
+        open Microsoft.VisualBasic.FileIO // Reference Microsoft.VisualBasic
 
+        let private readLine (trim: bool) (sep: string) (txtreader: TextReader) : string[] =
+            let line = txtreader.ReadLine()
+            let words = let ws = line.Split([| sep |], StringSplitOptions.None)
+                        if not trim then ws else ws |> Array.map (fun s -> s.Trim())
+            words
+    
+        /// Reads CSV file.
+        let readLines (trim: bool) (sep: string) (fpath: string) : seq<string[]> =
+            let lines =
+                seq { use txtreader = File.OpenText(fpath)
+                      while not txtreader.EndOfStream do
+                          yield readLine trim sep txtreader 
+                    }
+            lines
+
+        /// Reads CSV file.
+        /// Use over CSV.readLines function, when enclosingQuotes are present in the file.
+        let readLinesVB (enclosingQuotes: bool) (trim: bool) (sep: string) (fpath: string) : seq<string[]> =
+            let lines = 
+                seq { use parser = new TextFieldParser(fpath)
+                      parser.TextFieldType <- FieldType.Delimited
+                      parser.SetDelimiters([| sep |])
+                      parser.TrimWhiteSpace <- trim
+                      parser.HasFieldsEnclosedInQuotes <- enclosingQuotes
+                      while not parser.EndOfData do 
+                          yield parser.ReadFields()
+                    }
+            lines
 
 module API = 
 
@@ -621,9 +656,6 @@ module API =
         
         /// Obj input functions.
         module D0 =
-            open type Variant
-            //open Excel
-            // open Excel.Kind
 
             /// Casts an obj to generic type or fails.
             let fail<'a> (msg: string option) (o: obj) : 'a =
@@ -991,7 +1023,7 @@ module API =
 
             [<RequireQualifiedAccess>]
             module Tag = 
-                /// Casts an xl-value to a 'A, with a default-value for when the casting fails.
+                /// Casts an xl-value to a 'a, with a default-value for when the casting fails.
                 /// 'a is determined by typeTag.
                 let def (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype = typeTag |> Variant.labelType true
@@ -1018,7 +1050,7 @@ module API =
                         let args : obj[] = [| xlKinds; defValue; typeTag; xlValue |]
 
                         let res =
-                            if typeTag |> isOptionalType then
+                            if typeTag |> Variant.isOptionalType then
                                 Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
                             else
                                 Useful.Generics.invoke<TagFn> "def" [| gentype |] args
@@ -2260,6 +2292,193 @@ module API =
                         match boxedOptArray |> o2D with
                         | None -> In.D2.singleton<obj> proxys.failed
                         | Some o2d -> fn o2d
+    
+    /// Extension for textual inputs (e.g. csv files).
+    module Text =
+
+        [<RequireQualifiedAccess>]
+        module Bool =
+            /// Casts a string to a bool option.
+            let private ofText (defValue: bool option) (text: string) : bool option =
+                match text.Trim().ToUpper() with
+                | "TRUE" -> Some true
+                | "FALSE" -> Some false
+                | _ -> defValue
+
+            /// Casts a string to bool or fails.
+            let fail (msg: string) (text: string) : bool =  match ofText None text with None -> failwith msg | Some x -> x
+
+            /// Casts a string to bool with a default-value.
+            let def (defValue: bool) (text: string) : bool = ofText None text |> Option.defaultValue defValue
+
+            // optional-type with default.
+            module Opt =
+                /// Casts a string to a bool option type with a default-value.
+                let def = ofText
+        
+        [<RequireQualifiedAccess>]
+        module Dbl =
+            /// Casts a string to a double option.
+            /// "NaN" string is cast to Double.NaN.
+            let private ofText (defValue: double option) (text: string) : double option =
+                try System.Double.Parse(text) |> Some with | _ -> defValue
+
+            /// Casts a string to double or fails.
+            /// "NaN" string is cast to Double.NaN.
+            let fail (msg: string) (text: string) : double =  match ofText None text with None -> failwith msg | Some x -> x
+
+            /// Casts a string to double with a default-value.
+            /// "NaN" string is cast to Double.NaN.
+            let def (defValue: double) (text: string) : double = ofText None text |> Option.defaultValue defValue
+
+            // optional-type with default.
+            module Opt =
+                /// Casts a string to a bool option type with a default-value.
+                /// "NaN" string is cast to Double.NaN.
+                let def = ofText
+
+        [<RequireQualifiedAccess>]
+        module Intg =
+            /// Casts a string to a int option.
+            let private ofText (defValue: int option) (text: string) : int option =
+                try System.Int32.Parse(text) |> Some with | _ -> defValue
+
+            /// Casts a string to int or fails.
+            let fail (msg: string) (text: string) : int =  match ofText None text with None -> failwith msg | Some x -> x
+
+            /// Casts a string to int with a default-value.
+            let def (defValue: int) (text: string) : int = ofText None text |> Option.defaultValue defValue
+
+            // optional-type with default.
+            module Opt =
+                /// Casts a string to a bool option type with a default-value.
+                let def = ofText
+
+        [<RequireQualifiedAccess>]
+        module Dte =
+            open System.Globalization
+
+            /// Casts a string to a DateTime option.
+            let private ofText (defValue: DateTime option) (text: string) : DateTime option =
+                try DateTime.Parse(text, CultureInfo.InvariantCulture) |> Some with | _ -> defValue
+
+            /// Casts a string to DateTime or fails.
+            let fail (msg: string) (text: string) : DateTime =  match ofText None text with None -> failwith msg | Some x -> x
+
+            /// Casts a string to DateTime with a default-value.
+            let def (defValue: DateTime) (text: string) : DateTime = ofText None text |> Option.defaultValue defValue
+
+            // optional-type with default.
+            module Opt =
+                /// Casts a string to a bool option type with a default-value.
+                let def = ofText
+
+        type TagFn =
+            /// Returns a default-value compatible with 'A and the typeTag.
+            static member defaultValue<'A> (typeTag: string) (defValue: obj option) : 'A =
+                defValue |> Option.defaultValue (Variant.labelDefVal typeTag)
+                 :?> 'A
+
+            /// Returns a default-value or None.
+            static member defaultValueOpt<'A> (defValue: obj option) : 'A option =
+                match defValue with
+                | None -> None 
+                | Some value -> 
+                    match value with
+                    | :? 'A as a -> Some a
+                    | :? ('A option) as aopt -> aopt
+                    | _ -> None
+
+            /// Casts a string to a 'A, with a default-value for when the casting fails.
+            static member def<'A> (defValue: obj option) (typeTag: string) (text: string) : 'A = 
+
+                match typeTag |> Variant.ofTag with
+                | BOOL -> 
+                    let defval = TagFn.defaultValue<bool> typeTag defValue
+                    let a0D = Bool.def defval text
+                    box a0D :?> 'A
+                | STRING -> 
+                    box text :?> 'A
+                | DOUBLE -> 
+                    let defval = TagFn.defaultValue<double> typeTag defValue
+                    let a0D = Dbl.def defval text
+                    box a0D :?> 'A
+                | DOUBLENAN -> 
+                    let defval = TagFn.defaultValue<double> typeTag (Double.NaN |> box |> Some)
+                    let a0D = Dbl.def defval text
+                    box a0D :?> 'A
+                | INT -> 
+                    let defval = TagFn.defaultValue<double> typeTag defValue |> int
+                    let a0D = Intg.def defval text
+                    box a0D :?> 'A
+                | DATE -> 
+                    let defval = TagFn.defaultValue<DateTime> typeTag defValue
+                    let a0D = Dte.def defval text
+                    box a0D :?> 'A
+                | _ -> failwith "TO BE IMPLEMENTED WITH OTHER VARIANT TYPES" // TODO: Complete the list
+
+            /// Casts a string to a 'A option, with a default-value for when the casting fails.
+            /// defValue is None, Some 'a or even Some (Some 'a).
+            static member defOpt<'A> (defValue: obj option) (typeTag: string) (text: string) : 'A option = 
+                match typeTag |> Variant.ofTag with
+                | BOOLOPT -> 
+                    let defval = TagFn.defaultValueOpt<bool> defValue
+                    let a0D = Bool.Opt.def defval text
+                    box a0D :?> 'A option
+                | STRINGOPT -> 
+                    box text :?> 'A option
+                | DOUBLEOPT -> 
+                    let defval = TagFn.defaultValueOpt<double> defValue
+                    let a0D = Dbl.Opt.def defval text
+                    box a0D :?> 'A option
+                | DOUBLENANOPT -> 
+                    let defval = TagFn.defaultValueOpt<double> (Double.NaN |> box |> Some)
+                    let a0D = Dbl.Opt.def defval text
+                    box a0D :?> 'A option
+                | INTOPT -> 
+                    let defval = TagFn.defaultValueOpt<double> defValue |> Option.map (int)
+                    let a0D = Intg.Opt.def defval text
+                    box a0D :?> 'A option
+                | DATEOPT -> 
+                    let defval = TagFn.defaultValueOpt<double> defValue |> Option.map (fun d -> DateTime.FromOADate(d))
+                    let a0D = Dte.Opt.def defval text
+                    box a0D :?> 'A option
+                | _ -> failwith "TO BE IMPLEMENTED WITH OTHER VARIANT TYPES" // TODO FIXME
+
+        [<RequireQualifiedAccess>]
+        module Tag = 
+            /// Casts a string to a 'a, with a default-value for when the casting fails.
+            /// 'a is determined by typeTag.
+            let def (defValue: obj option) (typeTag: string) (text: string) : obj = 
+                let gentype = typeTag |> Variant.labelType true
+                let args : obj[] = [| defValue; typeTag; text |]
+                let res = Useful.Generics.invoke<TagFn> "def" [| gentype |] args
+                res
+
+            // optional-type with default.
+            module Opt =
+                /// Casts a string to a 'a option, with a default-value for when the casting fails.
+                /// 'a is determined by typeTag.
+                let def (defValue: obj option) (typeTag: string) (text: string) : obj = 
+                    let gentype = typeTag |> Variant.labelType true
+                    let args : obj[] = [| defValue; typeTag; text |]
+                    let res = Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
+                    res
+
+            /// For when the type-tag is either optional, e.g. "#string", or not, e.g. "string". TODO wording
+            module Any =
+                /// Convenient, single function covering def and Opt.def cases.
+                /// The returned (boxed) value might be either a 'a or a ('a option), depending on wether the type-tag is optional or not.
+                let def (defValue: obj option) (typeTag: string) (text: string) : obj = 
+                    let gentype = typeTag |> Variant.labelType true
+                    let args : obj[] = [| defValue; typeTag; text |]
+
+                    let res =
+                        if typeTag |> Variant.isOptionalType then
+                            Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
+                        else
+                            Useful.Generics.invoke<TagFn> "def" [| gentype |] args
+                    res
 
 module Registry_XL =
     open API
@@ -4194,11 +4413,29 @@ module MAP =
             : Map<'K1*'K2,'V> =
             A1D.zip (A1D.zip keys1 keys2) values |> Map.ofArray
 
+        /// Builds a Map<'K1*'K2,'V[]> key-value pairs map.
+        /// Values for a given key will be combined into one array.
+        static member map2s<'K1,'K2,'V when 'K1: comparison and 'K2: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (values: 'V[]) 
+            : Map<'K1*'K2,'V[]> =
+            let kvs' = A1D.zip (A1D.zip keys1 keys2) values
+            let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
+            kvs |> Map.ofArray
+
         /// Builds a Map<'K1*'K2*'K3,'V> key-value pairs map.
         static member map3<'K1,'K2,'K3,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3,'V> =
             A1D.zip (A1D.zip3 keys1 keys2 keys3) values |> Map.ofArray
+
+        /// Builds a Map<'K1*'K2*'K3,'V[]> key-value pairs map.
+        /// Values for a given key will be combined into one array.
+        static member map3s<'K1,'K2,'K3,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (values: 'V[]) 
+            : Map<'K1*'K2*'K3,'V[]> =
+            let kvs' = A1D.zip (A1D.zip3 keys1 keys2 keys3) values
+            let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
+            kvs |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4,'V> key-value pairs map.
         static member map4<'K1,'K2,'K3,'K4,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison> 
@@ -4206,11 +4443,29 @@ module MAP =
             : Map<'K1*'K2*'K3*'K4,'V> =
             A1D.zip (A1D.zip4 keys1 keys2 keys3 keys4) values |> Map.ofArray
 
+        /// Builds a Map<'K1*'K2*'K3*'K4,'V[]> key-value pairs map.
+        /// Values for a given key will be combined into one array.
+        static member map4s<'K1,'K2,'K3,'K4,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (values: 'V[]) 
+            : Map<'K1*'K2*'K3*'K4,'V[]> =
+            let kvs' = A1D.zip (A1D.zip4 keys1 keys2 keys3 keys4) values
+            let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
+            kvs |> Map.ofArray
+
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5,'V> key-value pairs map.
         static member map5<'K1,'K2,'K3,'K4,'K5,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4*'K5,'V> =
             A1D.zip (A1D.zip5 keys1 keys2 keys3 keys4 keys5) values |> Map.ofArray
+
+        /// Builds a Map<'K1*'K2*'K3*'K4*'K5,'V[]> key-value pairs map.
+        /// Values for a given key will be combined into one array.
+        static member map5s<'K1,'K2,'K3,'K4,'K5,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (values: 'V[]) 
+            : Map<'K1*'K2*'K3*'K4*'K5,'V[]> =
+            let kvs' = A1D.zip (A1D.zip5 keys1 keys2 keys3 keys4 keys5) values
+            let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
+            kvs |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6,'V> key-value pairs map.
         static member map6<'K1,'K2,'K3,'K4,'K5,'K6,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison> 
@@ -4218,11 +4473,29 @@ module MAP =
             : Map<'K1*'K2*'K3*'K4*'K5*'K6,'V> =
             A1D.zip (A1D.zip6 keys1 keys2 keys3 keys4 keys5 keys6) values |> Map.ofArray
 
+        /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6,'V[]> key-value pairs map.
+        /// Values for a given key will be combined into one array.
+        static member map6s<'K1,'K2,'K3,'K4,'K5,'K6,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (values: 'V[]) 
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6,'V[]> =
+            let kvs' = A1D.zip (A1D.zip6 keys1 keys2 keys3 keys4 keys5 keys6) values
+            let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
+            kvs |> Map.ofArray
+
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V> key-value pairs map.
         static member map7<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V> =
             A1D.zip (A1D.zip7 keys1 keys2 keys3 keys4 keys5 keys6 keys7) values |> Map.ofArray
+
+        /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V[]> key-value pairs map.
+        /// Values for a given key will be combined into one array.
+        static member map7s<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (values: 'V[]) 
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V[]> =
+            let kvs' = A1D.zip (A1D.zip7 keys1 keys2 keys3 keys4 keys5 keys6 keys7) values
+            let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
+            kvs |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V> key-value pairs map.
         static member map8<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison> 
@@ -4230,17 +4503,44 @@ module MAP =
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V> =
             A1D.zip (A1D.zip8 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8) values |> Map.ofArray
 
+        /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V[]> key-value pairs map.
+        /// Values for a given key will be combined into one array.
+        static member map8s<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (values: 'V[]) 
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V[]> =
+            let kvs' = A1D.zip (A1D.zip8 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8) values
+            let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
+            kvs |> Map.ofArray
+
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9,'V> key-value pairs map.
         static member map9<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (keys9: 'K9[]) (values: 'V[])
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9,'V> =
             A1D.zip (A1D.zip9 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9) values |> Map.ofArray
 
+        /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9,'V[]> key-value pairs map.
+        /// Values for a given key will be combined into one array.
+        static member map9s<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (keys9: 'K9[]) (values: 'V[])
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9,'V[]> =
+            let kvs' = A1D.zip (A1D.zip9 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9) values
+            let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
+            kvs |> Map.ofArray
+
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9*'K10,'V> key-value pairs map.
         static member map10<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'K10,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison and 'K10: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (keys9: 'K9[]) (keys10: 'K10[]) (values: 'V[])
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9*'K10,'V> =
             A1D.zip (A1D.zip10 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9 keys10) values |> Map.ofArray
+
+        /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9*'K10,'V[]> key-value pairs map.
+        /// Values for a given key will be combined into one array.
+        static member map10s<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'K10,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison and 'K10: comparison> 
+            (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (keys9: 'K9[]) (keys10: 'K10[]) (values: 'V[])
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9*'K10,'V[]> =
+            let kvs' = A1D.zip (A1D.zip10 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9 keys10) values
+            let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
+            kvs |> Map.ofArray
 
         /// Returns the number of kvp in the Map's object.
         static member pool<'K,'V when 'K: comparison> (omaps: obj[]) : Map<'K,'V> =
@@ -4850,7 +5150,7 @@ module MAP =
     // -----------------------------------
     // -- Registry functions
     // -----------------------------------
-    module Reg =
+    module Registry =
         let genType = typeof<Map<_,_>>
 
         module In = 
@@ -4889,14 +5189,17 @@ module MAP =
                 match MRegistry.tryExtractGen genType regKey with
                 | None -> None
                 | Some (tys, o) -> 
-                    // tys should be a [| some tuple type (for the map object's key), some other type (for the map object's value) |]
+                    // tys is a [| the map-object's key type, the map object's value type |]
                     if tys.Length <> 2 then
-                        None
+                        failwith ("SHOULD NEVER EVER BE THERE!!")  // TODO remove this tys.length always = 2 here
                     else
-                        let elemTys = FSharpType.GetTupleElements(tys.[0])
-                        let genTypeRObj = (Array.append elemTys [| tys.[1] |], o)
-                        apply<GenFn> methodNm [||] args genTypeRObj
-                        |> Some
+                        if not (FSharpType.IsTuple tys.[0]) then
+                            None
+                        else
+                            let elemTys = FSharpType.GetTupleElements(tys.[0])
+                            let genTypeRObj = (Array.append elemTys [| tys.[1] |], o)
+                            apply<GenFn> methodNm [||] args genTypeRObj
+                            |> Some
 
             let find1D1 (regKey: string) (proxys: Proxys) (refKey: string) (okeys1: obj[]) : obj option =
                 let methodNm = "find1D1"
@@ -5348,7 +5651,7 @@ module MAP_XL =
         : obj = 
 
         // result
-        match MAP.Reg.Out.count rgMap with
+        match MAP.Registry.Out.count rgMap with
         | None -> Proxys.def.failed  // TODO Unbox.apply?
         | Some o -> o
 
@@ -5365,7 +5668,7 @@ module MAP_XL =
         let rfid = MRegistry.refID
 
         // result
-        match MAP.Reg.Out.keys rgMap rfid Proxys.def with
+        match MAP.Registry.Out.keys rgMap rfid Proxys.def with
         | None -> [| Proxys.def.failed |]  // TODO Unbox.apply?
         | Some o1D -> o1D
 
@@ -5378,7 +5681,7 @@ module MAP_XL =
         let rfid = MRegistry.refID
 
         // result
-        match MAP.Reg.Out.values rgMap true rfid Proxys.def with
+        match MAP.Registry.Out.values rgMap true rfid Proxys.def with
         | None -> [| Proxys.def.failed |]  // TODO Unbox.apply?
         | Some o1D -> o1D
 
@@ -5439,11 +5742,11 @@ module MAP_XL =
                 [| mapKey1 |]
 
         if okeys.Length = 1 then
-            match MAP.Reg.Out.find1 rgMap proxys rfid okeys.[0] with
+            match MAP.Registry.Out.find1 rgMap proxys rfid okeys.[0] with
             | None -> proxys.failed
             | Some o0D -> o0D
         else
-            match MAP.Reg.Out.findN rgMap proxys rfid okeys with
+            match MAP.Registry.Out.findN rgMap proxys rfid okeys with
             | None -> proxys.failed
             | Some o0D -> o0D
 
@@ -5462,7 +5765,7 @@ module MAP_XL =
         // caller cell's reference ID
         let rfid = MRegistry.refID
 
-        match MAP.Reg.Out.find1D1 rgMap proxys rfid okeys with
+        match MAP.Registry.Out.find1D1 rgMap proxys rfid okeys with
         | None -> [| proxys.failed |]
         | Some xo1D -> xo1D |> Out.D1.Unbox.apply proxys id
 
@@ -5475,12 +5778,12 @@ module MAP_XL =
         let rfid = MRegistry.refID
 
         // result
-        match MAP.Reg.In.pool rgMap1D with
+        match MAP.Registry.In.pool rgMap1D with
         | None -> Proxys.def.failed  // TODO Unbox.apply?
         | Some regObjMap -> regObjMap |> MRegistry.register rfid |> box
 
 
-module Rel2 =
+module Rel =
     open API
     open System.Collections
 
@@ -5648,6 +5951,7 @@ module Rel2 =
     type Row = Elem[]
 
     module Row =
+        let value (index: int) (row: Row) : obj = let elem = row.[index] in elem.value
         let sort (row: Row) : Row = row |> Array.sortBy (fun elem -> elem.fname)
 
         let ofPositions (positions: int[]) (row: Row) : Row = positions |> Array.map (fun i -> row.[i])
@@ -5832,7 +6136,7 @@ module Rel2 =
                 let rel : Rel = { fields = Set.union r1.fields r2.fields; body = body }
                 rel |> Some
 
-    /// Semi operator. Only valid when there are common fields.
+    /// Semi operators. Only valid when there are common fields.
     ///    - difference = true: implements semi-minus.
     ///    - difference = false: implements semi-join.
     let private semi (difference: bool) (r1: Rel) (r2: Rel) : Rel option = 
@@ -6012,7 +6316,8 @@ module Rel2 =
             let commonFields = Rel.commonFields r perRel
 
             // summarize relation fields
-            let resultFields : Set<Field> = Array.zip resultNames resultTypes |> Array.map (fun (resname, restype) -> { fname = resname; ftype = restype } ) |> Set.ofArray
+            // let resultFields : Set<Field> = Array.zip resultNames resultTypes |> Array.map (fun (resname, restype) -> { fname = resname; ftype = restype } ) |> Set.ofArray
+            let resultFields : Set<Field> = Field.zip resultNames resultTypes
             let fields = Set.union commonFields resultFields
 
             let comNames = commonFields |> Field.names
@@ -6105,7 +6410,7 @@ module Rel2 =
                     let outputType = Fun.outputType ofun |> Option.get
 
                     // extended relation fields
-                    let fields = Set.union r.fields ({ fname = resultName; ftype = outputType } |> Set.singleton)
+                    let resFields = Set.union r.fields ({ fname = resultName; ftype = outputType } |> Set.singleton)
         
                     // extended relation body
                     let extendRows (rows: Row[]) : Row[] option = 
@@ -6124,8 +6429,8 @@ module Rel2 =
                     match r.body |> Set.toArray |> extendRows with
                     | None -> None
                     | Some extendedRows -> 
-                        let body = extendedRows |> Set.ofArray
-                        let rel : Rel = { fields = fields; body = body }
+                        let resBody = extendedRows |> Set.ofArray
+                        let rel : Rel = { fields = resFields; body = resBody }
                         rel |> Some
 
     /// Restrict operator.
@@ -6155,13 +6460,6 @@ module Rel2 =
                     let rel : Rel = { r with body = body }
                     rel |> Some
     
-    let private orderNames (allNames: string[]) (nameOrder: Map<String,int>) : string[] =
-        
-        
-
-
-        [||]
-
     let display (r: Rel) (showHead: bool) (rowFrom: int) (rowCount: int) (sortOn: string[]) (descending: bool) (strict: bool) (firstNames: string[]) (lastNames: string[]) : obj[,] =
         if r.card = 0 then
             Useful.Array2D.empty2D<obj>
@@ -6206,8 +6504,348 @@ module Rel2 =
                 else
                      rowsBxd |> array2D
             
+    // -----------------------------
+    // -- Conversion functions (from / to relations to other types)
+    // -----------------------------
 
-    // ofMaps, toMaps, ofCSV, toCSV
+    /// Indicates whether the first and second rows contains a relation field names and types,
+    /// Which need to be provided if not present as CSV file rows.
+    type CSVFields = 
+        | NameFstTypeSnd
+        | NameSndTypeFst
+        | NameFst of string[] 
+        | TypeFst of string[] 
+        | NoHeader of (string[])*(string[])
+
+    /// Converts a CSV file to a Rel object.
+    /// The first or second row of the CSV file must provide the relation field names
+    /// The first or second row of the CSV file can provide the relation field type tags (e.g. "int", "double", "string", "#date" ...)
+    /// If mapNameType is provided, then field types are derived from field names (the CSV row of types is ignored).
+    /// If mapNameDefvals and mapTypeDefvals provide default values derived from field namess or types respectively (default based on field name prevails).
+    let ofCSV (mapNameType: Map<string,string> option) (mapTypeDefvals: Map<string,obj>) (mapNameDefvals: Map<string,obj>) (useVB: bool) (enclosingQuotes: bool) (trim: bool) (sep: string) (csvFields: CSVFields) (fpath: string) : Rel option = 
+        let lines = 
+            if useVB then 
+                Useful.CSV.readLinesVB enclosingQuotes trim sep fpath
+            else
+                Useful.CSV.readLines trim sep fpath
+        
+        let lineCount = lines |> Seq.length
+
+        if lineCount = 0 then
+            None
+        else
+            let skip n s = if n < lineCount then Seq.skip n s else [||] |> Seq.ofArray
+
+            // determines names, types, body as specified by inputs.
+            let (headerNames, headerTypeTags, bodyLines) =
+                match mapNameType, csvFields with
+                // Names from Csv file. (Name -> Type) provided. Types are derived from names. Csv file's type row is ignored.
+                | Some mapNmTy, NameFstTypeSnd ->
+                    let nms = lines |> Seq.item 0
+                    let tys = nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
+                    (nms, tys, lines |> skip 2)
+
+                // Names from Csv file. (Name -> Type) provided. Types are derived from names. Csv file's type row is ignored.
+                | Some mapNmTy, NameSndTypeFst ->
+                    let nms = lines |> Seq.item 1
+                    let tys = nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
+                    (nms, tys, lines |> skip 2)
+
+                // Names from Csv file. (Name -> Type) provided. Types are derived from names.
+                | Some mapNmTy, NameFst _ -> 
+                    let nms = lines |> Seq.item 0
+                    let tys = nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
+                    (nms, tys, lines |> skip 1)
+
+                // Names from inputs. (Name -> Type) provided. Types are derived from names. Csv file's type row is ignored.
+                | Some mapNmTy, TypeFst nms -> 
+                    let tys = nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
+                    (nms, tys, lines |> skip 1)
+
+                // Names from inputs. (Name -> Type) provided. Types are derived from names.
+                | Some mapNmTy, NoHeader (nms, _) -> 
+                    let tys = nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
+                    (nms, tys, lines)
+
+                // Names and type from Csv file.
+                | None, NameFstTypeSnd ->
+                    let nms = lines |> Seq.item 0
+                    let tys = lines |> Seq.item 1
+                    (nms, tys, lines |> skip 2)
+
+                // Names and type from Csv file.
+                | None, NameSndTypeFst ->
+                    let tys = lines |> Seq.item 0
+                    let nms = lines |> Seq.item 1
+                    (nms, tys, lines |> skip 2)
+
+                // Names from Csv file, types from inputs.
+                | None, NameFst tys -> 
+                    let nms = lines |> Seq.item 0
+                    (nms, tys, lines |> skip 1)
+
+                // Names from inputs, types from Csv file.
+                | None, TypeFst nms -> 
+                    let tys = lines |> Seq.item 0
+                    (nms, tys, lines |> skip 1)
+
+                // Names and types from inputs.
+                | None, NoHeader (nms, tys) -> (nms, tys, lines)
+
+            if (headerNames.Length = 0) || (headerNames.Length <> headerTypeTags.Length) then
+                None
+            elif bodyLines |> Seq.filter (fun line -> line.Length <> headerNames.Length) |> Seq.isEmpty |> not then
+                None
+            else
+                let headerTypes = headerTypeTags |> Array.map (API.Variant.labelType false)
+
+                if (headerTypes.Length <> headerTypeTags.Length) then
+                    None
+                else
+                    let relFields : Set<Field> = Field.zip headerNames headerTypes
+
+                    let toElem (fname: string, typeTag: string, text: string) : Elem =
+                        let defValue = 
+                            match mapNameDefvals |> Map.tryFind fname with
+                            | Some defval -> Some defval
+                            | None -> mapTypeDefvals |> Map.tryFind typeTag
+                        let res = API.Text.Tag.Any.def defValue typeTag text
+                        let elem : Elem = { fname = fname; value = res }
+                        elem
+
+                    let relBody : Set<Row> = 
+                        bodyLines 
+                        |> Seq.map (fun line -> Array.zip3 headerNames headerTypeTags line |> Array.map toElem)
+                        |> Set.ofSeq
+                
+                    let rel : Rel = { fields = relFields; body = relBody }
+                    rel |> Some
+
+    let ofMap1<'key1,'value when 'key1: comparison> 
+        (map: Map<'key1,'value>) (fnameKey1: string) (fnameValue: string) : Rel = 
+        let fieldNames = [| fnameKey1; fnameValue |]
+        let relFields = Field.zip fieldNames [| typeof<'key1>; typeof<'value> |]
+
+        let relBody =
+            [| for kvp in map ->
+                let k1 = kvp.Key
+                let row : Row = Elem.zip fieldNames [| k1; kvp.Value |]
+                row
+            |] |> Set.ofArray
+
+        { fields = relFields; body = relBody }
+
+    let ofMap2<'key1,'key2,'value when 'key1: comparison and 'key2: comparison> 
+        (map: Map<'key1*'key2,'value>) (fnameKey1: string) (fnameKey2: string) (fnameValue: string) : Rel = 
+        let fieldNames = [| fnameKey1; fnameKey2; fnameValue |]
+        let relFields = Field.zip fieldNames [| typeof<'key1>; typeof<'key2>; typeof<'value> |]
+
+        let relBody =
+            [| for kvp in map ->
+                let (k1, k2) = kvp.Key
+                let row : Row = Elem.zip fieldNames [| k1; k2; kvp.Value |]
+                row
+            |] |> Set.ofArray
+
+        { fields = relFields; body = relBody }
+
+    let ofMap3<'key1,'key2,'key3,'value when 'key1: comparison and 'key2: comparison and 'key3: comparison> 
+        (map: Map<'key1*'key2*'key3,'value>) 
+        (fnameKey1: string) (fnameKey2: string) (fnameKey3: string) (fnameValue: string) 
+        : Rel = 
+        let fieldNames = [| fnameKey1; fnameKey2; fnameKey3; fnameValue |]
+        let relFields = Field.zip fieldNames [| typeof<'key1>; typeof<'key2>; typeof<'key3>; typeof<'value> |]
+
+        let relBody =
+            [| for kvp in map ->
+                let (k1, k2, k3) = kvp.Key
+                let row : Row = Elem.zip fieldNames [| k1; k2; k3; kvp.Value |]
+                row
+            |] |> Set.ofArray
+
+        { fields = relFields; body = relBody }
+
+    let ofMap4<'key1,'key2,'key3,'key4,'value when 'key1: comparison and 'key2: comparison and 'key3: comparison and 'key4: comparison> 
+        (map: Map<'key1*'key2*'key3*'key4,'value>) 
+        (fnameKey1: string) (fnameKey2: string) (fnameKey3: string) (fnameKey4: string) (fnameValue: string) 
+        : Rel = 
+        let fieldNames = [| fnameKey1; fnameKey2; fnameKey3; fnameKey4; fnameValue |]
+        let relFields = Field.zip fieldNames [| typeof<'key1>; typeof<'key2>; typeof<'key3>; typeof<'key4>; typeof<'value> |]
+
+        let relBody =
+            [| for kvp in map ->
+                let (k1, k2, k3, k4) = kvp.Key
+                let row : Row = Elem.zip fieldNames [| k1; k2; k3; k4; kvp.Value |]
+                row
+            |] |> Set.ofArray
+
+        { fields = relFields; body = relBody }
+
+    let ofMap5<'key1,'key2,'key3,'key4,'key5,'value when 'key1: comparison and 'key2: comparison and 'key3: comparison and 'key4: comparison and 'key5: comparison> 
+        (map: Map<'key1*'key2*'key3*'key4*'key5,'value>) 
+        (fnameKey1: string) (fnameKey2: string) (fnameKey3: string) (fnameKey4: string) (fnameKey5: string) (fnameValue: string) 
+        : Rel = 
+        let fieldNames = [| fnameKey1; fnameKey2; fnameKey3; fnameKey4; fnameKey5; fnameValue |]
+        let relFields = Field.zip fieldNames [| typeof<'key1>; typeof<'key2>; typeof<'key3>; typeof<'key4>; typeof<'key5>; typeof<'value> |]
+
+        let relBody =
+            [| for kvp in map ->
+                let (k1, k2, k3, k4, k5) = kvp.Key
+                let row : Row = Elem.zip fieldNames [| k1; k2; k3; k4; k5; kvp.Value |]
+                row
+            |] |> Set.ofArray
+
+        { fields = relFields; body = relBody }
+
+    let ofMap6<'key1,'key2,'key3,'key4,'key5,'key6,'value when 'key1: comparison and 'key2: comparison and 'key3: comparison and 'key4: comparison and 'key5: comparison and 'key6: comparison> 
+        (map: Map<'key1*'key2*'key3*'key4*'key5*'key6,'value>) 
+        (fnameKey1: string) (fnameKey2: string) (fnameKey3: string) (fnameKey4: string) (fnameKey5: string) (fnameKey6: string) (fnameValue: string) 
+        : Rel = 
+        let fieldNames = [| fnameKey1; fnameKey2; fnameKey3; fnameKey4; fnameKey5; fnameKey6; fnameValue |]
+        let relFields = Field.zip fieldNames [| typeof<'key1>; typeof<'key2>; typeof<'key3>; typeof<'key4>; typeof<'key5>; typeof<'key6>; typeof<'value> |]
+
+        let relBody =
+            [| for kvp in map ->
+                let (k1, k2, k3, k4, k5, k6) = kvp.Key
+                let row : Row = Elem.zip fieldNames [| k1; k2; k3; k4; k5; k6; kvp.Value |]
+                row
+            |] |> Set.ofArray
+
+        { fields = relFields; body = relBody }
+
+    let ofMap7<'key1,'key2,'key3,'key4,'key5,'key6,'key7,'value when 'key1: comparison and 'key2: comparison and 'key3: comparison and 'key4: comparison and 'key5: comparison and 'key6: comparison and 'key7: comparison> 
+        (map: Map<'key1*'key2*'key3*'key4*'key5*'key6*'key7,'value>) 
+        (fnameKey1: string) (fnameKey2: string) (fnameKey3: string) (fnameKey4: string) (fnameKey5: string) (fnameKey6: string) (fnameKey7: string) (fnameValue: string) 
+        : Rel = 
+        let fieldNames = [| fnameKey1; fnameKey2; fnameKey3; fnameKey4; fnameKey5; fnameKey6; fnameKey7; fnameValue |]
+        let relFields = Field.zip fieldNames [| typeof<'key1>; typeof<'key2>; typeof<'key3>; typeof<'key4>; typeof<'key5>; typeof<'key6>; typeof<'key7>; typeof<'value> |]
+
+        let relBody =
+            [| for kvp in map ->
+                let (k1, k2, k3, k4, k5, k6, k7) = kvp.Key
+                let row : Row = Elem.zip fieldNames [| k1; k2; k3; k4; k5; k6; k7; kvp.Value |]
+                row
+            |] |> Set.ofArray
+
+        { fields = relFields; body = relBody }
+    
+    module Registry =
+        open Registry
+        open Useful.Generics
+        open Microsoft.FSharp.Reflection
+
+        let genType = typeof<Rel>
+        let genTypeMap = typeof<Map<_,_>>
+
+        type GenFn =
+            static member ofMap1<'K1,'V when 'K1: comparison> 
+                (map: Map<'K1,'V>) 
+                (fnameKey1: string) (fnameValue: string) 
+                : Rel =
+                ofMap1 map fnameKey1 fnameValue
+
+            static member ofMap2<'K1,'K2,'V when 'K1: comparison and 'K2: comparison> 
+                (map: Map<'K1*'K2,'V>) 
+                (fnameKey1: string) (fnameKey2: string) (fnameValue: string) 
+                : Rel =
+                ofMap2 map fnameKey1 fnameKey2 fnameValue
+
+            static member ofMap3<'K1,'K2,'K3,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison> 
+                (map: Map<'K1*'K2*'K3,'V>) 
+                (fnameKey1: string) (fnameKey2: string) (fnameKey3: string) (fnameValue: string) 
+                : Rel =
+                ofMap3 map fnameKey1 fnameKey2 fnameKey3 fnameValue
+
+            static member ofMap4<'K1,'K2,'K3,'K4,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison> 
+                (map: Map<'K1*'K2*'K3*'K4,'V>) 
+                (fnameKey1: string) (fnameKey2: string) (fnameKey3: string) (fnameKey4: string) (fnameValue: string) 
+                : Rel =
+                ofMap4 map fnameKey1 fnameKey2 fnameKey3 fnameKey4 fnameValue
+
+            static member ofMap5<'K1,'K2,'K3,'K4,'K5,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison> 
+                (map: Map<'K1*'K2*'K3*'K4*'K5,'V>) 
+                (fnameKey1: string) (fnameKey2: string) (fnameKey3: string) (fnameKey4: string) (fnameKey5: string) (fnameValue: string) 
+                : Rel =
+                ofMap5 map fnameKey1 fnameKey2 fnameKey3 fnameKey4 fnameKey5 fnameValue
+
+            static member ofMap6<'K1,'K2,'K3,'K4,'K5,'K6,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison> 
+                (map: Map<'K1*'K2*'K3*'K4*'K5*'K6,'V>) 
+                (fnameKey1: string) (fnameKey2: string) (fnameKey3: string) (fnameKey4: string) (fnameKey5: string) (fnameKey6: string) (fnameValue: string) 
+                : Rel =
+                ofMap6 map fnameKey1 fnameKey2 fnameKey3 fnameKey4 fnameKey5 fnameKey6 fnameValue
+
+            static member ofMap7<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison> 
+                (map: Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V>) 
+                (fnameKey1: string) (fnameKey2: string) (fnameKey3: string) (fnameKey4: string) (fnameKey5: string) (fnameKey6: string) (fnameKey7: string) (fnameValue: string) 
+                : Rel =
+                ofMap7 map fnameKey1 fnameKey2 fnameKey3 fnameKey4 fnameKey5 fnameKey6 fnameKey7 fnameValue
+
+        module In =
+            let MAX_ARITY_TOMAP = 8
+            /// Builds a map from a relation R-object and its keys and value columns.
+            /// groupValues allows to return several values corresponding to identical keys, otherwise only one value is returned and the others are ignored.
+            /// groupValues = true
+            ///    - result map type : ('a1, 'a2, ..., 'an) -> 'b[]
+            ///    - [| ("foo", 1); "value1" |] and [| ("foo", 1); "value2" |] relation rows will produce a map key-value pair (("foo", 1), [| "value1"; "value2" |])
+            /// groupValues = false
+            ///    - result map type : ('a1, 'a2, ..., 'an) -> 'b
+            ///    - [| ("foo", 1); "value1" |] and [| ("foo", 1); "value2" |] relation rows will produce a map key-value pair (("foo", 1), "value1")
+            let toMap (regKey: string) (groupValues: bool) (keysNames: string[]) (valueName: string) : obj option =
+                if keysNames.Length = 0 then
+                    None
+                else
+                    match MRegistry.tryExtract<Rel> regKey with
+                    | None -> None
+                    | Some rel ->
+                        let keepNames = Array.append keysNames [| valueName |]
+                        match Field.indicesOrdered rel.fields keepNames with
+                        | None -> None
+                        | Some keepIdxs ->
+                            let arity = keepIdxs.Length - 1
+                            if (arity < 2) || (arity > MAX_ARITY_TOMAP) then
+                                None
+                            else                                
+                                let rows = rel.body |> Set.toArray |> Array.map (Row.ofPositions keepIdxs) |> Array.distinct
+                                let colkeys = 
+                                    [| for j in 0 .. keepIdxs.Length - 2 -> 
+                                        [| for i in 0 .. rows.Length - 1 -> rows.[i] |> Row.value j |]
+                                    |]
+                                let colval = rows |> Array.map (Row.value (keepIdxs |> Array.last))
+
+                                let methodNm = sprintf "omap%d%s" arity (if groupValues then "s" else "")
+                                let methodTys = let flds = rel.fields |> Set.toArray in keepIdxs |> Array.map (fun i -> flds.[i].ftype)
+                                let resMap = MAP.Gen.mapN (Array.sub methodTys 0 arity) (methodTys |> Array.last) (colkeys |> Array.map box) colval
+                                resMap |> Some
+
+        module Out =
+            let ofMap (regKey: string) (splitTuple: bool) (fnameKeys: string[]) (fnameValue: string) : obj option = 
+                match MRegistry.tryExtractGen genTypeMap regKey with
+                | None -> None
+                | Some (tys, o) -> 
+                    // tys is a [| the map-object's key type, the map object's value type |]
+                    if not (FSharpType.IsTuple tys.[0]) || not splitTuple then
+                        if fnameKeys.Length <> 1 then
+                            None
+                        else
+                            let methodNm = "ofMap1"
+                            let args : obj[] = [| fnameKeys.[0]; box fnameValue |]
+                            let genTypeRObj = (tys, o)
+                            apply<GenFn> methodNm [||] args genTypeRObj
+                            |> Some
+                    else
+                        let elemTys = FSharpType.GetTupleElements(tys.[0])
+
+                        if elemTys.Length <> fnameKeys.Length then
+                            None
+                        else
+                            let methodNm = sprintf "ofMap%d" elemTys.Length
+                            let args : obj[] = Array.append (fnameKeys |> Array.map box) [| box fnameValue |]
+                            let genTypeRObj = (Array.append elemTys [| tys.[1] |], o)
+                            apply<GenFn> methodNm [||] args genTypeRObj
+                            |> Some
+
+
+        // toMaps, toCSV
 
 
 module Rel_XL =
@@ -6243,7 +6881,7 @@ module Rel_XL =
             //match In.D2.Tag.Multi.tryDV None xlkinds false typetags range with
             //| None -> Proxys.def.failed
             //| Some (gentys, o2D) ->
-            match Rel2.Rel.ofRng xlkinds fieldnames typetags range with
+            match Rel.Rel.ofRng xlkinds fieldnames typetags range with
             | None -> Proxys.def.failed
             | Some rel ->
                 rel |> MRegistry.registerBxd rfid 
@@ -6267,7 +6905,7 @@ module Rel_XL =
         let rfid = MRegistry.refID
 
         // result
-        match MRegistry.tryExtract<Rel2.Rel> rgRel with
+        match MRegistry.tryExtract<Rel.Rel> rgRel with
         | None -> Array2D.create 1 1 Proxys.def.failed
         | Some rel -> //Array2D.create 1 1 Proxys.def.failed
             rel.toRng

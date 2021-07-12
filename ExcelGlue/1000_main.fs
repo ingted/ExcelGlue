@@ -79,7 +79,10 @@ type Registry() =
 
     /// Returns a R-object's type, given its associated registry-guid.
     member this.tryType (regKey: string) : Type option =
-        regKey |> this.tryGet |> Option.map (fun o -> o.GetType())
+        // regKey |> this.tryGet |> Option.map (fun o -> o.GetType()) // RESTORE !!!
+        let xxx = regKey |> this.tryGet 
+        let yyy = xxx |> Option.map (fun o -> o.GetType()) // RESTORE !!!
+        yyy
 
     /// Returns a corresponding xl-reference, given a registry-guid.
     member private this.tryFindRef (regKey: string) : string option = 
@@ -232,6 +235,21 @@ type Registry() =
                 None
             else
                 rgtypes |> Array.head |> Some
+
+        | :? (obj[]) as o1D ->
+            let rgtypes = 
+                o1D 
+                |> Array.map (fun o -> match o with | :? String as regKey -> this.tryType regKey | _ -> None)
+                |> Array.distinct
+                |> Array.choose id
+
+            if rgtypes.Length = 0 then
+                None
+            elif strict && rgtypes.Length > 1 then
+                None
+            else
+                rgtypes |> Array.head |> Some
+
         | :? string as regKey -> this.tryType regKey
         | _ -> None
 
@@ -420,6 +438,9 @@ module Useful =
                 a1Ds |> array2D
             else
                 Array2D.init a1Ds.[0].Length a1Ds.Length (fun i j -> a1Ds.[j].[i])
+
+        /// Convenience function to create a 2D singleton.
+        let singleton<'a> (a: 'a) = Array2D.create 1 1 a
 
     /// CSV files reading functions. 
     module CSV =
@@ -1152,21 +1173,22 @@ module API =
                 let tryDV (defValue1D: string[] option) (o1D: obj[])  = tryDV<string> defValue1D o1D
 
             /// Similar to Stg, but with an xl-value as primary input.
+            /// (Choice was made to make rowWiseDef false. A much more frequent choice.)
             [<RequireQualifiedAccess>]
             module OStg =
                 /// Converts an obj[] to a string[], given a default-value for non-string elements.
-                let def (rowWiseDef: bool) (defValue: string) (xlValue: obj) = Cast.to1D rowWiseDef xlValue |> Stg.def defValue 
+                let def (defValue: string) (xlValue: obj) = Cast.to1D false xlValue |> Stg.def defValue 
 
                 /// optional-type default
                 module Opt = 
                     /// Converts an obj[] to a ('a option)[], given a default-value for non-string elements.
-                    let def (rowWiseDef: bool) (defValue: string option) (xlValue: obj) = Cast.to1D rowWiseDef xlValue |> Stg.Opt.def defValue 
+                    let def (defValue: string option) (xlValue: obj) = Cast.to1D false xlValue |> Stg.Opt.def defValue 
 
                 /// Converts an obj[] to a string[], removing any non-string element.
-                let filter (rowWiseDef: bool) (xlValue: obj) = Cast.to1D rowWiseDef xlValue |> Stg.filter
+                let filter (xlValue: obj) = Cast.to1D false xlValue |> Stg.filter
 
                 /// Converts an obj[] to an optional 'a[]. All the elements must be string, otherwise defValue array is returned. 
-                let tryDV (rowWiseDef: bool) (defValue1D: string[] option) (xlValue: obj)  = Cast.to1D rowWiseDef xlValue |> Stg.tryDV defValue1D
+                let tryDV (defValue1D: string[] option) (xlValue: obj)  = Cast.to1D false xlValue |> Stg.tryDV defValue1D
 
             [<RequireQualifiedAccess>]
             module Dbl =
@@ -2721,7 +2743,7 @@ module Cast_XL =
         | "O" -> let a1D = In.D1.Stg.Opt.def None o1D
                  a1D |> Out.D1.Prm.out<string option> proxys
         // strict method: either all the array's elements are of type string, or return None (here the 1-elem array [| "failed" |])
-        | "S" -> let a1D = In.D1.Stg.tryDV None o1D
+        | "S" -> let a1D = In.D1.Stg.tryDV None o1D // FIXME should use In.D1.OStg.tryDV instead
                  match a1D with None -> [| proxys.failed |] | Some a1d -> a1d |> Out.D1.Prm.out<string> proxys
         | _   -> let a1D = In.D1.Stg.def defVal o1D 
                  a1D |> Out.D1.Prm.out<string> proxys
@@ -3091,6 +3113,7 @@ module Fun =
                 |> Some
 
     /// Returns the input arguments' types of a FsharpFunc object.
+    /// argTypes should not include the output argument's type.
     let compatibleArgTypes (ofun: obj) (argTypes: Type[]) : bool =
         match inputTypes ofun with 
         | None -> false
@@ -3113,18 +3136,18 @@ module Fun =
     //    - 11 to 15 inputs => 2 inner functions
     //    ...
 
-    let MAX_ARITY_FILTER = 5
+    let MAX_ARITY_FILTER = 10
     type Filter =
-        static member Filter1<'A1> (f: 'A1 -> bool) (x1: 'A1) : bool = f x1
-        static member Filter2<'A1,'A2> (f: 'A1 -> 'A2 -> bool) (x1: 'A1) (x2: 'A2) : bool = f x1 x2
-        static member Filter3<'A1,'A2,'A3> (f: 'A1 -> 'A2 -> 'A3 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) : bool = f x1 x2 x3
-        static member Filter4<'A1,'A2,'A3,'A4> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) : bool = f x1 x2 x3 x4
-        static member Filter5<'A1,'A2,'A3,'A4,'A5> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) : bool = f x1 x2 x3 x4 x5
-        //static member Filter6<'A1,'A2,'A3,'A4,'A5,'A6> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) : bool = f x1 x2 x3 x4 x5 x6
-        //static member Filter7<'A1,'A2,'A3,'A4,'A5,'A6,'A7> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> 'A7 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) (x7: 'A7) : bool = f x1 x2 x3 x4 x5 x6 x7
-        //static member Filter8<'A1,'A2,'A3,'A4,'A5,'A6,'A7,'A8> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> 'A7 -> 'A8 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) (x7: 'A7) (x8: 'A8) : bool = f x1 x2 x3 x4 x5 x6 x7 x8
-        //static member Filter9<'A1,'A2,'A3,'A4,'A5,'A6,'A7,'A8,'A9> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> 'A7 -> 'A8 -> 'A9 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) (x7: 'A7) (x8: 'A8) (x9: 'A9) : bool = f x1 x2 x3 x4 x5 x6 x7 x8 x9
-        //static member Filter10<'A1,'A2,'A3,'A4,'A5,'A6,'A7,'A8,'A9,'A10> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> 'A7 -> 'A8 -> 'A9 -> 'A10 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) (x7: 'A7) (x8: 'A8) (x9: 'A9) (x10: 'A10) : bool = f x1 x2 x3 x4 x5 x6 x7 x8 x9 x10
+        static member filter1<'A1> (f: 'A1 -> bool) (x1: 'A1) : bool = f x1
+        static member filter2<'A1,'A2> (f: 'A1 -> 'A2 -> bool) (x1: 'A1) (x2: 'A2) : bool = f x1 x2
+        static member filter3<'A1,'A2,'A3> (f: 'A1 -> 'A2 -> 'A3 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) : bool = f x1 x2 x3
+        static member filter4<'A1,'A2,'A3,'A4> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) : bool = f x1 x2 x3 x4
+        static member filter5<'A1,'A2,'A3,'A4,'A5> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) : bool = f x1 x2 x3 x4 x5
+        static member filter6<'A1,'A2,'A3,'A4,'A5,'A6> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) : bool = f x1 x2 x3 x4 x5 x6
+        static member filter7<'A1,'A2,'A3,'A4,'A5,'A6,'A7> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> 'A7 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) (x7: 'A7) : bool = f x1 x2 x3 x4 x5 x6 x7
+        static member filter8<'A1,'A2,'A3,'A4,'A5,'A6,'A7,'A8> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> 'A7 -> 'A8 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) (x7: 'A7) (x8: 'A8) : bool = f x1 x2 x3 x4 x5 x6 x7 x8
+        static member filter9<'A1,'A2,'A3,'A4,'A5,'A6,'A7,'A8,'A9> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> 'A7 -> 'A8 -> 'A9 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) (x7: 'A7) (x8: 'A8) (x9: 'A9) : bool = f x1 x2 x3 x4 x5 x6 x7 x8 x9
+        static member filter10<'A1,'A2,'A3,'A4,'A5,'A6,'A7,'A8,'A9,'A10> (f: 'A1 -> 'A2 -> 'A3 -> 'A4 -> 'A5 -> 'A6 -> 'A7 -> 'A8 -> 'A9 -> 'A10 -> bool) (x1: 'A1) (x2: 'A2) (x3: 'A3) (x4: 'A4) (x5: 'A5) (x6: 'A6) (x7: 'A7) (x8: 'A8) (x9: 'A9) (x10: 'A10) : bool = f x1 x2 x3 x4 x5 x6 x7 x8 x9 x10
 
     let filter (ofun: obj) (args: obj[]) : bool =
         match arity ofun with
@@ -3136,7 +3159,7 @@ module Fun =
             if (argTypes.Length > rank) || (not (compatibleArgTypes ofun argTypes)) then
                 false
             else
-                let methodNm = sprintf "Filter%d" rank
+                let methodNm = sprintf "filter%d" rank
                 let res = Useful.Generics.invoke<Filter> methodNm funtys (Array.append [| ofun |] args)
                 res :?> bool
 
@@ -3147,12 +3170,12 @@ module Fun =
         | None -> Array.create argss.Length false
         | Some rank when rank > MAX_ARITY_FILTER -> Array.create argss.Length false
         | Some rank -> 
-            let funtys = ofun.GetType().BaseType.GetGenericArguments()
+            //let funtys = ofun.GetType().BaseType.GetGenericArguments()
             if (argTypes.Length > rank) || (not (compatibleArgTypes ofun argTypes)) then
                 Array.create argss.Length false
             else
-                let methodNm = sprintf "Filter%d" rank
-                let filterFun (args: obj[]) = Useful.Generics.invoke<Filter> methodNm funtys (Array.append [| ofun |] args)
+                let methodNm = sprintf "filter%d" rank
+                let filterFun (args: obj[]) = Useful.Generics.invoke<Filter> methodNm argTypes (Array.append [| ofun |] args)
                 let res = argss |> Array.map (filterFun >> (fun o -> o :?> bool))
                 res
 
@@ -3252,8 +3275,8 @@ module Fun_XL =
 
         // intermediary stage
         let useInternalSession = API.In.D0.Bool.def false rgFsiSession
-        let directive1D = API.In.D1.OStg.tryDV false None directives
-        let path1D = API.In.D1.OStg.tryDV false None pathOrCodes
+        let directive1D = API.In.D1.OStg.tryDV None directives
+        let path1D = API.In.D1.OStg.tryDV None pathOrCodes
         let outputWs = API.In.D0.Bool.def false outputWarnings
 
         let reference (directive: string, path: string) =
@@ -3305,7 +3328,7 @@ module Fun_XL =
         // intermediary stage
         let register = API.In.D0.Bool.def true registerObject
         let outputWs = API.In.D0.Bool.def false outputWarnings
-        let expression = API.In.D1.OStg.tryDV false None expression |> Option.map (fun exprs -> String.Join("\n", exprs))
+        let expression = API.In.D1.OStg.tryDV None expression |> Option.map (fun exprs -> String.Join("\n", exprs))
 
         // caller cell's reference ID
         let rfid = MRegistry.refID
@@ -3340,7 +3363,7 @@ module Fun_XL =
         let register = API.In.D0.Bool.def true registerObject
 
         // intermediary stage
-        let expression = API.In.D1.OStg.tryDV false None expression |> Option.map (fun exprs -> String.Join("\n", exprs))
+        let expression = API.In.D1.OStg.tryDV None expression |> Option.map (fun exprs -> String.Join("\n", exprs))
         let rgFSharpFunc = API.In.D0.Stg.Opt.def None rgFSharpFunc
 
         // caller cell's reference ID
@@ -3551,6 +3574,10 @@ module A1D =
         static member out<'A> (a1D: 'A[]) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) : obj[] = 
             a1D |> Array.map box |> (API.Out.D1.Reg.out<'A> unwrapOptions refKey proxys)
             
+        static member outObj<'A> (o1D: obj[]) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) : obj[] = 
+            let a1D = o1D |> Array.map (fun o -> o :?> 'A)
+            a1D |> Array.map box |> (API.Out.D1.Reg.out<'A> unwrapOptions refKey proxys)
+
         static member count<'A> (a1D: 'A[]) : int = a1D |> Array.length
 
         static member tryElem<'A> (a1D: 'A[]) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) (index: int) : obj = 
@@ -3862,7 +3889,7 @@ module A1D_XL =
         : obj =
 
         // intermediary stage
-        let expression = API.In.D1.OStg.tryDV false None expression |> Option.map (fun exprs -> String.Join("\n", exprs))
+        let expression = API.In.D1.OStg.tryDV None expression |> Option.map (fun exprs -> String.Join("\n", exprs))
         let rgFSharpFunc = API.In.D0.Stg.Opt.def None rgFSharpFunc
 
         // caller cell's reference ID
@@ -3885,7 +3912,7 @@ module A1D_XL =
         : obj =
 
         // intermediary stage
-        let expression = API.In.D1.OStg.tryDV false None expression |> Option.map (fun exprs -> String.Join("\n", exprs))
+        let expression = API.In.D1.OStg.tryDV None expression |> Option.map (fun exprs -> String.Join("\n", exprs))
         let rgFSharpFunc = API.In.D0.Stg.Opt.def None rgFSharpFunc
 
         // caller cell's reference ID
@@ -5786,6 +5813,7 @@ module MAP_XL =
 module Rel =
     open API
     open System.Collections
+    open type Out.Proxys
 
     // a custom compare function is needed because we use F# Set<Elem>, which requires a comparison constraint on its elements.
     [<RequireQualifiedAccess>]
@@ -5825,14 +5853,14 @@ module Rel =
     type Field = { fname: string; ftype: Type } with
         override f1.Equals(o2) =
             match o2 with 
-            | :? Field as f2 -> f1 = f2
+            | :? Field as f2 -> (f1.fname = f2.fname) && (f1.ftype = f2.ftype)
             | _ -> false
         override f.GetHashCode() = hash f
 
         interface System.IComparable with
             member f1.CompareTo o2 =
                 match o2 with 
-                | :? Field as f2 -> f1.fname.CompareTo(f2.fname)
+                | :? Field as f2 -> Operators.compare f1.fname f2.fname |> sign // f1.fname.CompareTo(f2.fname)
                 | _ -> invalidArg "o2" "Field: Cannot compare values of different types."
 
         static member zip (fieldNames: string[]) (fieldTypes: Type[]) : Set<Field> =
@@ -5910,14 +5938,14 @@ module Rel =
 
         /// Returns fields common to both fields sets.
         /// Incompatible fields will be excluded.
-        static member common (fields1: Set<Field>) (fields2: Set<Field>) : Set<Field> = Set.intersect fields1 fields1
+        static member common (fields1: Set<Field>) (fields2: Set<Field>) : Set<Field> = Set.intersect fields1 fields2
 
         /// Returns true if the two fields sets are disjoint.
         /// Incompatible sets might return true.
-        static member disjoint (fields1: Set<Field>) (fields2: Set<Field>) : bool = Field.common fields1 fields1 |> Set.isEmpty
+        static member disjoint (fields1: Set<Field>) (fields2: Set<Field>) : bool = Field.common fields1 fields2 |> Set.isEmpty
 
         /// Returns true if fields2 is included in fields1.
-        static member isSuperset (fields1: Set<Field>) (fields2: Set<Field>) : bool = Set.isSuperset fields1 fields1
+        static member isSuperset (fields1: Set<Field>) (fields2: Set<Field>) : bool = Set.isSuperset fields1 fields2
 
         /// Returns true if all fnames are all fields' names. 
         static member containsNames (fnames: Set<string>) (fields: Set<Field>) : bool = Set.isSuperset (fields |> Field.names) fnames
@@ -5940,8 +5968,8 @@ module Rel =
                         e1.fname.CompareTo(e2.fname)
                     else 
                         // should never reach there for valid relation
-                        // CompareTBD.compareTBD e1.value e2.value // RESTORE ME?
-                        failwith "should never reach there for valid relation."
+                        CompareTBD.compareTBD e1.value e2.value // RESTORE ME?
+                        // failwith "should never reach there for valid relation."
                 | _ -> invalidArg "o2" "Elem: Cannot compare values of different types."
 
         static member zip (fieldNames: string[]) (elems: obj[]) : Elem[] =
@@ -5951,7 +5979,7 @@ module Rel =
     type Row = Elem[]
 
     module Row =
-        let value (index: int) (row: Row) : obj = let elem = row.[index] in elem.value
+        let item (index: int) (row: Row) : obj = let elem = row.[index] in elem.value
         let sort (row: Row) : Row = row |> Array.sortBy (fun elem -> elem.fname)
 
         let ofPositions (positions: int[]) (row: Row) : Row = positions |> Array.map (fun i -> row.[i])
@@ -5994,9 +6022,59 @@ module Rel =
                     let rel : Rel = { fields = fields; body = body }
                     rel |> Some
 
-        member r.toRng =
-            let body = r.body |> Set.toArray |> array2D |> Array2D.map (fun elem -> elem.value)
-            body
+        static member ofHead (fieldNames: string[]) (typeTags: string[]) : Rel option = 
+            let len = fieldNames.Length
+            let ftypes = typeTags |> Array.map (Variant.labelType false)
+
+            let valid = (ftypes.Length = len) && (fieldNames |> Array.distinct |> Array.length = len)
+
+            if not valid then
+                None
+            else                
+                let fields = Field.zip fieldNames (typeTags |> Array.map (Variant.labelType false))
+                let rel : Rel = { fields = fields; body = Set.empty }
+                rel |> Some
+
+        member r.head = r.fields |> Field.names |> Set.toArray
+
+        member r.toRng0 (showHead: bool) : obj[,] =
+            let rows = r.body |> Set.toArray |> Array.map (fun row -> row |> Array.map (fun elem -> elem.value))
+            if showHead then
+                Array.append [| (r.head |> Array.map box) |] rows
+            else
+                rows
+            |> array2D
+
+        member r.toRng (showHead: bool) (unwrapOptions: bool) (refKey: String) (proxys: Out.Proxys) : obj[,] =
+            // let rows = r.body |> Set.toArray |> Array.map (fun row -> row |> Array.map (fun elem -> elem.value))
+            if r = Rel.DEE then
+                box "<DEE>" |> Useful.Array2D.singleton
+            elif r = Rel.DUM then
+                box "<DUM>" |> Useful.Array2D.singleton
+            elif r.card = 0 then
+                box proxys.nan |> Useful.Array2D.singleton
+            elif r.count = 0 then
+                if showHead then
+                    [| r.head |> Array.map box |] |> array2D
+                else
+                    box proxys.empty |> Useful.Array2D.singleton
+            else
+                let ftypes = r.fields |> Set.toArray |> Array.map (fun field -> field.ftype)
+                let rows = r.body |> Set.toArray |> Array.map (fun row -> row |> Array.map (fun elem -> elem.value))
+                let xlColumns = 
+                    [| for j in ftypes.GetLowerBound(0) .. ftypes.GetUpperBound(0) -> 
+                          let methodNm = "outObj"
+                          let col = [| for i in rows.GetLowerBound(0) .. rows.GetUpperBound(0) -> rows.[i].[j] |]
+                          let xlcol = Useful.Generics.apply<A1D.GenFn> methodNm [||] [| unwrapOptions; refKey; proxys |] ([| ftypes.[j] |], col)
+                          xlcol :?> obj[]
+                    |]
+
+                if showHead then
+                    let head = r.head
+                    let xlColumns' = xlColumns |> Array.mapi (fun i col -> Array.append [| box head.[i] |] col)
+                    xlColumns' |> Useful.Array2D.array2D false
+                else
+                    xlColumns |> Useful.Array2D.array2D false
 
         /// Returns true if some fields have the same name but have different types.
         static member incompatible (r1: Rel) (r2: Rel) : bool = Field.incompatible r1.fields r2.fields
@@ -6178,7 +6256,7 @@ module Rel =
             semi false r1 r2
 
     /// Semi-minus operator.
-    /// TODO.
+    /// All rows / tuples of r1 which have no counterpart in r2.
     let semiMinus (r1: Rel) (r2: Rel) : Rel option = 
         if Rel.incompatible r1 r2 then
             None
@@ -6359,9 +6437,8 @@ module Rel =
             rel |> Some
 
     /// Un-pivot operator.
-    /// operations = operators, operNames, resultNames, resultTypes
-    /// operator should be typeof<operName> -> resultType
-    let unpivot (r: Rel) (unpivotNames: Set<string>) (resultName: string) (resultValName: string) (groupName: string) : Rel option =
+    /// FIXME
+    let unpivot (r: Rel) (unpivotNames: Set<string>) (resultName: string) (resultValName: string) : Rel option =
         let perFields = Field.project r.fields true unpivotNames           
         let unpivFields = Field.project r.fields false unpivotNames
         let unpivTypes = unpivFields |> Set.toArray |> Array.map (fun field -> field.ftype) |> Array.distinct
@@ -6435,13 +6512,11 @@ module Rel =
 
     /// Restrict operator.
     /// ofun is a FsharpFunc object.
-    let restrict (r: Rel) (ofun: obj) (argNames: string[]) (resultName: string) : Rel option =
+    let restrict (r: Rel) (ofun: obj) (argNames: string[]) : Rel option =
         match Field.types r.fields argNames with
         | None -> None
         | Some argTypes ->
             if not (Fun.compatibleArgTypes ofun argTypes) then
-                None
-            elif r.fields |> Field.containsNames (resultName |> Set.singleton) then
                 None
             else
                 match Field.indicesOrdered r.fields argNames with
@@ -6460,17 +6535,16 @@ module Rel =
                     let rel : Rel = { r with body = body }
                     rel |> Some
     
-    let display (r: Rel) (showHead: bool) (rowFrom: int) (rowCount: int) (sortOn: string[]) (descending: bool) (strict: bool) (firstNames: string[]) (lastNames: string[]) : obj[,] =
+    let display (r: Rel) (showHead: bool) (rowFrom: int option) (rowCount: int option) (sortOn: string[]) (descending: bool) (midColumns: bool) (firstNames: string[]) (lastNames: string[]) : obj[,] =
         if r.card = 0 then
             Useful.Array2D.empty2D<obj>
         else
-
             // header names
             let allNames = r.fields |> Field.names |> Set.toArray
             let fstNames = firstNames |> Array.filter (fun name -> allNames |> Array.contains name)
             let lstNames = lastNames |> Array.filter (fun name -> (allNames |> Array.contains name) || (fstNames |> Array.contains name |> not))
             let midNames = 
-                if strict then 
+                if midColumns then 
                     [||]
                 else
                     allNames |> Array.except (Array.append fstNames lstNames)            
@@ -6485,7 +6559,6 @@ module Rel =
             if headerNames.Length = 0 then
                 Useful.Array2D.empty2D<obj>
             else
-
                 // rows                
                 let rowsSorted = 
                     let allRows = r.body |> Set.toArray
@@ -6495,7 +6568,9 @@ module Rel =
                         let sortBy = if descending then Array.sortByDescending else Array.sortBy
                         allRows |> sortBy (Row.ofPositions sortIdxs)
 
-                let rowsCropped = rowsSorted.[rowFrom .. (rowFrom + rowCount - 1)]
+                let rowFrm = rowFrom |> Option.defaultValue 0
+                let rowCnt = rowCount |> Option.defaultValue rowsSorted.Length
+                let rowsCropped = rowsSorted.[rowFrm .. (rowFrm + rowCnt - 1)]
                 let rowsDisplayColumns = rowsCropped |> Array.map (Row.ofPositions hdrIdxs)
                 let rowsBxd = rowsDisplayColumns |> Array.map (fun row -> row  |> Array.map (fun elem -> elem.value))
 
@@ -6808,9 +6883,9 @@ module Rel =
                                 let rows = rel.body |> Set.toArray |> Array.map (Row.ofPositions keepIdxs) |> Array.distinct
                                 let colkeys = 
                                     [| for j in 0 .. keepIdxs.Length - 2 -> 
-                                        [| for i in 0 .. rows.Length - 1 -> rows.[i] |> Row.value j |]
+                                        [| for i in 0 .. rows.Length - 1 -> rows.[i] |> Row.item j |]
                                     |]
-                                let colval = rows |> Array.map (Row.value (keepIdxs |> Array.last))
+                                let colval = rows |> Array.map (Row.item (keepIdxs |> Array.last))
 
                                 let methodNm = sprintf "omap%d%s" arity (if groupValues then "s" else "")
                                 let methodTys = let flds = rel.fields |> Set.toArray in keepIdxs |> Array.map (fun i -> flds.[i].ftype)
@@ -6854,21 +6929,21 @@ module Rel_XL =
     open API.Out
     open type Out.Proxys
 
-    [<ExcelFunction(Category="Relation", Description="Cast a 2D xl-range to a generic type array.")>]
+    let tryExtract<'a> = MRegistry.tryExtract<'a>
+    let tryExtractO = MRegistry.tryExtractO
+
+    [<ExcelFunction(Category="Relation", Description="Returns a relation R-object from Excel.")>]
     let rel_ofRng
-        ([<ExcelArgument(Description= "Field names array.")>] fieldNames: obj[])
-        ([<ExcelArgument(Description= "Type tags array: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj")>] typeTags: obj[])
+        ([<ExcelArgument(Description= "Field names.")>] fieldNames: obj[])
+        ([<ExcelArgument(Description= "Field type tags: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj")>] typeTags: obj[])
         ([<ExcelArgument(Description= "2D xl-range.")>] range: obj[,])
-        ([<ExcelArgument(Description= "[Only for doubleNaN tags: Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... Default is none.]")>] xlKinds: obj)
+        ([<ExcelArgument(Description= "[Only for doubleNaN tags: Kinds for which values are converted to Double.NaN. E.g. NA, ERR, TXT, !NUM... Default is \"NA\".]")>] xlKinds: obj)
         : obj  =
 
         // intermediary stage
-        //let rowWise = In.D0.Bool.def true rowWiseDirection
-        //let replmethod = In.D0.Stg.def "REPLACE" replaceMethod
-        //let defVal = In.D0.Absent.Obj.tryO defaultValue
         let fieldNames = API.In.D1.Stg.tryDV None fieldNames
         let typeTags = API.In.D1.Stg.tryDV None typeTags
-        let xlkinds = In.D0.Stg.def "NONE" xlKinds |> Kind.ofLabel
+        let xlkinds = In.D0.Stg.def "NA" xlKinds |> Kind.ofLabel
 
         // caller cell's reference ID
         let rfid = MRegistry.refID
@@ -6878,15 +6953,50 @@ module Rel_XL =
         | None, _ -> Proxys.def.failed
         | _, None -> Proxys.def.failed
         | Some fieldnames, Some typetags ->
-            //match In.D2.Tag.Multi.tryDV None xlkinds false typetags range with
-            //| None -> Proxys.def.failed
-            //| Some (gentys, o2D) ->
             match Rel.Rel.ofRng xlkinds fieldnames typetags range with
             | None -> Proxys.def.failed
             | Some rel ->
                 rel |> MRegistry.registerBxd rfid 
 
-    [<ExcelFunction(Category="Relation", Description="Extracts a relation out of a R-object.")>]
+    [<ExcelFunction(Category="Relation", Description="Returns a (row-wise) empty relation R-object from Excel.")>]
+    let rel_ofHead
+        ([<ExcelArgument(Description= "Field names.")>] fieldNames: obj[])
+        ([<ExcelArgument(Description= "Field type tags: bool, date, double, doubleNaN, string or obj. Add \'#'\ prefix for optional type: #bool, #date, #double, #doubleNaN, #string or #obj")>] typeTags: obj[])
+        : obj  =
+
+        // intermediary stage
+        let fieldNames = API.In.D1.Stg.tryDV None fieldNames
+        let typeTags = API.In.D1.Stg.tryDV None typeTags
+        let xlkinds = "NA" |> Kind.ofLabel
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+        
+        // result
+        match fieldNames, typeTags with
+        | None, _ -> Proxys.def.failed
+        | _, None -> Proxys.def.failed
+        | Some fieldnames, Some typetags ->
+            match Rel.Rel.ofHead fieldnames typetags with
+            | None -> Proxys.def.failed
+            | Some rel ->
+                rel |> MRegistry.registerBxd rfid 
+
+    [<ExcelFunction(Category="Relation", Description="Returns a Relation DEE R-object.")>]
+    let rel_DEE () : obj  =
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        Rel.Rel.DEE |> MRegistry.registerBxd rfid
+
+    [<ExcelFunction(Category="Relation", Description="Returns a Relation DUM R-object.")>]
+    let rel_DUM () : obj  =
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        Rel.Rel.DUM |> MRegistry.registerBxd rfid
+
+    [<ExcelFunction(Category="Relation", Description="Extracts a relation.")>]
     let rel_toRng
         ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
         ([<ExcelArgument(Description= "[Show head. Default is true.]")>] showHead: obj)
@@ -6896,6 +7006,7 @@ module Rel_XL =
         : obj[,] = 
 
         // intermediary stage
+        let showHead = In.D0.Bool.def true showHead
         let none = In.D0.Stg.def "<none>" noneIndicator
         let empty = In.D0.Stg.def "<empty>" emptyIndicator
         let proxys = { def with none = none; empty = empty }
@@ -6905,14 +7016,365 @@ module Rel_XL =
         let rfid = MRegistry.refID
 
         // result
-        match MRegistry.tryExtract<Rel.Rel> rgRel with
+        match tryExtract<Rel.Rel> rgRel with
         | None -> Array2D.create 1 1 Proxys.def.failed
-        | Some rel -> //Array2D.create 1 1 Proxys.def.failed
-            rel.toRng
-            //let body = rel.body
-        //match A2D.Reg.Out.out rgRel unwrapoptions rfid proxys with
-        //| None -> box ExcelError.ExcelErrorNA |> A2D.singleton
-        //| Some o2d -> o2d
+        | Some rel ->
+            rel.toRng showHead unwrapoptions rfid proxys
+
+    [<ExcelFunction(Category="Relation", Description="Displayss a relation.")>]
+    let rel_display
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        ([<ExcelArgument(Description= "Sorting fields.")>] sortingFields: obj)
+        ([<ExcelArgument(Description= "[Descending sort. Default if false.]")>] descending: obj)
+        ([<ExcelArgument(Description= "[Start row. Default is 0.]")>] startRow: obj)
+        ([<ExcelArgument(Description= "[Row count. Default is all rows.]")>] rowCount: obj)
+        ([<ExcelArgument(Description= "[Col. ordering. First columns. Default is none.]")>] firstCols: obj)
+        ([<ExcelArgument(Description= "[Col. ordering. Last columns. Default is none.]")>] lastCols: obj)
+        ([<ExcelArgument(Description= "[Mid columns. Only stated columns appear if true. Default is false.]")>] midCols: obj)
+        ([<ExcelArgument(Description= "[Show head. Default is true.]")>] showHead: obj)
+        : obj[,] = 
+        
+        // intermediary stage
+        let sortNames = API.In.D1.OStg.tryDV None sortingFields
+        let descending = In.D0.Bool.def false descending
+        let startRow = In.D0.Intg.Opt.def None startRow
+        let rowCount = In.D0.Intg.Opt.def None rowCount
+        let firstCols = API.In.D1.OStg.tryDV None firstCols |> Option.defaultValue [||]
+        let lastCols = API.In.D1.OStg.tryDV None lastCols |> Option.defaultValue [||]
+        let midCols = In.D0.Bool.def true midCols
+        let showHead = In.D0.Bool.def true showHead
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel, sortNames with
+        | Some rel, Some sortNms -> 
+            let relDspl = Rel.display rel showHead startRow rowCount sortNms descending midCols firstCols lastCols
+            relDspl
+        | _ -> Useful.Array2D.singleton Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Returns a relation number of fields / attributes.")>]
+    let rel_card
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        : obj = 
+
+        // result
+        match tryExtract<Rel.Rel> rgRel with
+        | None -> Proxys.def.failed
+        | Some rel -> box rel.card
+
+    [<ExcelFunction(Category="Relation", Description="Returns a relation number of rows / tuples.")>]
+    let rel_count
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        : obj = 
+
+        // result
+        match tryExtract<Rel.Rel> rgRel with
+        | None -> Proxys.def.failed
+        | Some rel -> box rel.count
+
+    [<ExcelFunction(Category="Relation", Description="Returns the union of 2 compatible relations.")>]
+    let rel_union
+        ([<ExcelArgument(Description= "Relation R-object 1.")>] rgRel1: string)
+        ([<ExcelArgument(Description= "Relation R-object 2.")>] rgRel2: string)
+        : obj = 
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel1, tryExtract<Rel.Rel> rgRel2 with
+        | Some rel1, Some rel2 -> 
+            match Rel.union rel1 rel2 with
+            | None -> Proxys.def.failed
+            | Some relUnion -> relUnion |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Returns the intersection of 2 compatible relations.")>]
+    let rel_inter
+        ([<ExcelArgument(Description= "Relation R-object 1.")>] rgRel1: string)
+        ([<ExcelArgument(Description= "Relation R-object 2.")>] rgRel2: string)
+        : obj = 
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel1, tryExtract<Rel.Rel> rgRel2 with
+        | Some rel1, Some rel2 -> 
+            match Rel.inter rel1 rel2 with
+            | None -> Proxys.def.failed
+            | Some relInter -> relInter |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Returns the difference between relation 1 and 2.")>]
+    let rel_minus
+        ([<ExcelArgument(Description= "Relation R-object 1.")>] rgRel1: string)
+        ([<ExcelArgument(Description= "Relation R-object 2.")>] rgRel2: string)
+        : obj = 
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel1, tryExtract<Rel.Rel> rgRel2 with
+        | Some rel1, Some rel2 -> 
+            match Rel.minus rel1 rel2 with
+            | None -> Proxys.def.failed
+            | Some relMinus -> relMinus |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Returns the product of 2 disjoint relations.")>]
+    let rel_prod
+        ([<ExcelArgument(Description= "Relation R-object 1.")>] rgRel1: string)
+        ([<ExcelArgument(Description= "Relation R-object 2.")>] rgRel2: string)
+        : obj = 
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel1, tryExtract<Rel.Rel> rgRel2 with
+        | Some rel1, Some rel2 -> 
+            match Rel.prod rel1 rel2 with
+            | None -> Proxys.def.failed
+            | Some relProd -> relProd |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Returns the join operation of 2 relations.")>]
+    let rel_join
+        ([<ExcelArgument(Description= "Relation R-object 1.")>] rgRel1: string)
+        ([<ExcelArgument(Description= "Relation R-object 2.")>] rgRel2: string)
+        : obj = 
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel1, tryExtract<Rel.Rel> rgRel2 with
+        | Some rel1, Some rel2 -> 
+            match Rel.join rel1 rel2 with
+            | None -> Proxys.def.failed
+            | Some relJoin -> relJoin |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Project a relation onto the given fields.")>]
+    let rel_project
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        ([<ExcelArgument(Description= "Project field names.")>] projectNames: obj)
+        ([<ExcelArgument(Description= "[Project fields away (and keep the others). Default is false.]")>] projectAway: obj)
+        : obj = 
+
+        // intermediary stage
+        let projNames = In.D1.OStg.tryDV None projectNames
+        let projAway = In.D0.Bool.def false projectAway
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel, projNames with
+        | Some rel, Some keepNames -> 
+            let relProj = Rel.project projAway rel (keepNames |> Set.ofArray)
+            relProj |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Returns the semi-difference between relation 1 and 2.")>]
+    let rel_sminus
+        ([<ExcelArgument(Description= "Relation R-object 1.")>] rgRel1: string)
+        ([<ExcelArgument(Description= "Relation R-object 2.")>] rgRel2: string)
+        : obj = 
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel1, tryExtract<Rel.Rel> rgRel2 with
+        | Some rel1, Some rel2 -> 
+            match Rel.semiMinus rel1 rel2 with
+            | None -> Proxys.def.failed
+            | Some relSMinus -> relSMinus |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Returns the semi-join operation of 2 relations.")>]
+    let rel_sjoin
+        ([<ExcelArgument(Description= "Relation R-object 1.")>] rgRel1: string)
+        ([<ExcelArgument(Description= "Relation R-object 2.")>] rgRel2: string)
+        : obj = 
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel1, tryExtract<Rel.Rel> rgRel2 with
+        | Some rel1, Some rel2 -> 
+            match Rel.semiJoin rel1 rel2 with
+            | None -> Proxys.def.failed
+            | Some relSJoin -> relSJoin |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Returns the left (outer) join of 2 relations.")>]
+    let rel_ljoin
+        ([<ExcelArgument(Description= "Relation R-object 1.")>] rgRel1: string)
+        ([<ExcelArgument(Description= "Relation R-object 2.")>] rgRel2: string)
+        ([<ExcelArgument(Description= "[Bool default value. Default is 0.]")>] boolDef: obj)
+        ([<ExcelArgument(Description= "[Int default value. Default is 0.]")>] intDef: obj)
+        ([<ExcelArgument(Description= "[Double default value. Default is 0.0.]")>] doubleDef: obj)
+        ([<ExcelArgument(Description= "[Date default value. Default is 1 Jan 2000.]")>] dateDef: obj)
+        ([<ExcelArgument(Description= "[String default value. Default is \"\".]")>] stringDef: obj)
+        : obj = 
+        
+        // intermediary stage
+        let boolDef = In.D0.Bool.def false boolDef
+        let intDef = In.D0.Intg.def 0 intDef
+        let doubleDef = In.D0.Dbl.def 0.0 doubleDef // FIXME allow NaN
+        let dateDef = In.D0.Dte.def (DateTime(2000,1,1)) dateDef
+        let stringDef = In.D0.Stg.def "" stringDef
+        let defaultValues (field: Rel.Field) = 
+            match field.ftype with
+            | x when x = typeof<bool> -> box boolDef
+            | x when x = typeof<int> -> box intDef
+            | x when x = typeof<double> -> box doubleDef
+            | x when x = typeof<DateTime> -> box dateDef
+            | x when x = typeof<string> -> box stringDef
+            | _ -> failwith "NOT IMPLEMENTED YET"
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel1, tryExtract<Rel.Rel> rgRel2 with
+        | Some rel1, Some rel2 -> 
+            match Rel.leftJoin defaultValues rel1 rel2 with
+            | None -> Proxys.def.failed
+            | Some relLJoin -> relLJoin |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Returns a relation un-pivotted.")>]
+    let rel_unpivot
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        ([<ExcelArgument(Description= "Un-pivot field names.")>] unpivotNames: obj)
+        ([<ExcelArgument(Description= "Key field name.")>] keyField: string)
+        ([<ExcelArgument(Description= "Value field name.")>] valueField: string)
+        : obj = 
+        
+        // intermediary stage
+        let unpivotNames = In.D1.OStg.tryDV None unpivotNames
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel, unpivotNames with
+        | Some rel, Some unpivNames -> 
+            match Rel.unpivot rel (unpivNames |> Set.ofArray) keyField valueField with
+            | None -> Proxys.def.failed
+            | Some relUpivot -> relUpivot |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Returns a filtered relation.")>]
+    let rel_restrict
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        ([<ExcelArgument(Description= "Filter ('a -> bool) function R-object (max. arity 5).")>] rgFilterFn: string)
+        ([<ExcelArgument(Description= "Argument 1")>] argument1: obj)
+        ([<ExcelArgument(Description= "Argument 2")>] argument2: obj)
+        ([<ExcelArgument(Description= "Argument 3")>] argument3: obj)
+        ([<ExcelArgument(Description= "Argument 4")>] argument4: obj)
+        ([<ExcelArgument(Description= "Argument 5")>] argument5: obj)
+        : obj = 
+        
+        // intermediary stage
+        let argNames = 
+            [| argument1; argument2; argument3; argument4; argument5 |]
+            |> Array.choose (In.D0.Stg.Opt.def None)
+
+        if argNames.Length = 0 then
+            Proxys.def.failed
+        else
+            // caller cell's reference ID
+            let rfid = MRegistry.refID
+
+            // result
+            match tryExtract<Rel.Rel> rgRel, tryExtractO rgFilterFn with
+            | Some rel, Some ofun -> 
+                match Rel.restrict rel ofun argNames with
+                | None -> Proxys.def.failed
+                | Some relRestrict -> relRestrict |> MRegistry.registerBxd rfid
+            | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Returns an extended relation.")>]
+    let rel_extend
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        ([<ExcelArgument(Description= "Filter ('a -> bool) function R-object (max. arity 5).")>] rgFilterFn: string)
+        ([<ExcelArgument(Description= "Output name")>] outputName: string)
+        ([<ExcelArgument(Description= "Argument 1")>] argument1: obj)
+        ([<ExcelArgument(Description= "Argument 2")>] argument2: obj)
+        ([<ExcelArgument(Description= "Argument 3")>] argument3: obj)
+        ([<ExcelArgument(Description= "Argument 4")>] argument4: obj)
+        ([<ExcelArgument(Description= "Argument 5")>] argument5: obj)
+        : obj = 
+        
+        // intermediary stage
+        let argNames = 
+            [| argument1; argument2; argument3; argument4; argument5 |]
+            |> Array.choose (In.D0.Stg.Opt.def None)
+
+        if argNames.Length = 0 then
+            Proxys.def.failed
+        else
+            // caller cell's reference ID
+            let rfid = MRegistry.refID
+
+            // result
+            match tryExtract<Rel.Rel> rgRel, tryExtractO rgFilterFn with
+            | Some rel, Some ofun -> 
+                match Rel.extend rel ofun argNames outputName with
+                | None -> Proxys.def.failed
+                | Some relExtd -> relExtd |> MRegistry.registerBxd rfid
+            | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Groups some fields as a relation field.")>]
+    let rel_group
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        ([<ExcelArgument(Description= "Per names.")>] perNames: obj)
+        ([<ExcelArgument(Description= "[Grouped attribute name. Default is \"GROUPED\".]")>] groupName: obj)
+        : obj = 
+        
+        // intermediary stage
+        let perNames = API.In.D1.OStg.tryDV None perNames
+        let groupName = In.D0.Stg.def "GROUPED" groupName
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel, perNames with
+        | Some rel, Some perNms -> 
+            match Rel.group rel (perNms |> Set.ofArray) groupName with
+            | None -> Proxys.def.failed
+            | Some relGrpd -> relGrpd |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Ungroups a relation field.")>]
+    let rel_ungroup
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        ([<ExcelArgument(Description= "[Grouped attribute name. Default is \"GROUPED\".]")>] groupName: obj)
+        : obj = 
+        
+        // intermediary stage
+        let groupName = In.D0.Stg.def "GROUPED" groupName
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel with
+        | Some rel -> 
+            match Rel.ungroup rel groupName with
+            | None -> Proxys.def.failed
+            | Some relUngrpd -> relUngrpd |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
 
 /// Simple template for generics
 module GenMtrx =

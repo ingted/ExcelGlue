@@ -307,174 +307,6 @@ module Registry =
     /// Master registry where all registered objects are held.
     let MRegistry = Registry()
 
-module Useful =
-    module Option =   
-        /// NONE should always precede SOME in active patterns.
-        let (|SOME|_|) : obj -> obj option =
-            let tyOpt = typedefof<option<_>>
-            fun (a:obj) ->
-                let aty = a.GetType()
-                let v = aty.GetProperty("Value")
-                if aty.IsGenericType && aty.GetGenericTypeDefinition() = tyOpt then
-                    if a = null then None else Some(v.GetValue(a, [| |]))
-                else None
-
-        /// NONE should always precede SOME in active patterns.
-        let (|NONE|_|) : obj -> obj option =
-          fun (a:obj) -> if a = null then Some (box "None detected here") else None
-
-        let unwrap (o: obj) : obj option =   
-            match o with    
-            | NONE(_) -> None  // NONE first
-            | SOME(x) -> Some x // SOME second
-            | _ -> failwith "Not an optional type."
-        
-        /// Returns none for None values, or map non-optional and Some values.
-        /// Useful for mapping optional and non-optional values alike back to Excel.
-        let map (none: obj) (mapping: obj -> obj) (o: obj) : obj =   
-            match o with    
-            | NONE(_) -> none
-            | SOME(x) -> mapping x
-            | _ -> mapping o
-        
-        /// Returns the underlying value's type for an optional type.
-        /// I.e. typeof<int option> returns typeof<int> |> Some.
-        /// None otherwise.
-        let uType (aType: Type) : Type option =
-            let tyOpt = typedefof<option<_>>
-            if aType.IsGenericType && aType.GetGenericTypeDefinition() = tyOpt then
-                aType.GenericTypeArguments |> Array.head |> Some
-            else
-                None
-
-    module Generics =    
-        /// Invoke 'gen's methodName member, over methodTypes generic types for methodArguments.
-        let invoke<'gen> (methodName: string) (methodTypes: Type[]) (methodArguments: obj[]) : obj =
-            let meth = typeof<'gen>.GetMethod(methodName)
-            let genm = meth.MakeGenericMethod(methodTypes)
-            let res  = genm.Invoke(null, methodArguments)
-            res
-
-        /// Invoke 'gen's methodName member, with:
-        ///    - generic types : fst genTypeRObj
-        ///    - arguments : otherArgumentsLeft; fst genTypeRObj; otherArgumentsRight
-        let apply<'gen> (methodName: string) (otherArgumentsLeft: obj[]) (otherArgumentsRight: obj[]) (genTypeRObj: Type[]*obj) : obj =
-            let (gentys, robj) = genTypeRObj
-            invoke<'gen> methodName gentys ([| otherArgumentsLeft; [| robj |];  otherArgumentsRight |] |> Array.concat)
-
-        let apply2TBD<'gen,'a> (methodName: string) (otherArgumentsLeft: obj[]) (otherArgumentsRight: obj[]) (genTypeRObj: Type[]*obj) : obj =
-            let (gentys, robj) = genTypeRObj
-            invoke<'gen> methodName gentys ([| otherArgumentsLeft; [| (robj :?> 'a[]) |> box |];  otherArgumentsRight |] |> Array.concat)
-
-        /// 1 (common) generic-type for 2 generic-arguments.
-        /// E.g. myFun<'a> (arg1: 'a) (arg2: 'a) (someExtraArg: ...) = ...
-        let applyMulti<'gen> (methodName: string) (otherArgumentsLeft: obj[]) (otherArgumentsRight: obj[]) (genTypes: Type[]) (rObjs: obj[]) : obj =
-            invoke<'gen> methodName genTypes ([| otherArgumentsLeft; rObjs;  otherArgumentsRight |] |> Array.concat)
-
-    [<RequireQualifiedAccess>]
-    module Type =
-        /// Determines whether an object is of an (extended) primitive type.
-        let isPrimitive' (includeObject: bool) (o: obj) : bool =
-            (includeObject && (o.GetType().Name = "Object")) ||
-            match o with
-            | :? double -> true
-            | :? string -> true
-            | :? DateTime -> true
-            | :? int -> true
-            | :? bool -> true
-            | :? Decimal -> true
-            | :? Byte -> true
-            // ... to be continued.
-            | _ -> false
-
-        /// Same as isPrimitive' but via a Type argument.
-        let isPrimitive (includeObject: bool) (aType: Type) =
-            (includeObject && (aType.Name = "Object")) 
-            || aType.IsPrimitive
-            || (aType.Name = "String") || (aType.Name = "DateTime") || (aType.Name = "Decimal")
-
-        let pPrint (toStringStyle: bool) (someType: Type) : string =             
-            let s = if toStringStyle then someType.ToString() else sprintf "%A" someType
-            let pp = 
-                s
-                 .Replace(someType.Namespace + ".","").Replace("System.", "")
-                 .Replace("FSharpOption`1","Option")
-                 .Replace("FSharpMap`2","Map")
-            pp
-
-    module Array =
-        //let empty2DX<'a> : 'a[,] = [||] |> array2D
-
-        ///// Creates a 2D array from an array of 1D arrays.
-        ///// All the inner arrays must have the same length.
-        //let array2DX (rowWise: bool) (a1Ds: ('a[]) []): 'a[,] =
-        //    if a1Ds.Length = 0 then
-        //        empty2DX<'a>
-        //    elif a1Ds.[0].Length = 0 then
-        //        empty2DX<'a>
-        //    elif rowWise then
-        //        a1Ds |> array2D
-        //    else
-        //        Array2D.init a1Ds.[0].Length a1Ds.Length (fun i j -> a1Ds.[j].[i])
-
-        let unzip4 (xs : ('a1*'a2*'a3*'a4)[]) : 'a1[]*'a2[]*'a3[]*'a4[] =
-            let xs1 = xs |> Array.map (fun x -> let (x1, _ , _ , _ ) = x in x1)
-            let xs2 = xs |> Array.map (fun x -> let (_ , x2, _ , _ ) = x in x2)
-            let xs3 = xs |> Array.map (fun x -> let (_ , _ , x3, _ ) = x in x3)
-            let xs4 = xs |> Array.map (fun x -> let (_ , _ , _ , x4) = x in x4)
-            (xs1, xs2, xs3, xs4)
-
-    module Array2D =
-        let empty2D<'a> : 'a[,] = [||] |> array2D
-
-        /// Creates a 2D array from an array of 1D arrays.
-        /// All the inner arrays must have the same length.
-        let array2D (rowWise: bool) (a1Ds: ('a[]) []): 'a[,] =
-            if a1Ds.Length = 0 then
-                empty2D<'a>
-            elif a1Ds.[0].Length = 0 then
-                empty2D<'a>
-            elif rowWise then
-                a1Ds |> array2D
-            else
-                Array2D.init a1Ds.[0].Length a1Ds.Length (fun i j -> a1Ds.[j].[i])
-
-        /// Convenience function to create a 2D singleton.
-        let singleton<'a> (a: 'a) = Array2D.create 1 1 a
-
-    /// CSV files reading functions. 
-    module CSV =
-        open Microsoft.VisualBasic.FileIO // Reference Microsoft.VisualBasic
-
-        let private readLine (trim: bool) (sep: string) (txtreader: TextReader) : string[] =
-            let line = txtreader.ReadLine()
-            let words = let ws = line.Split([| sep |], StringSplitOptions.None)
-                        if not trim then ws else ws |> Array.map (fun s -> s.Trim())
-            words
-    
-        /// Reads CSV file.
-        let readLines (trim: bool) (sep: string) (fpath: string) : seq<string[]> =
-            let lines =
-                seq { use txtreader = File.OpenText(fpath)
-                      while not txtreader.EndOfStream do
-                          yield readLine trim sep txtreader 
-                    }
-            lines
-
-        /// Reads CSV file.
-        /// Use over CSV.readLines function, when enclosingQuotes are present in the file.
-        let readLinesVB (enclosingQuotes: bool) (trim: bool) (sep: string) (fpath: string) : seq<string[]> =
-            let lines = 
-                seq { use parser = new TextFieldParser(fpath)
-                      parser.TextFieldType <- FieldType.Delimited
-                      parser.SetDelimiters([| sep |])
-                      parser.TrimWhiteSpace <- trim
-                      parser.HasFieldsEnclosedInQuotes <- enclosingQuotes
-                      while not parser.EndOfData do 
-                          yield parser.ReadFields()
-                    }
-            lines
-
 module API = 
 
     /// F# types for the xl-spreadsheet values we want to capture.
@@ -1071,7 +903,7 @@ module API =
                 let def (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype = typeTag |> Variant.labelType true
                     let args : obj[] = [| xlKinds; defValue; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<TagFn> "def" [| gentype |] args
+                    let res = Toolbox.Generics.invoke<TagFn> "def" [| gentype |] args
                     res
 
                 // optional-type default FIXX
@@ -1081,7 +913,7 @@ module API =
                     let def (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                         let gentype = typeTag |> Variant.labelType true
                         let args : obj[] = [| xlKinds; defValue; typeTag; xlValue |]
-                        let res = Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
+                        let res = Toolbox.Generics.invoke<TagFn> "defOpt" [| gentype |] args
                         res
 
                 /// For when the type-tag is either optional, e.g. "#string", or not, e.g. "string". TODO wording
@@ -1094,9 +926,9 @@ module API =
 
                         let res =
                             if typeTag |> Variant.isOptionalType then
-                                Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
+                                Toolbox.Generics.invoke<TagFn> "defOpt" [| gentype |] args
                             else
-                                Useful.Generics.invoke<TagFn> "def" [| gentype |] args
+                                Toolbox.Generics.invoke<TagFn> "def" [| gentype |] args
                         res
 
             // -------------------------
@@ -1445,7 +1277,7 @@ module API =
                         else
                             typeTag |> Variant.labelType false
                     let args : obj[] = [| xlKinds; rowWiseDef; defValue; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<TagFn> "def" [| gentype |] args
+                    let res = Toolbox.Generics.invoke<TagFn> "def" [| gentype |] args
                     res
 
                 module Opt =
@@ -1464,7 +1296,7 @@ module API =
                                 typeTag |> Variant.labelType true
 
                         let args : obj[] = [| xlKinds; rowWiseDef; defValue; typeTag; xlValue |]
-                        let res = Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
+                        let res = Toolbox.Generics.invoke<TagFn> "defOpt" [| gentype |] args
                         res
 
                 /// For when the type-tag is either optional, e.g. "#string", or not, e.g. "string".
@@ -1487,7 +1319,7 @@ module API =
                         else
                             typeTag |> Variant.labelType false
                     let args : obj[] = [| xlKinds; rowWiseDef; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<TagFn> "filter" [| gentype |] args
+                    let res = Toolbox.Generics.invoke<TagFn> "filter" [| gentype |] args
                     gentype, res
                 
                 /// TODO: wording here. Mentioning the output is a (boxed) 'a[] where 'a is determined by the type tag
@@ -1501,7 +1333,7 @@ module API =
                         else
                             typeTag |> Variant.labelType false
                     let args : obj[] = [| xlKinds; rowWiseDef; defValue1D; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<TagFn> methodName [| gentype |] args
+                    let res = Toolbox.Generics.invoke<TagFn> methodName [| gentype |] args
                     gentype, res
 
                 /// Given a type-tag, which determines the expected array's element-type, 'a, converts an xl-value to a boxed (Some 'a[]) on success 
@@ -1537,7 +1369,7 @@ module API =
                         else
                             typeTag |> Variant.labelType false
                     let args : obj[] = [| xlKinds; rowWiseDef; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<TagFn> "tryEmpty" [| gentype |] args
+                    let res = Toolbox.Generics.invoke<TagFn> "tryEmpty" [| gentype |] args
                     res
 
                 // Same as the tryDV' functions above but with unboxing of the results.
@@ -1550,7 +1382,7 @@ module API =
                     ///    - or returns None on failure, and if defValue is (boxed) None.
                     let tryDV (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : (Type*obj) option = 
                         let genty, xa1D = tryDV xlKinds rowWiseDef defValue1D typeTag xlValue
-                        Useful.Option.unwrap xa1D
+                        Toolbox.Option.unwrap xa1D
                         |> Option.map (fun res -> (genty, res))
 
                     /// Same as tryDV but with boxed elements.
@@ -1562,7 +1394,7 @@ module API =
                     ///    - or returns None on failure, and if defValue is (boxed) None.
                     let tryDVBxd (xlKinds: Set<Kind>) (rowWiseDef: bool option) (defValue1D: obj) (typeTag: string) (xlValue: obj) : (Type*(obj[])) option = 
                         let genty, xo1D = tryDVBxd xlKinds rowWiseDef defValue1D typeTag xlValue
-                        Useful.Option.unwrap xo1D
+                        Toolbox.Option.unwrap xo1D
                         |> Option.map (fun res -> (genty, res :?> obj[]))
 
 
@@ -1894,7 +1726,7 @@ module API =
                 let def (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype = typeTag |> Variant.labelType true
                     let args : obj[] = [| xlKinds; defValue; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<TagFn> "def" [| gentype |] args
+                    let res = Toolbox.Generics.invoke<TagFn> "def" [| gentype |] args
                     res
 
                 module Opt =
@@ -1903,7 +1735,7 @@ module API =
                     let def (xlKinds: Set<Kind>) (defValue: obj option) (typeTag: string) (xlValue: obj) : obj = 
                         let gentype = typeTag |> Variant.labelType true
                         let args : obj[] = [| xlKinds; defValue; typeTag; xlValue |]
-                        let res = Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
+                        let res = Toolbox.Generics.invoke<TagFn> "defOpt" [| gentype |] args
                         res
 
                 /// For when the type-tag is either optional, e.g. "#string", or not, e.g. "string".
@@ -1916,15 +1748,15 @@ module API =
 
                         let res =
                             if typeTag |> isOptionalType then
-                                Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
+                                Toolbox.Generics.invoke<TagFn> "defOpt" [| gentype |] args
                             else
-                                Useful.Generics.invoke<TagFn> "def" [| gentype |] args
+                                Toolbox.Generics.invoke<TagFn> "def" [| gentype |] args
                         res
 
                 let filter (xlKinds: Set<Kind>) (rowWise: bool) (typeTag: string) (xlValue: obj) : obj = 
                     let gentype = typeTag |> Variant.labelType false
                     let args : obj[] = [| xlKinds; rowWise; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<TagFn> "filter" [| gentype |] args
+                    let res = Toolbox.Generics.invoke<TagFn> "filter" [| gentype |] args
                     res
 
                 let tryDV' (xlKinds: Set<Kind>) (defValue2D: obj) (typeTag: string) (xlValue: obj) : Type*obj = 
@@ -1934,7 +1766,7 @@ module API =
                         else
                             typeTag |> Variant.labelType false
                     let args : obj[] = [| xlKinds; defValue2D; typeTag; xlValue |]
-                    let res = Useful.Generics.invoke<TagFn> "tryDV" [| gentype |] args
+                    let res = Toolbox.Generics.invoke<TagFn> "tryDV" [| gentype |] args
                     gentype, res
 
                 let tryDV (xlKinds: Set<Kind>) (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj = 
@@ -1943,19 +1775,19 @@ module API =
                 //let tryDVTBD (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj = 
                 //    let gentype = typeTag |> Variant.labelType false
                 //    let args : obj[] = [| defValue2D; typeTag; xlValue |]
-                //    let res = Useful.Generics.invoke<TagFn> "tryDV" [| gentype |] args
+                //    let res = Toolbox.Generics.invoke<TagFn> "tryDV" [| gentype |] args
                 //    res
 
                 // FIXME: wording. Same as tryDV' with unboxing
                 module Try =
                     let tryDV' (xlKinds: Set<Kind>) (defValue2D: obj) (typeTag: string) (xlValue: obj) : (Type*obj) option = 
                         let genty, xa2D = tryDV' xlKinds defValue2D typeTag xlValue
-                        Useful.Option.unwrap xa2D
+                        Toolbox.Option.unwrap xa2D
                         |> Option.map (fun res -> (genty, res))
 
                     let tryDV (xlKinds: Set<Kind>) (defValue2D: obj) (typeTag: string) (xlValue: obj) : obj option = 
                         let xa2D = tryDV xlKinds defValue2D typeTag xlValue
-                        let res = Useful.Option.unwrap xa2D
+                        let res = Toolbox.Option.unwrap xa2D
                         res
 
                 /// 2D arrays with row-wise (column-wise) typed elements, where elements in a given row (given column) have the same type.
@@ -1980,7 +1812,7 @@ module API =
                         | None -> 
                             let tyxs = tyxs' |> Array.map Option.get
                             let (gentys, xa1Ds) = Array.unzip tyxs
-                            (gentys, Useful.Array2D.array2D rowWise xa1Ds)
+                            (gentys, Toolbox.Array2D.concat2D rowWise xa1Ds)
                             |> Some
 
     /// Functions to retun values to Excel.
@@ -2036,7 +1868,7 @@ module API =
                 ///    - Some x will return (Bxd.out x)
                 module Any = 
                     let out (proxys: Proxys) (o0D: obj) : obj =
-                        o0D |> Useful.Option.map proxys.none (out proxys)
+                        o0D |> Toolbox.Option.map proxys.none (out proxys)
 
             [<RequireQualifiedAccess>]
             module Prm =  // TODO : change name to Var(iant) rather than Prm?
@@ -2044,7 +1876,7 @@ module API =
                 ///    - Primitives-type: Returns values directly to Excel.
                 ///    - Any other type : Returns ReplaveValues.object.
                 let out<'a> (proxys: Proxys) (o0D: obj) : obj =
-                    o0D |> Useful.Option.map proxys.none (Bxd.Any.out proxys)
+                    o0D |> Toolbox.Option.map proxys.none (Bxd.Any.out proxys)
 
             [<RequireQualifiedAccess>]
             /// Outputs primitives types directly to Excel, but stores non-primitive types in the Registry.
@@ -2059,17 +1891,17 @@ module API =
                 let out<'a> (append: bool) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) (o0D: obj) : obj =
                     let ty = 
                         if unwrapOptions then
-                            typeof<'a> |> Useful.Option.uType |> Option.defaultValue typeof<'a>
+                            typeof<'a> |> Toolbox.Option.uType |> Option.defaultValue typeof<'a>
                         else
                             typeof<'a>
 
-                    if ty |> Useful.Type.isPrimitive true then
-                        o0D |> Useful.Option.map proxys.none (Bxd.Any.out proxys)
+                    if ty |> Toolbox.Type.isPrimitive true then
+                        o0D |> Toolbox.Option.map proxys.none (Bxd.Any.out proxys)
                     else
                         let regAdd = if append then Registry.MRegistry.append else Registry.MRegistry.register
 
                         if unwrapOptions then
-                            o0D |> Useful.Option.map proxys.none (regAdd refKey >> box)
+                            o0D |> Toolbox.Option.map proxys.none (regAdd refKey >> box)
                         else
                             o0D |> regAdd refKey |> box
                 
@@ -2080,15 +1912,15 @@ module API =
                             proxys.none
                         else
                             let ty = o.GetType()
-                            if ty |> Useful.Type.isPrimitive false then
-                                o |> Useful.Option.map proxys.none (Bxd.Any.out proxys)
+                            if ty |> Toolbox.Type.isPrimitive false then
+                                o |> Toolbox.Option.map proxys.none (Bxd.Any.out proxys)
                             else
                                 let regAdd = if append then Registry.MRegistry.append else Registry.MRegistry.register
-                                o |> Useful.Option.map proxys.none (regAdd refKey >> box)
+                                o |> Toolbox.Option.map proxys.none (regAdd refKey >> box)
 
                     match Registry.MRegistry.tryExtractO xlValue with
                     | None -> proxys.failed
-                    | Some regObj -> regObj |> Useful.Option.map proxys.none mapping
+                    | Some regObj -> regObj |> Toolbox.Option.map proxys.none mapping
 
     // -------------------------
     // -- Convenience functions
@@ -2199,7 +2031,7 @@ module API =
                     if not ty.IsArray then
                         None
                     else
-                        let res = Useful.Generics.invoke<UnboxFn> "unbox" [| ty.GetElementType() |] [| boxedArray |]
+                        let res = Toolbox.Generics.invoke<UnboxFn> "unbox" [| ty.GetElementType() |] [| boxedArray |]
                         res :?> obj[]
                         |> Some
                     
@@ -2216,7 +2048,7 @@ module API =
                     /// In other words, casts a obj into a obj[].
                     /// Returns None for None inputs OR if the casting fails.
                     let o1D (boxedOptArray: obj) : obj[] option = 
-                        match Useful.Option.unwrap boxedOptArray with
+                        match Toolbox.Option.unwrap boxedOptArray with
                         | None -> None
                         | Some boxedArray -> o1D boxedArray
 
@@ -2316,7 +2148,7 @@ module API =
                     if not ty.IsArray then
                         None
                     else
-                        let res = Useful.Generics.invoke<UnboxFn> "unbox" [| ty.GetElementType() |] [| boxedArray |]
+                        let res = Toolbox.Generics.invoke<UnboxFn> "unbox" [| ty.GetElementType() |] [| boxedArray |]
                         res :?> obj[,]
                         |> Some
 
@@ -2333,7 +2165,7 @@ module API =
                     /// In other words, casts a obj into a obj[].
                     /// Returns None for None inputs OR if the casting fails.
                     let o2D (boxedOptArray: obj) : obj[,] option = 
-                        match Useful.Option.unwrap boxedOptArray with
+                        match Toolbox.Option.unwrap boxedOptArray with
                         | None -> None
                         | Some boxedArray -> o2D boxedArray
 
@@ -2504,7 +2336,7 @@ module API =
             let def (defValue: obj option) (typeTag: string) (text: string) : obj = 
                 let gentype = typeTag |> Variant.labelType true
                 let args : obj[] = [| defValue; typeTag; text |]
-                let res = Useful.Generics.invoke<TagFn> "def" [| gentype |] args
+                let res = Toolbox.Generics.invoke<TagFn> "def" [| gentype |] args
                 res
 
             // optional-type with default.
@@ -2514,7 +2346,7 @@ module API =
                 let def (defValue: obj option) (typeTag: string) (text: string) : obj = 
                     let gentype = typeTag |> Variant.labelType true
                     let args : obj[] = [| defValue; typeTag; text |]
-                    let res = Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
+                    let res = Toolbox.Generics.invoke<TagFn> "defOpt" [| gentype |] args
                     res
 
             /// For when the type-tag is either optional, e.g. "#string", or not, e.g. "string". TODO wording
@@ -2527,9 +2359,9 @@ module API =
 
                     let res =
                         if typeTag |> Variant.isOptionalType then
-                            Useful.Generics.invoke<TagFn> "defOpt" [| gentype |] args
+                            Toolbox.Generics.invoke<TagFn> "defOpt" [| gentype |] args
                         else
-                            Useful.Generics.invoke<TagFn> "def" [| gentype |] args
+                            Toolbox.Generics.invoke<TagFn> "def" [| gentype |] args
                     res
 
 module Registry_XL =
@@ -2589,7 +2421,7 @@ module Registry_XL =
         let tostringstyle = Bool.def false toStringStyle
 
         // result
-        MRegistry.tryType regKey |> Option.map (Useful.Type.pPrint tostringstyle) |> outNA
+        MRegistry.tryType regKey |> Option.map (Toolbox.Type.pPrint tostringstyle) |> outNA
 
     [<ExcelFunction(Category="Registry", Description="Equality of registry objects.")>]
     let rg_eq
@@ -3190,7 +3022,7 @@ module Fun =
                 false
             else
                 let methodNm = sprintf "filter%d" rank
-                let res = Useful.Generics.invoke<Filter> methodNm funtys (Array.append [| ofun |] args)
+                let res = Toolbox.Generics.invoke<Filter> methodNm funtys (Array.append [| ofun |] args)
                 res :?> bool
 
     /// Same as Fun.filter but for multi arguments.
@@ -3205,7 +3037,7 @@ module Fun =
                 Array.create argss.Length false
             else
                 let methodNm = sprintf "filter%d" rank
-                let filterFun (args: obj[]) = Useful.Generics.invoke<Filter> methodNm argTypes (Array.append [| ofun |] args)
+                let filterFun (args: obj[]) = Toolbox.Generics.invoke<Filter> methodNm argTypes (Array.append [| ofun |] args)
                 let res = argss |> Array.map (filterFun >> (fun o -> o :?> bool))
                 res
 
@@ -3228,7 +3060,7 @@ module Fun =
                 None
             else
                 let methodNm = sprintf "Apply%d" rank
-                let res = Useful.Generics.invoke<Apply> methodNm funtys (Array.append [| ofun |] args)
+                let res = Toolbox.Generics.invoke<Apply> methodNm funtys (Array.append [| ofun |] args)
                 Some res
 
     /// Same as Fun.apply but for multi arguments.
@@ -3243,7 +3075,7 @@ module Fun =
                 None
             else
                 let methodNm = sprintf "Apply%d" rank
-                let applyFun (args: obj[]) = Useful.Generics.invoke<Apply> methodNm funtys (Array.append [| ofun |] args)
+                let applyFun (args: obj[]) = Toolbox.Generics.invoke<Apply> methodNm funtys (Array.append [| ofun |] args)
                 let res = argss |> Array.map applyFun
                 Some res
 
@@ -3258,7 +3090,7 @@ module Fun =
                 None
             else
                 let methodNm = sprintf "Apply%d" rank
-                let res = Useful.Generics.invoke<Apply> methodNm funtys (Array.append [| ofun |] args)
+                let res = Toolbox.Generics.invoke<Apply> methodNm funtys (Array.append [| ofun |] args)
                 Some res
 
 module Fun_XL =
@@ -3449,154 +3281,9 @@ module Fun_XL =
 module A1D = 
     //open type Registry
     open Registry
-    open Useful.Generics
+    open Toolbox.Array
+    open Toolbox.Generics
     open API.Out
-
-    // -----------------------------------
-    // -- Basic functions
-    // -----------------------------------
-    let sub' (xs: 'a[]) (startIndex: int) (subCount: int) : 'a[] =
-        if startIndex >= xs.Length then
-            [||]
-        else
-            let start = max 0 startIndex
-            let count = (min (xs.Length - startIndex) subCount) |> max 0
-            Array.sub xs start count
-    
-    let sub (startIndex: int option) (count: int option) (xs: 'a[]) : 'a[] =
-        match startIndex, count with
-        | Some si, Some cnt -> sub' xs si cnt
-        | Some si, None -> sub' xs si (xs.Length - si)
-        | None, Some cnt -> sub' xs 0 cnt
-        | None, None -> xs
-
-    // -----------------------------------
-    // -- Zip functions
-    // -----------------------------------
-    let zip (xs1: 'a1[]) (xs2: 'a2[]) : ('a1*'a2)[] =
-        if xs1.Length = 0 || xs2.Length = 0 then 
-            [||]
-        elif xs2.Length = xs1.Length then
-            Array.zip xs1 xs2
-        elif xs2.Length > xs1.Length then 
-            Array.zip xs1 (Array.sub xs2 0 xs1.Length) 
-        else 
-            Array.zip (Array.sub xs1 0 xs2.Length) xs2
-
-    let zip3 (xs1: 'a1[]) (xs2: 'a2[]) (xs3: 'a3[]) : ('a1*'a2*'a3)[] =
-        if xs1.Length = 0 || xs2.Length = 0 || xs3.Length = 0 then 
-            [||]
-        else
-            let len = Array.min [| xs1.Length; xs2.Length; xs3.Length |]
-            let xs1 = Array.sub xs1 0 len
-            let xs2 = Array.sub xs2 0 len
-            let xs3 = Array.sub xs3 0 len
-            Array.zip3 xs1 xs2 xs3
-
-    let zip4 (xs1: 'a1[]) (xs2: 'a2[]) (xs3: 'a3[]) (xs4: 'a4[]) : ('a1*'a2*'a3*'a4)[] =
-        if xs1.Length = 0 || xs2.Length = 0 || xs3.Length = 0 || xs4.Length = 0 then 
-            [||]
-        else
-            let len = Array.min [| xs1.Length; xs2.Length; xs3.Length; xs4.Length |]
-            let xs1 = Array.sub xs1 0 len
-            let xs2 = Array.sub xs2 0 len
-            let xs3 = Array.sub xs3 0 len
-            let xs4 = Array.sub xs4 0 len
-            [| for i in 0 .. (len - 1) -> (xs1.[i], xs2.[i], xs3.[i], xs4.[i]) |]
-
-    let unzip4 (xs : ('a1*'a2*'a3*'a4)[]) : 'a1[]*'a2[]*'a3[]*'a4[] =
-        let xs1 = xs |> Array.map (fun x -> let (x1, _ , _ , _ ) = x in x1)
-        let xs2 = xs |> Array.map (fun x -> let (_ , x2, _ , _ ) = x in x2)
-        let xs3 = xs |> Array.map (fun x -> let (_ , _ , x3, _ ) = x in x3)
-        let xs4 = xs |> Array.map (fun x -> let (_ , _ , _ , x4) = x in x4)
-        (xs1, xs2, xs3, xs4)
-
-    let zip5 (xs1: 'a1[]) (xs2: 'a2[]) (xs3: 'a3[]) (xs4: 'a4[]) (xs5: 'a5[]) : ('a1*'a2*'a3*'a4*'a5)[] =
-        if xs1.Length = 0 || xs2.Length = 0 || xs3.Length = 0 || xs4.Length = 0 || xs5.Length = 0 then 
-            [||]
-        else
-            let len = Array.min [| xs1.Length; xs2.Length; xs3.Length; xs4.Length; xs5.Length |]
-            let xs1 = Array.sub xs1 0 len
-            let xs2 = Array.sub xs2 0 len
-            let xs3 = Array.sub xs3 0 len
-            let xs4 = Array.sub xs4 0 len
-            let xs5 = Array.sub xs5 0 len
-            [| for i in 0 .. (len - 1) -> (xs1.[i], xs2.[i], xs3.[i], xs4.[i], xs5.[i]) |]
-
-    let zip6 (xs1: 'a1[]) (xs2: 'a2[]) (xs3: 'a3[]) (xs4: 'a4[]) (xs5: 'a5[]) (xs6: 'a6[]) : ('a1*'a2*'a3*'a4*'a5*'a6)[] =
-        if xs1.Length = 0 || xs2.Length = 0 || xs3.Length = 0 || xs4.Length = 0 || xs5.Length = 0 || xs6.Length = 0 then 
-            [||]
-        else
-            let len = Array.min [| xs1.Length; xs2.Length; xs3.Length; xs4.Length; xs5.Length; xs6.Length |]
-            let xs1 = Array.sub xs1 0 len
-            let xs2 = Array.sub xs2 0 len
-            let xs3 = Array.sub xs3 0 len
-            let xs4 = Array.sub xs4 0 len
-            let xs5 = Array.sub xs5 0 len
-            let xs6 = Array.sub xs6 0 len
-            [| for i in 0 .. (len - 1) -> (xs1.[i], xs2.[i], xs3.[i], xs4.[i], xs5.[i], xs6.[i]) |]
-
-    let zip7 (xs1: 'a1[]) (xs2: 'a2[]) (xs3: 'a3[]) (xs4: 'a4[]) (xs5: 'a5[]) (xs6: 'a6[]) (xs7: 'a7[]) : ('a1*'a2*'a3*'a4*'a5*'a6*'a7)[] =
-        if xs1.Length = 0 || xs2.Length = 0 || xs3.Length = 0 || xs4.Length = 0 || xs5.Length = 0 || xs6.Length = 0 || xs7.Length = 0 then 
-            [||]
-        else
-            let len = Array.min [| xs1.Length; xs2.Length; xs3.Length; xs4.Length; xs5.Length; xs6.Length; xs7.Length |]
-            let xs1 = Array.sub xs1 0 len
-            let xs2 = Array.sub xs2 0 len
-            let xs3 = Array.sub xs3 0 len
-            let xs4 = Array.sub xs4 0 len
-            let xs5 = Array.sub xs5 0 len
-            let xs6 = Array.sub xs6 0 len
-            let xs7 = Array.sub xs7 0 len
-            [| for i in 0 .. (len - 1) -> (xs1.[i], xs2.[i], xs3.[i], xs4.[i], xs5.[i], xs6.[i], xs7.[i]) |]
-
-    let zip8 (xs1: 'a1[]) (xs2: 'a2[]) (xs3: 'a3[]) (xs4: 'a4[]) (xs5: 'a5[]) (xs6: 'a6[]) (xs7: 'a7[]) (xs8: 'a8[]) : ('a1*'a2*'a3*'a4*'a5*'a6*'a7*'a8)[] =
-        if xs1.Length = 0 || xs2.Length = 0 || xs3.Length = 0 || xs4.Length = 0 || xs5.Length = 0 || xs6.Length = 0 || xs7.Length = 0 || xs8.Length = 0 then 
-            [||]
-        else
-            let len = Array.min [| xs1.Length; xs2.Length; xs3.Length; xs4.Length; xs5.Length; xs6.Length; xs7.Length; xs8.Length |]
-            let xs1 = Array.sub xs1 0 len
-            let xs2 = Array.sub xs2 0 len
-            let xs3 = Array.sub xs3 0 len
-            let xs4 = Array.sub xs4 0 len
-            let xs5 = Array.sub xs5 0 len
-            let xs6 = Array.sub xs6 0 len
-            let xs7 = Array.sub xs7 0 len
-            let xs8 = Array.sub xs8 0 len
-            [| for i in 0 .. (len - 1) -> (xs1.[i], xs2.[i], xs3.[i], xs4.[i], xs5.[i], xs6.[i], xs7.[i], xs8.[i]) |]
-
-    let zip9 (xs1: 'a1[]) (xs2: 'a2[]) (xs3: 'a3[]) (xs4: 'a4[]) (xs5: 'a5[]) (xs6: 'a6[]) (xs7: 'a7[]) (xs8: 'a8[]) (xs9: 'a9[]) : ('a1*'a2*'a3*'a4*'a5*'a6*'a7*'a8*'a9)[] =
-        if xs1.Length = 0 || xs2.Length = 0 || xs3.Length = 0 || xs4.Length = 0 || xs5.Length = 0 || xs6.Length = 0 || xs7.Length = 0 || xs8.Length = 0 || xs9.Length = 0 then 
-            [||]
-        else
-            let len = Array.min [| xs1.Length; xs2.Length; xs3.Length; xs4.Length; xs5.Length; xs6.Length; xs7.Length; xs8.Length; xs9.Length |]
-            let xs1 = Array.sub xs1 0 len
-            let xs2 = Array.sub xs2 0 len
-            let xs3 = Array.sub xs3 0 len
-            let xs4 = Array.sub xs4 0 len
-            let xs5 = Array.sub xs5 0 len
-            let xs6 = Array.sub xs6 0 len
-            let xs7 = Array.sub xs7 0 len
-            let xs8 = Array.sub xs8 0 len
-            let xs9 = Array.sub xs9 0 len
-            [| for i in 0 .. (len - 1) -> (xs1.[i], xs2.[i], xs3.[i], xs4.[i], xs5.[i], xs6.[i], xs7.[i], xs8.[i], xs9.[i]) |]
-
-    let zip10 (xs1: 'a1[]) (xs2: 'a2[]) (xs3: 'a3[]) (xs4: 'a4[]) (xs5: 'a5[]) (xs6: 'a6[]) (xs7: 'a7[]) (xs8: 'a8[]) (xs9: 'a9[]) (xs10: 'a10[]) : ('a1*'a2*'a3*'a4*'a5*'a6*'a7*'a8*'a9*'a10)[] =
-        if xs1.Length = 0 || xs2.Length = 0 || xs3.Length = 0 || xs4.Length = 0 || xs5.Length = 0 || xs6.Length = 0 || xs7.Length = 0 || xs8.Length = 0 || xs9.Length = 0 || xs10.Length = 0 then 
-            [||]
-        else
-            let len = Array.min [| xs1.Length; xs2.Length; xs3.Length; xs4.Length; xs5.Length; xs6.Length; xs7.Length; xs8.Length; xs9.Length; xs10.Length |]
-            let xs1 = Array.sub xs1 0 len
-            let xs2 = Array.sub xs2 0 len
-            let xs3 = Array.sub xs3 0 len
-            let xs4 = Array.sub xs4 0 len
-            let xs5 = Array.sub xs5 0 len
-            let xs6 = Array.sub xs6 0 len
-            let xs7 = Array.sub xs7 0 len
-            let xs8 = Array.sub xs8 0 len
-            let xs9 = Array.sub xs9 0 len
-            let xs10 = Array.sub xs10 0 len
-            [| for i in 0 .. (len - 1) -> (xs1.[i], xs2.[i], xs3.[i], xs4.[i], xs5.[i], xs6.[i], xs7.[i], xs8.[i], xs9.[i], xs10.[i]) |]
 
     // -----------------------------------
     // -- Reflection functions
@@ -3713,7 +3400,7 @@ module A1D =
                             None
                         else
                             let methodNm = "map1"
-                            let res = Useful.Generics.invoke<GenFn> methodNm funtys [| ofun; xa1D |]
+                            let res = Toolbox.Generics.invoke<GenFn> methodNm funtys [| ofun; xa1D |]
                             Some res
                     | _ -> None
 
@@ -3729,7 +3416,7 @@ module A1D =
                             None
                         else
                             let methodNm = "filter"
-                            let res = Useful.Generics.invoke<GenFn> methodNm (funtys |> Array.take 1) [| ofun; xa1D |]
+                            let res = Toolbox.Generics.invoke<GenFn> methodNm (funtys |> Array.take 1) [| ofun; xa1D |]
                             Some res
                     | _ -> None
 
@@ -3980,42 +3667,43 @@ module A1D_XL =
 
 module A2D = 
     open Registry
-    open Useful.Generics
+    open Toolbox.Generics
+    open Toolbox.Array2D
     open API.Out
 
-    // -----------------------------
-    // -- Main functions
-    // -----------------------------
+    //// -----------------------------
+    //// -- Main functions
+    //// -----------------------------
 
-    /// Empty 2D array.
-    let empty2D<'a> : 'a[,] = [|[||]|] |> array2D
+    ///// Empty 2D array.
+    //let empty2D<'a> : 'a[,] = [|[||]|] |> array2D
 
-    /// Returns true if the first dimension is 0.
-    let isEmpty (a2D: 'a[,]) : bool = a2D |> Array2D.length1 = 0 // is this the right way?
+    ///// Returns true if the first dimension is 0.
+    //let isEmpty (a2D: 'a[,]) : bool = a2D |> Array2D.length1 = 0 // is this the right way?
 
-    /// Convenience function to create a 2D singleton.
-    let singleton<'a> (a: 'a) = Array2D.create 1 1 a
+    ///// Convenience function to create a 2D singleton.
+    //let singleton<'a> (a: 'a) = Array2D.create 1 1 a
 
-    let sub' (a2D : 'a[,]) (rowStartIndex: int) (colStartIndex: int) (rowCount: int) (colCount: int) : 'a[,] =
-        let rowLen, colLen = a2D |> Array2D.length1, a2D |> Array2D.length2
+    //let sub' (a2D : 'a[,]) (rowStartIndex: int) (colStartIndex: int) (rowCount: int) (colCount: int) : 'a[,] =
+    //    let rowLen, colLen = a2D |> Array2D.length1, a2D |> Array2D.length2
 
-        if (rowStartIndex >= rowLen) || (colStartIndex >= colLen) then
-            empty2D<'a>
-        else
-            let rowstart = max 0 rowStartIndex
-            let colstart = max 0 colStartIndex
-            let rowcount = (min (rowLen - rowstart) rowCount) |> max 0
-            let colcount = (min (colLen - colstart) colCount) |> max 0
-            a2D.[rowstart..(rowstart + rowcount - 1), colstart..(colstart + colcount - 1)]
+    //    if (rowStartIndex >= rowLen) || (colStartIndex >= colLen) then
+    //        empty2D<'a>
+    //    else
+    //        let rowstart = max 0 rowStartIndex
+    //        let colstart = max 0 colStartIndex
+    //        let rowcount = (min (rowLen - rowstart) rowCount) |> max 0
+    //        let colcount = (min (colLen - colstart) colCount) |> max 0
+    //        a2D.[rowstart..(rowstart + rowcount - 1), colstart..(colstart + colcount - 1)]
     
-    let sub (rowStartIndex: int option) (colStartIndex: int option) (rowCount: int option) (colCount: int option) (a2D : 'a[,]) : 'a[,] =
-        let rowLen, colLen = a2D |> Array2D.length1, a2D |> Array2D.length2
+    //let sub (rowStartIndex: int option) (colStartIndex: int option) (rowCount: int option) (colCount: int option) (a2D : 'a[,]) : 'a[,] =
+    //    let rowLen, colLen = a2D |> Array2D.length1, a2D |> Array2D.length2
 
-        let rowidx = rowStartIndex |> Option.defaultValue 0
-        let colidx = colStartIndex |> Option.defaultValue 0
-        let rowcnt = rowCount |> Option.defaultValue rowLen
-        let colcnt = colCount |> Option.defaultValue colLen
-        sub' a2D rowidx colidx rowcnt colcnt
+    //    let rowidx = rowStartIndex |> Option.defaultValue 0
+    //    let colidx = colStartIndex |> Option.defaultValue 0
+    //    let rowcnt = rowCount |> Option.defaultValue rowLen
+    //    let colcnt = colCount |> Option.defaultValue colLen
+    //    sub' a2D rowidx colidx rowcnt colcnt
         
     // -----------------------------------
     // -- Reflection functions
@@ -4171,7 +3859,7 @@ module A2D_XL =
 
         // result
         match A2D.Reg.Out.out rgA2D unwrapoptions rfid proxys with
-        | None -> box ExcelError.ExcelErrorNA |> A2D.singleton
+        | None -> box ExcelError.ExcelErrorNA |> Toolbox.Array2D.singleton
         | Some o2d -> o2d
 
     [<ExcelFunction(Category="Array2D", Description="Returns the number of rows of a R-object array.")>]
@@ -4301,7 +3989,8 @@ module A2D_XL =
 
 module MAP = 
     open Registry
-    open Useful.Generics
+    open Toolbox.Generics
+    open Toolbox.Array
     open Microsoft.FSharp.Reflection
     open API.Out
 
@@ -4467,20 +4156,20 @@ module MAP =
         /// Builds a Map<'K1,'V> key-value pairs map.
         static member map1<'K1,'V when 'K1: comparison> (keys1: 'K1[]) (values: 'V[]) 
             : Map<'K1,'V> =
-            A1D.zip keys1 values |> Map.ofArray
+            zip keys1 values |> Map.ofArray
 
         /// Builds a Map<'K1*'K2,'V> key-value pairs map.
         static member map2<'K1,'K2,'V when 'K1: comparison and 'K2: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (values: 'V[]) 
             : Map<'K1*'K2,'V> =
-            A1D.zip (A1D.zip keys1 keys2) values |> Map.ofArray
+            zip (zip keys1 keys2) values |> Map.ofArray
 
         /// Builds a Map<'K1*'K2,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
         static member map2s<'K1,'K2,'V when 'K1: comparison and 'K2: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (values: 'V[]) 
             : Map<'K1*'K2,'V[]> =
-            let kvs' = A1D.zip (A1D.zip keys1 keys2) values
+            let kvs' = zip (zip keys1 keys2) values
             let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
             kvs |> Map.ofArray
 
@@ -4488,14 +4177,14 @@ module MAP =
         static member map3<'K1,'K2,'K3,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3,'V> =
-            A1D.zip (A1D.zip3 keys1 keys2 keys3) values |> Map.ofArray
+            zip (Toolbox.Array.zip3 keys1 keys2 keys3) values |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
         static member map3s<'K1,'K2,'K3,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3,'V[]> =
-            let kvs' = A1D.zip (A1D.zip3 keys1 keys2 keys3) values
+            let kvs' = zip (Toolbox.Array.zip3 keys1 keys2 keys3) values
             let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
             kvs |> Map.ofArray
 
@@ -4503,14 +4192,14 @@ module MAP =
         static member map4<'K1,'K2,'K3,'K4,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4,'V> =
-            A1D.zip (A1D.zip4 keys1 keys2 keys3 keys4) values |> Map.ofArray
+            zip (Toolbox.Array.zip4 keys1 keys2 keys3 keys4) values |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
         static member map4s<'K1,'K2,'K3,'K4,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4,'V[]> =
-            let kvs' = A1D.zip (A1D.zip4 keys1 keys2 keys3 keys4) values
+            let kvs' = zip (Toolbox.Array.zip4 keys1 keys2 keys3 keys4) values
             let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
             kvs |> Map.ofArray
 
@@ -4518,14 +4207,14 @@ module MAP =
         static member map5<'K1,'K2,'K3,'K4,'K5,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4*'K5,'V> =
-            A1D.zip (A1D.zip5 keys1 keys2 keys3 keys4 keys5) values |> Map.ofArray
+            zip (Toolbox.Array.zip5 keys1 keys2 keys3 keys4 keys5) values |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
         static member map5s<'K1,'K2,'K3,'K4,'K5,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4*'K5,'V[]> =
-            let kvs' = A1D.zip (A1D.zip5 keys1 keys2 keys3 keys4 keys5) values
+            let kvs' = zip (Toolbox.Array.zip5 keys1 keys2 keys3 keys4 keys5) values
             let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
             kvs |> Map.ofArray
 
@@ -4533,14 +4222,14 @@ module MAP =
         static member map6<'K1,'K2,'K3,'K4,'K5,'K6,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4*'K5*'K6,'V> =
-            A1D.zip (A1D.zip6 keys1 keys2 keys3 keys4 keys5 keys6) values |> Map.ofArray
+            zip (Toolbox.Array.zip6 keys1 keys2 keys3 keys4 keys5 keys6) values |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
         static member map6s<'K1,'K2,'K3,'K4,'K5,'K6,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4*'K5*'K6,'V[]> =
-            let kvs' = A1D.zip (A1D.zip6 keys1 keys2 keys3 keys4 keys5 keys6) values
+            let kvs' = zip (Toolbox.Array.zip6 keys1 keys2 keys3 keys4 keys5 keys6) values
             let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
             kvs |> Map.ofArray
 
@@ -4548,14 +4237,14 @@ module MAP =
         static member map7<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V> =
-            A1D.zip (A1D.zip7 keys1 keys2 keys3 keys4 keys5 keys6 keys7) values |> Map.ofArray
+            zip (Toolbox.Array.zip7 keys1 keys2 keys3 keys4 keys5 keys6 keys7) values |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
         static member map7s<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V[]> =
-            let kvs' = A1D.zip (A1D.zip7 keys1 keys2 keys3 keys4 keys5 keys6 keys7) values
+            let kvs' = zip (Toolbox.Array.zip7 keys1 keys2 keys3 keys4 keys5 keys6 keys7) values
             let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
             kvs |> Map.ofArray
 
@@ -4563,14 +4252,14 @@ module MAP =
         static member map8<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V> =
-            A1D.zip (A1D.zip8 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8) values |> Map.ofArray
+            zip (Toolbox.Array.zip8 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8) values |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
         static member map8s<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V[]> =
-            let kvs' = A1D.zip (A1D.zip8 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8) values
+            let kvs' = zip (Toolbox.Array.zip8 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8) values
             let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
             kvs |> Map.ofArray
 
@@ -4578,14 +4267,14 @@ module MAP =
         static member map9<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (keys9: 'K9[]) (values: 'V[])
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9,'V> =
-            A1D.zip (A1D.zip9 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9) values |> Map.ofArray
+            zip (Toolbox.Array.zip9 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9) values |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
         static member map9s<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (keys9: 'K9[]) (values: 'V[])
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9,'V[]> =
-            let kvs' = A1D.zip (A1D.zip9 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9) values
+            let kvs' = zip (Toolbox.Array.zip9 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9) values
             let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
             kvs |> Map.ofArray
 
@@ -4593,14 +4282,14 @@ module MAP =
         static member map10<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'K10,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison and 'K10: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (keys9: 'K9[]) (keys10: 'K10[]) (values: 'V[])
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9*'K10,'V> =
-            A1D.zip (A1D.zip10 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9 keys10) values |> Map.ofArray
+            zip (Toolbox.Array.zip10 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9 keys10) values |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9*'K10,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
         static member map10s<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'K9,'K10,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison and 'K9: comparison and 'K10: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (keys9: 'K9[]) (keys10: 'K10[]) (values: 'V[])
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8*'K9*'K10,'V[]> =
-            let kvs' = A1D.zip (A1D.zip10 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9 keys10) values
+            let kvs' = zip (Toolbox.Array.zip10 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8 keys9 keys10) values
             let kvs = kvs' |> Array.groupBy (fun (k,v) -> k) |> Array.map (fun (k,kvx) -> (k, kvx |> Array.map snd))
             kvs |> Map.ofArray
 
@@ -5198,7 +4887,7 @@ module MAP =
             let args : obj[] = Array.append keys [| values |]
             let methodnm = sprintf "map%d" gtykeys.Length
 
-            let res = Useful.Generics.invoke<GenFn> methodnm gtys args
+            let res = Toolbox.Generics.invoke<GenFn> methodnm gtys args
             res
 
         let map2D (vgtykeys: Type[]) (hgtykeys: Type[]) (gtyval: Type) (vkeys: obj[]) (hkeys: obj[]) (values: obj) : obj = 
@@ -5206,7 +4895,7 @@ module MAP =
             let args : obj[] = Array.append (Array.append vkeys hkeys) [| values |]
             let methodnm = sprintf "mapV%dH%d" vgtykeys.Length hgtykeys.Length
 
-            let res = Useful.Generics.invoke<GenFn> methodnm gtys args
+            let res = Toolbox.Generics.invoke<GenFn> methodnm gtys args
             res
 
     // -----------------------------------
@@ -6077,16 +5766,16 @@ module Rel =
         member r.toRng (showHead: bool) (unwrapOptions: bool) (refKey: String) (proxys: Out.Proxys) : obj[,] =
             // let rows = r.body |> Set.toArray |> Array.map (fun row -> row |> Array.map (fun elem -> elem.value))
             if r = Rel.DEE then
-                box "<DEE>" |> Useful.Array2D.singleton
+                box "<DEE>" |> Toolbox.Array2D.singleton
             elif r = Rel.DUM then
-                box "<DUM>" |> Useful.Array2D.singleton
+                box "<DUM>" |> Toolbox.Array2D.singleton
             elif r.card = 0 then
-                box proxys.nan |> Useful.Array2D.singleton
+                box proxys.nan |> Toolbox.Array2D.singleton
             elif r.count = 0 then
                 if showHead then
                     [| r.head |> Array.map box |] |> array2D
                 else
-                    box proxys.empty |> Useful.Array2D.singleton
+                    box proxys.empty |> Toolbox.Array2D.singleton
             else
                 let ftypes = r.fields |> Set.toArray |> Array.map (fun field -> field.ftype)
                 let rows = r.body |> Set.toArray |> Array.map (fun row -> row |> Array.map (fun elem -> elem.value))
@@ -6095,16 +5784,16 @@ module Rel =
                           let methodNm = "outObjWithRefControl"
                           let removeReferences = (j = ftypes.GetLowerBound(0))
                           let col = [| for i in rows.GetLowerBound(0) .. rows.GetUpperBound(0) -> rows.[i].[j] |]
-                          let xlcol = Useful.Generics.apply<A1D.GenFn> methodNm [||] [| removeReferences; unwrapOptions; refKey; proxys |] ([| ftypes.[j] |], col)
+                          let xlcol = Toolbox.Generics.apply<A1D.GenFn> methodNm [||] [| removeReferences; unwrapOptions; refKey; proxys |] ([| ftypes.[j] |], col)
                           xlcol :?> obj[]
                     |]
 
                 if showHead then
                     let head = r.head
                     let xlColumns' = xlColumns |> Array.mapi (fun i col -> Array.append [| box head.[i] |] col)
-                    xlColumns' |> Useful.Array2D.array2D false
+                    xlColumns' |> Toolbox.Array2D.concat2D false
                 else
-                    xlColumns |> Useful.Array2D.array2D false
+                    xlColumns |> Toolbox.Array2D.concat2D false
 
         /// Returns true if some fields have the same name but have different types.
         static member incompatible (r1: Rel) (r2: Rel) : bool = Field.incompatible r1.fields r2.fields
@@ -6416,7 +6105,7 @@ module Rel =
     /// operations = operators, operNames, resultNames, resultTypes
     /// operator should be typeof<operName> -> resultType
     let summarize (r: Rel) (perRel: Rel) (operations: ((obj[] -> obj)*string*string*Type)[]) : Rel option =
-        let operators, operNames, resultNames, resultTypes = operations |> Useful.Array.unzip4
+        let operators, operNames, resultNames, resultTypes = operations |> Toolbox.Array.unzip4
 
         if (perRel.count = 0) && (perRel.card = 0) && (operations.Length = 0) then
             None
@@ -6573,11 +6262,11 @@ module Rel =
     
     let display (r: Rel) (showHead: bool) (unwrapOptions: bool) (refKey: String) (proxys: Out.Proxys) (rowFrom: int option) (rowCount: int option) (sortOn: string[]) (descending: bool) (midColumns: bool) (firstNames: string[]) (lastNames: string[]) : obj[,] =
         if r = Rel.DEE then
-            box "<DEE>" |> Useful.Array2D.singleton
+            box "<DEE>" |> Toolbox.Array2D.singleton
         elif r = Rel.DUM then
-            box "<DUM>" |> Useful.Array2D.singleton
+            box "<DUM>" |> Toolbox.Array2D.singleton
         elif r.card = 0 then
-            box proxys.nan |> Useful.Array2D.singleton
+            box proxys.nan |> Toolbox.Array2D.singleton
         else
             // header names
             let allNames = r.fields |> Field.names |> Set.toArray
@@ -6594,13 +6283,13 @@ module Rel =
             let hdrIdxs = Field.indicesOrdered r.fields headerNames |> Option.get
 
             if headerNames.Length = 0 then
-                Useful.Array2D.empty2D<obj>
+                Toolbox.Array2D.empty2D<obj>
             elif r.count = 0 then
                 if showHead then
                     [| headerBxd |] |> array2D
                     // [| r.head |> Array.map box |] |> array2D
                 else
-                    box proxys.empty |> Useful.Array2D.singleton
+                    box proxys.empty |> Toolbox.Array2D.singleton
             else
                 // filter names
                 let sortNames = sortOn |> Array.filter (fun name -> headerNames |> Array.contains name)
@@ -6647,9 +6336,9 @@ module Rel =
     let ofCSV (mapNameTagType: Map<string,string> option) (mapTypeDefvals: Map<string,obj>) (mapNameDefvals: Map<string,obj>) (useVB: bool) (enclosingQuotes: bool) (trim: bool) (sep: string) (csvFields: CSVFields) (fpath: string) : Rel option = 
         let lines = 
             if useVB then 
-                Useful.CSV.readLinesVB enclosingQuotes trim sep fpath
+                Toolbox.CSV.readLinesVB enclosingQuotes trim sep fpath
             else
-                Useful.CSV.readLines trim sep fpath
+                Toolbox.CSV.readLines trim sep fpath
         
         let lineCount = lines |> Seq.length
 
@@ -6853,7 +6542,7 @@ module Rel =
     
     module Registry =
         open Registry
-        open Useful.Generics
+        open Toolbox.Generics
         open Microsoft.FSharp.Reflection
 
         let genType = typeof<Rel>
@@ -7104,7 +6793,7 @@ module Rel_XL =
 
         // result
         match tryExtract<Rel.Rel> rgRel with
-        | None -> Useful.Array2D.singleton Proxys.def.failed
+        | None -> Toolbox.Array2D.singleton Proxys.def.failed
         | Some rel -> 
             let relDspl = Rel.display rel showHead unwrapoptions rfid proxys startRow rowCount sortNames descending midCols firstCols lastCols
             relDspl
@@ -7449,7 +7138,7 @@ module Rel_XL =
         // result
         match tryExtract<Rel.Rel> rgRel, existingNames, newNames with
         | Some rel, Some existingNms, Some newNms -> 
-            let mapOldNamesNewNames = A1D.zip existingNms newNms |> Map.ofArray
+            let mapOldNamesNewNames = Toolbox.Array.zip existingNms newNms |> Map.ofArray
             match Rel.rename rel mapOldNamesNewNames with
             | None -> Proxys.def.failed
             | Some relRName -> relRName |> MRegistry.registerBxd rfid
@@ -7501,7 +7190,7 @@ module Rel_XL =
             | None -> Map.empty
             | Some typeTags ->
                 let defvals = In.Cast.to1D false typeDefaultValues
-                let map' = A1D.zip (typeTags |> Array.map (fun s -> s.ToUpper()))  defvals |> Map.ofArray
+                let map' = Toolbox.Array.zip (typeTags |> Array.map (fun s -> s.ToUpper()))  defvals |> Map.ofArray
                 let kvps = [| for kvp in map' -> (kvp.Key, Variant.rebox kvp.Key kvp.Value) |]
                 kvps |> Map.ofArray
 
@@ -7547,8 +7236,7 @@ module Rel_XL =
 module GenMtrx =
     open type Registry
     open Registry
-
-    open Useful.Generics
+    open Toolbox.Generics
     open API
 
     // some generic type
@@ -7603,7 +7291,7 @@ module Mtrx =
     open type Registry
     open Registry
 
-    open Useful.Generics
+    open Toolbox.Generics
     open API
 
     type MTRXD = double[,]

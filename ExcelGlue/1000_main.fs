@@ -558,6 +558,26 @@ module API =
         static member labelDefVal (typeTag: string) : obj = 
             let var = Variant.ofTag typeTag
             var.defVal
+        
+        /// Re-types Excel values depending on a type-tag.
+        static member rebox (typeTag: string) (xlvalue: obj) : obj = 
+            let var = Variant.ofTag typeTag
+            match var, xlvalue with
+            | DOUBLE, (:? ExcelError as e) when e = ExcelError.ExcelErrorNA -> box Double.NaN
+            | DOUBLENAN, (:? ExcelError as e) when e = ExcelError.ExcelErrorNA -> box Double.NaN
+            | INT, (:? double as d) -> d |> int |> box
+            | DATE, (:? double as d) -> DateTime.FromOADate(d) |> box
+
+            | DOUBLEOPT, (:? ExcelError as e) when e = ExcelError.ExcelErrorNA -> Double.NaN |> Some |> box
+            | DOUBLENANOPT, (:? ExcelError as e) when e = ExcelError.ExcelErrorNA -> Double.NaN |> Some |> box
+            | INTOPT, (:? double as d) -> d |> int |> Some |> box
+            | DATE, (:? double as d) -> DateTime.FromOADate(d) |> Some |> box
+
+            | BOOLOPT, (:? bool as b) -> b |> Some |> box
+            | STRINGOPT, (:? string as s) -> s |> Some |> box
+            | VAROPT, v -> v |> Some |> box
+
+            | _ -> xlvalue
 
         /// Convenience function.
         member this.empty1D : obj = 
@@ -665,7 +685,9 @@ module API =
                 match xlVal with
                 | :? (obj[,]) as o2D -> slice2D rowWiseDef o2D
                 | :? (obj[]) as o1D -> o1D
-                | o0D -> [| o0D |]
+                //| :? ExcelMissing -> [||] // TODO: add missing and empty cases (empty result)?
+                //| :? ExcelEmpty -> [||]
+                | o0D -> [| o0D |] 
         
             /// Converts an obj to a 1D array option.
             /// (Use try1D rather than to1D when the obj argument is not an xl-value).
@@ -2148,12 +2170,20 @@ module API =
                 ///        - None element-values are returned as proxys.none.
                 ///    - Any other type: Each element values are stored individually in the Registry and for each a Registry key is returned to Excel.
                 ///    - Empty arrays will return [| proxys.empty |]. (Excel naturally returns empty array values as #VALUE!).
-                let out<'a> (unwrapOptions: bool) (refKey: String) (proxys: Proxys) (o1D: obj[]) : obj[] =
+                let out<'a> (removeReferences: bool) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) (o1D: obj[]) : obj[] =
                     if o1D |> Array.isEmpty then
                         [| proxys.empty |]
                     else
-                        Registry.MRegistry.removeReferencedObjects refKey
+                        if removeReferences then Registry.MRegistry.removeReferencedObjects refKey
                         o1D |> Array.map (D0.Reg.out<'a> true unwrapOptions refKey proxys)
+
+                //[<RequireQualifiedAccess>]
+                //module Multi = 
+                //    /// Same as Reg.out for an array of obj[] arrays.
+                //    /// (references are removed only once instead of for each obj[] array).
+                //    let out<'a> (unwrapOptions: bool) (refKey: String) (proxys: Proxys) (o1Ds: obj[][]) : obj[][] =
+                //        Registry.MRegistry.removeReferencedObjects refKey
+                //        o1Ds |> Array.map (out<'a> false unwrapOptions refKey proxys)
 
             [<RequireQualifiedAccess>]
             module Unbox = 
@@ -2430,7 +2460,7 @@ module API =
                     let a0D = Dbl.def defval text
                     box a0D :?> 'A
                 | INT -> 
-                    let defval = TagFn.defaultValue<double> typeTag defValue |> int
+                    let defval = TagFn.defaultValue<int> typeTag defValue
                     let a0D = Intg.def defval text
                     box a0D :?> 'A
                 | DATE -> 
@@ -3446,11 +3476,12 @@ module A1D =
     let zip (xs1: 'a1[]) (xs2: 'a2[]) : ('a1*'a2)[] =
         if xs1.Length = 0 || xs2.Length = 0 then 
             [||]
-        else
-            if xs2.Length > xs1.Length then 
-                Array.zip xs1 (Array.sub xs2 0 xs1.Length) 
-            else 
-                Array.zip (Array.sub xs1 0 xs2.Length) xs2
+        elif xs2.Length = xs1.Length then
+            Array.zip xs1 xs2
+        elif xs2.Length > xs1.Length then 
+            Array.zip xs1 (Array.sub xs2 0 xs1.Length) 
+        else 
+            Array.zip (Array.sub xs1 0 xs2.Length) xs2
 
     let zip3 (xs1: 'a1[]) (xs2: 'a2[]) (xs3: 'a3[]) : ('a1*'a2*'a3)[] =
         if xs1.Length = 0 || xs2.Length = 0 || xs3.Length = 0 then 
@@ -3572,11 +3603,15 @@ module A1D =
     // -----------------------------------
     type GenFn =
         static member out<'A> (a1D: 'A[]) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) : obj[] = 
-            a1D |> Array.map box |> (API.Out.D1.Reg.out<'A> unwrapOptions refKey proxys)
+            a1D |> Array.map box |> (API.Out.D1.Reg.out<'A> true unwrapOptions refKey proxys)
             
         static member outObj<'A> (o1D: obj[]) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) : obj[] = 
             let a1D = o1D |> Array.map (fun o -> o :?> 'A)
-            a1D |> Array.map box |> (API.Out.D1.Reg.out<'A> unwrapOptions refKey proxys)
+            a1D |> Array.map box |> (API.Out.D1.Reg.out<'A> true unwrapOptions refKey proxys)
+
+        static member outObjWithRefControl<'A> (o1D: obj[]) (removeReferences: bool) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) : obj[] = 
+            let a1D = o1D |> Array.map (fun o -> o :?> 'A)
+            a1D |> Array.map box |> (API.Out.D1.Reg.out<'A> removeReferences unwrapOptions refKey proxys)
 
         static member count<'A> (a1D: 'A[]) : int = a1D |> Array.length
 
@@ -4290,12 +4325,12 @@ module MAP =
         /// wording : returns keys 1D array to Excel
         static member keys<'K,'V when 'K: comparison> (map: Map<'K,'V>) (refKey: String) (proxys: Proxys) : obj[] =
             let a1D = [| for kvp in map -> kvp.Key |]
-            a1D |> Array.map box |> (API.Out.D1.Reg.out<'K> false refKey proxys)
+            a1D |> Array.map box |> (API.Out.D1.Reg.out<'K> true false refKey proxys)
 
         ///// wording : returns values 1D array to Excel
         static member values<'K,'V when 'K: comparison> (map: Map<'K,'V>) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) : obj[] =
             let a1D = [| for kvp in map -> kvp.Value |]
-            a1D |> Array.map box |> (API.Out.D1.Reg.out<'V> unwrapOptions refKey proxys)
+            a1D |> Array.map box |> (API.Out.D1.Reg.out<'V> true unwrapOptions refKey proxys)
 
         static member cast<'K>  (okey: obj) : obj =
             if typeof<'K> = typeof<int> then
@@ -6037,13 +6072,7 @@ module Rel =
 
         member r.head = r.fields |> Field.names |> Set.toArray
 
-        member r.toRng0 (showHead: bool) : obj[,] =
-            let rows = r.body |> Set.toArray |> Array.map (fun row -> row |> Array.map (fun elem -> elem.value))
-            if showHead then
-                Array.append [| (r.head |> Array.map box) |] rows
-            else
-                rows
-            |> array2D
+        member r.header = r.fields |> Field.names |> Set.toArray |> Array.map box
 
         member r.toRng (showHead: bool) (unwrapOptions: bool) (refKey: String) (proxys: Out.Proxys) : obj[,] =
             // let rows = r.body |> Set.toArray |> Array.map (fun row -> row |> Array.map (fun elem -> elem.value))
@@ -6063,9 +6092,10 @@ module Rel =
                 let rows = r.body |> Set.toArray |> Array.map (fun row -> row |> Array.map (fun elem -> elem.value))
                 let xlColumns = 
                     [| for j in ftypes.GetLowerBound(0) .. ftypes.GetUpperBound(0) -> 
-                          let methodNm = "outObj"
+                          let methodNm = "outObjWithRefControl"
+                          let removeReferences = (j = ftypes.GetLowerBound(0))
                           let col = [| for i in rows.GetLowerBound(0) .. rows.GetUpperBound(0) -> rows.[i].[j] |]
-                          let xlcol = Useful.Generics.apply<A1D.GenFn> methodNm [||] [| unwrapOptions; refKey; proxys |] ([| ftypes.[j] |], col)
+                          let xlcol = Useful.Generics.apply<A1D.GenFn> methodNm [||] [| removeReferences; unwrapOptions; refKey; proxys |] ([| ftypes.[j] |], col)
                           xlcol :?> obj[]
                     |]
 
@@ -6155,14 +6185,20 @@ module Rel =
             None
 
     /// Rename operator.
-    let rename (r: Rel) (mapping: Map<string,string>) : Rel =
-        let rname (old: string) = mapping |> Map.tryFind old |> Option.defaultValue old
+    let rename (r: Rel) (mapOldNamesNewNames: Map<string,string>) : Rel option =
+        let rname (old: string) = mapOldNamesNewNames |> Map.tryFind old |> Option.defaultValue old
 
-        let fields = r.fields |> Set.map (fun field -> { field with fname = rname field.fname })
-        let body = r.body |> Set.map (fun row -> row |> Array.map (fun elem -> { elem with fname = rname elem.fname }) |> Row.sort)
+        let oldNames = r.fields |> Field.names |> Set.toArray
+        let newNames = oldNames |> Array.map rname |> Array.distinct
 
-        let rel : Rel = { fields = fields; body = body }
-        rel
+        if newNames.Length <> oldNames.Length then
+            None
+        else
+            let fields = r.fields |> Set.map (fun field -> { field with fname = rname field.fname })
+            let body = r.body |> Set.map (fun row -> row |> Array.map (fun elem -> { elem with fname = rname elem.fname }) |> Row.sort)
+
+            let rel : Rel = { fields = fields; body = body }
+            rel |> Some
 
     /// Project operator.
     /// Keeps all of r's fields which name are included in R's field names (away = false).
@@ -6535,9 +6571,13 @@ module Rel =
                     let rel : Rel = { r with body = body }
                     rel |> Some
     
-    let display (r: Rel) (showHead: bool) (rowFrom: int option) (rowCount: int option) (sortOn: string[]) (descending: bool) (midColumns: bool) (firstNames: string[]) (lastNames: string[]) : obj[,] =
-        if r.card = 0 then
-            Useful.Array2D.empty2D<obj>
+    let display (r: Rel) (showHead: bool) (unwrapOptions: bool) (refKey: String) (proxys: Out.Proxys) (rowFrom: int option) (rowCount: int option) (sortOn: string[]) (descending: bool) (midColumns: bool) (firstNames: string[]) (lastNames: string[]) : obj[,] =
+        if r = Rel.DEE then
+            box "<DEE>" |> Useful.Array2D.singleton
+        elif r = Rel.DUM then
+            box "<DUM>" |> Useful.Array2D.singleton
+        elif r.card = 0 then
+            box proxys.nan |> Useful.Array2D.singleton
         else
             // header names
             let allNames = r.fields |> Field.names |> Set.toArray
@@ -6545,26 +6585,33 @@ module Rel =
             let lstNames = lastNames |> Array.filter (fun name -> (allNames |> Array.contains name) || (fstNames |> Array.contains name |> not))
             let midNames = 
                 if midColumns then 
-                    [||]
-                else
                     allNames |> Array.except (Array.append fstNames lstNames)            
+                else
+                    [||]
+                    
             let headerNames = Array.append fstNames (Array.append midNames lastNames)
             let headerBxd = headerNames |> Array.map box
             let hdrIdxs = Field.indicesOrdered r.fields headerNames |> Option.get
 
-            // filter names
-            let sortNames = sortOn |> Array.filter (fun name -> headerNames |> Array.contains name)
-            let sortIdxs = Field.indicesOrdered r.fields sortNames |> Option.get
-
             if headerNames.Length = 0 then
                 Useful.Array2D.empty2D<obj>
+            elif r.count = 0 then
+                if showHead then
+                    [| headerBxd |] |> array2D
+                    // [| r.head |> Array.map box |] |> array2D
+                else
+                    box proxys.empty |> Useful.Array2D.singleton
             else
+                // filter names
+                let sortNames = sortOn |> Array.filter (fun name -> headerNames |> Array.contains name)
+
                 // rows                
                 let rowsSorted = 
                     let allRows = r.body |> Set.toArray
                     if sortNames.Length = 0 then
                         allRows
                     else
+                        let sortIdxs = Field.indicesOrdered r.fields sortNames |> Option.get
                         let sortBy = if descending then Array.sortByDescending else Array.sortBy
                         allRows |> sortBy (Row.ofPositions sortIdxs)
 
@@ -6586,18 +6633,18 @@ module Rel =
     /// Indicates whether the first and second rows contains a relation field names and types,
     /// Which need to be provided if not present as CSV file rows.
     type CSVFields = 
-        | NameFstTypeSnd
-        | NameSndTypeFst
-        | NameFst of string[] 
-        | TypeFst of string[] 
-        | NoHeader of (string[])*(string[])
+        | NameFstTypeSnd    /// field names and types are part of the csv file. Names on first row, types of second row.
+        | NameSndTypeFst    /// field names and types are part of the csv file. Names on second row, types of first row.
+        | NameFst of string[]   /// only field names are part of the csv file, types are provided as user input. Names on first row of csv file.
+        | TypeFst of string[]   /// only field typess are part of the csv file, names are provided as user input. Types on first row of csv file.
+        | NoHeader of (string[])*(string[]) /// neither field names or types are part of the csv file; they are provided as user input.
 
     /// Converts a CSV file to a Rel object.
     /// The first or second row of the CSV file must provide the relation field names
     /// The first or second row of the CSV file can provide the relation field type tags (e.g. "int", "double", "string", "#date" ...)
     /// If mapNameType is provided, then field types are derived from field names (the CSV row of types is ignored).
     /// If mapNameDefvals and mapTypeDefvals provide default values derived from field namess or types respectively (default based on field name prevails).
-    let ofCSV (mapNameType: Map<string,string> option) (mapTypeDefvals: Map<string,obj>) (mapNameDefvals: Map<string,obj>) (useVB: bool) (enclosingQuotes: bool) (trim: bool) (sep: string) (csvFields: CSVFields) (fpath: string) : Rel option = 
+    let ofCSV (mapNameTagType: Map<string,string> option) (mapTypeDefvals: Map<string,obj>) (mapNameDefvals: Map<string,obj>) (useVB: bool) (enclosingQuotes: bool) (trim: bool) (sep: string) (csvFields: CSVFields) (fpath: string) : Rel option = 
         let lines = 
             if useVB then 
                 Useful.CSV.readLinesVB enclosingQuotes trim sep fpath
@@ -6613,7 +6660,7 @@ module Rel =
 
             // determines names, types, body as specified by inputs.
             let (headerNames, headerTypeTags, bodyLines) =
-                match mapNameType, csvFields with
+                match mapNameTagType, csvFields with
                 // Names from Csv file. (Name -> Type) provided. Types are derived from names. Csv file's type row is ignored.
                 | Some mapNmTy, NameFstTypeSnd ->
                     let nms = lines |> Seq.item 0
@@ -6683,7 +6730,7 @@ module Rel =
                         let defValue = 
                             match mapNameDefvals |> Map.tryFind fname with
                             | Some defval -> Some defval
-                            | None -> mapTypeDefvals |> Map.tryFind typeTag
+                            | None -> mapTypeDefvals |> Map.tryFind (typeTag.ToUpper())
                         let res = API.Text.Tag.Any.def defValue typeTag text
                         let elem : Elem = { fname = fname; value = res }
                         elem
@@ -6893,13 +6940,14 @@ module Rel =
                                 resMap |> Some
 
         module Out =
+            let MAX_ARITY_OFMAP = 7
             let ofMap (regKey: string) (splitTuple: bool) (fnameKeys: string[]) (fnameValue: string) : obj option = 
                 match MRegistry.tryExtractGen genTypeMap regKey with
                 | None -> None
                 | Some (tys, o) -> 
-                    // tys is a [| the map-object's key type, the map object's value type |]
-                    if not (FSharpType.IsTuple tys.[0]) || not splitTuple then
-                        if fnameKeys.Length <> 1 then
+                    // tys is a [| the map-object's key type; the map-object's value type |], only 2 elements.
+                    if not (FSharpType.IsTuple tys.[0] && splitTuple) then
+                        if fnameKeys.Length = 0 then
                             None
                         else
                             let methodNm = "ofMap1"
@@ -6909,16 +6957,16 @@ module Rel =
                             |> Some
                     else
                         let elemTys = FSharpType.GetTupleElements(tys.[0])
+                        let arity = elemTys.Length
 
-                        if elemTys.Length <> fnameKeys.Length then
+                        if (arity > fnameKeys.Length) || (arity > MAX_ARITY_OFMAP) then
                             None
                         else
-                            let methodNm = sprintf "ofMap%d" elemTys.Length
-                            let args : obj[] = Array.append (fnameKeys |> Array.map box) [| box fnameValue |]
+                            let methodNm = sprintf "ofMap%d" arity
+                            let args : obj[] = Array.append (fnameKeys |> Array.take arity |> Array.map box) [| box fnameValue |]
                             let genTypeRObj = (Array.append elemTys [| tys.[1] |], o)
                             apply<GenFn> methodNm [||] args genTypeRObj
                             |> Some
-
 
         // toMaps, toCSV
 
@@ -7021,7 +7069,7 @@ module Rel_XL =
         | Some rel ->
             rel.toRng showHead unwrapoptions rfid proxys
 
-    [<ExcelFunction(Category="Relation", Description="Displayss a relation.")>]
+    [<ExcelFunction(Category="Relation", Description="Displays a relation.")>]
     let rel_display
         ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
         ([<ExcelArgument(Description= "Sorting fields.")>] sortingFields: obj)
@@ -7030,12 +7078,15 @@ module Rel_XL =
         ([<ExcelArgument(Description= "[Row count. Default is all rows.]")>] rowCount: obj)
         ([<ExcelArgument(Description= "[Col. ordering. First columns. Default is none.]")>] firstCols: obj)
         ([<ExcelArgument(Description= "[Col. ordering. Last columns. Default is none.]")>] lastCols: obj)
-        ([<ExcelArgument(Description= "[Mid columns. Only stated columns appear if true. Default is false.]")>] midCols: obj)
+        ([<ExcelArgument(Description= "[Mid columns. Only stated columns appear if true. Default is true.]")>] midCols: obj)
         ([<ExcelArgument(Description= "[Show head. Default is true.]")>] showHead: obj)
+        ([<ExcelArgument(Description= "[None indicator. Default is \"<none>\".]")>] noneIndicator: obj)
+        ([<ExcelArgument(Description= "[Empty array indicator. Default is \"<empty>\".]")>] emptyIndicator: obj)
+        ([<ExcelArgument(Description= "[Unwrap optional types. Default is true.]")>] unwrapOptions: obj)
         : obj[,] = 
         
         // intermediary stage
-        let sortNames = API.In.D1.OStg.tryDV None sortingFields
+        let sortNames = API.In.D1.OStg.tryDV None sortingFields |> Option.defaultValue [||]
         let descending = In.D0.Bool.def false descending
         let startRow = In.D0.Intg.Opt.def None startRow
         let rowCount = In.D0.Intg.Opt.def None rowCount
@@ -7043,16 +7094,20 @@ module Rel_XL =
         let lastCols = API.In.D1.OStg.tryDV None lastCols |> Option.defaultValue [||]
         let midCols = In.D0.Bool.def true midCols
         let showHead = In.D0.Bool.def true showHead
+        let none = In.D0.Stg.def "<none>" noneIndicator
+        let empty = In.D0.Stg.def "<empty>" emptyIndicator
+        let proxys = { def with none = none; empty = empty }
+        let unwrapoptions = In.D0.Bool.def true unwrapOptions
 
         // caller cell's reference ID
         let rfid = MRegistry.refID
 
         // result
-        match tryExtract<Rel.Rel> rgRel, sortNames with
-        | Some rel, Some sortNms -> 
-            let relDspl = Rel.display rel showHead startRow rowCount sortNms descending midCols firstCols lastCols
+        match tryExtract<Rel.Rel> rgRel with
+        | None -> Useful.Array2D.singleton Proxys.def.failed
+        | Some rel -> 
+            let relDspl = Rel.display rel showHead unwrapoptions rfid proxys startRow rowCount sortNames descending midCols firstCols lastCols
             relDspl
-        | _ -> Useful.Array2D.singleton Proxys.def.failed
 
     [<ExcelFunction(Category="Relation", Description="Returns a relation number of fields / attributes.")>]
     let rel_card
@@ -7375,6 +7430,118 @@ module Rel_XL =
             | None -> Proxys.def.failed
             | Some relUngrpd -> relUngrpd |> MRegistry.registerBxd rfid
         | _ -> Proxys.def.failed
+
+
+    [<ExcelFunction(Category="Relation", Description="Renames a relation.")>]
+    let rel_rname
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        ([<ExcelArgument(Description= "Existing field names.")>] existingNames: obj)
+        ([<ExcelArgument(Description= "New field names.")>] newNames: obj)
+        : obj = 
+        
+        // intermediary stage
+        let existingNames = In.D1.OStg.tryDV None existingNames
+        let newNames = In.D1.OStg.tryDV None newNames
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel, existingNames, newNames with
+        | Some rel, Some existingNms, Some newNms -> 
+            let mapOldNamesNewNames = A1D.zip existingNms newNms |> Map.ofArray
+            match Rel.rename rel mapOldNamesNewNames with
+            | None -> Proxys.def.failed
+            | Some relRName -> relRName |> MRegistry.registerBxd rfid
+        | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Returns the relation field names.")>]
+    let rel_head
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        : obj[] = 
+
+        // result
+        match tryExtract<Rel.Rel> rgRel with
+        | Some rel -> 
+            if rel.card = 0 then [| Proxys.def.empty |] else rel.header
+        | _ -> [| Proxys.def.failed |]
+
+    [<ExcelFunction(Category="Relation", Description="Extracts a CSV file into a relation.")>]
+    let rel_ofCSV
+        ([<ExcelArgument(Description= "File path.")>] filePath: string)
+        ([<ExcelArgument(Description= "[Field names row index. Default is 1.]")>] fieldNamesRowIndex: obj) 
+        ([<ExcelArgument(Description= "[Field types row index. Default is 2.]")>] fieldTypesRowIndex: obj) 
+        ([<ExcelArgument(Description= "[Field names override. Default is none.]")>] fieldNamesOvrd: obj) 
+        ([<ExcelArgument(Description= "[Field type-tags override (date, double, doubleNaN, #string...). Default is none.]")>] fieldTypeTagsOvrd: obj)
+        ([<ExcelArgument(Description= "[Field (name -> type) map R-object. Default is none.]")>] rgMapFNameFType: obj)
+        ([<ExcelArgument(Description= "[Separator. Default is \",\".]")>] separator: obj) 
+        ([<ExcelArgument(Description= "[Types with default value (#date, int, obj, string...). Default is None.]")>] typesWithDefault: obj)
+        ([<ExcelArgument(Description= "[Types default values. Default is None.]")>] typeDefaultValues: obj)
+        ([<ExcelArgument(Description= "[Enclosing quotes. Default is false.]")>] enclosingQuotes: obj) 
+        ([<ExcelArgument(Description= "[Trim blanks. Default is false.]")>] trimBlanks: obj) 
+        ([<ExcelArgument(Description= "[Use VB Parser (debugging purpose). Default is true.]")>] useVBParser: obj) 
+        : obj = 
+        
+        // intermediary stage
+        let fNamesRowIdx = In.D0.Intg.def 1 fieldNamesRowIndex
+        let fTypesRowIdx = In.D0.Intg.def 2 fieldTypesRowIndex
+        let csvFields : Rel.CSVFields = 
+            match API.In.D1.OStg.tryDV None fieldNamesOvrd, API.In.D1.OStg.tryDV None fieldTypeTagsOvrd with
+            | None, None -> if fTypesRowIdx < fNamesRowIdx then Rel.NameSndTypeFst else Rel.NameFstTypeSnd
+            | Some fieldNames, None -> Rel.TypeFst fieldNames
+            | None, Some fieldTypes -> Rel.NameFst fieldTypes
+            | Some fieldNames, Some fieldTypes -> Rel.NoHeader (fieldNames, fieldTypes)
+        let mapNameTagType = MRegistry.tryExtract<Map<string,string>> rgMapFNameFType
+        let separator = In.D0.Stg.def "," separator
+        let enclosingQuotes = In.D0.Bool.def true enclosingQuotes
+        let trimBlanks = In.D0.Bool.def true trimBlanks
+        let useVBParser = In.D0.Bool.def true useVBParser
+        let mapTypeDefvals = 
+            match API.In.D1.OStg.tryDV None typesWithDefault with
+            | None -> Map.empty
+            | Some typeTags ->
+                let defvals = In.Cast.to1D false typeDefaultValues
+                let map' = A1D.zip (typeTags |> Array.map (fun s -> s.ToUpper()))  defvals |> Map.ofArray
+                let kvps = [| for kvp in map' -> (kvp.Key, Variant.rebox kvp.Key kvp.Value) |]
+                kvps |> Map.ofArray
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match Rel.ofCSV mapNameTagType mapTypeDefvals Map.empty useVBParser enclosingQuotes trimBlanks separator csvFields filePath with
+        | None -> Proxys.def.failed
+        | Some relCSV -> relCSV |> MRegistry.registerBxd rfid
+
+    [<ExcelFunction(Category="Relation", Description="Extracts a CSV file into a relation.")>]
+    let rel_ofMap
+        ([<ExcelArgument(Description= "Map R-object.")>] rgMap: string)
+        ([<ExcelArgument(Description= "[Key1 field name. Default is KEY1.]")>] fieldNameKey1: obj)  
+        ([<ExcelArgument(Description= "[Key2 field name. Default is KEY2.]")>] fieldNameKey2: obj)  
+        ([<ExcelArgument(Description= "[Key3 field name. Default is KEY3.]")>] fieldNameKey3: obj)  
+        ([<ExcelArgument(Description= "[Key4 field name. Default is KEY4.]")>] fieldNameKey4: obj)  
+        ([<ExcelArgument(Description= "[Key5 field name. Default is KEY5.]")>] fieldNameKey5: obj)  
+        ([<ExcelArgument(Description= "[Key6 field name. Default is KEY6.]")>] fieldNameKey6: obj)  
+        ([<ExcelArgument(Description= "[Key7 field name. Default is KEY7.]")>] fieldNameKey7: obj)  
+        ([<ExcelArgument(Description= "[Value field name. Default is VALUE.]")>] fieldNameValue: obj)  
+        ([<ExcelArgument(Description= "[Split tupled key. Default is true.]")>] splitTupleKey: obj)  
+        : obj = 
+        
+        // intermediary stage
+        let fieldNameKeys = 
+            [| fieldNameKey1; fieldNameKey2; fieldNameKey3; fieldNameKey4; fieldNameKey5; fieldNameKey6; fieldNameKey7 |]
+            |> Array.mapi (fun i fnamekey -> match In.D0.Stg.Opt.def None fnamekey with | None -> sprintf "KEY%d" i | Some key -> key)
+
+        let fieldNameValue = In.D0.Stg.def "VALUE" fieldNameValue
+        let splitTupleKey = In.D0.Bool.def true splitTupleKey
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match Rel.Registry.Out.ofMap rgMap splitTupleKey fieldNameKeys fieldNameValue with
+        | None -> Proxys.def.failed
+        | Some relofMap -> relofMap |> MRegistry.registerBxd rfid
 
 /// Simple template for generics
 module GenMtrx =

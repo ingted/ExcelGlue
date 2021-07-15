@@ -2183,79 +2183,86 @@ module API =
         [<RequireQualifiedAccess>]
         module Bool =
             /// Casts a string to a bool option.
-            let private ofText (defValue: bool option) (text: string) : bool option =
+            let private tryDV (defValue: bool option) (text: string) : bool option =
                 match text.Trim().ToUpper() with
                 | "TRUE" -> Some true
                 | "FALSE" -> Some false
                 | _ -> defValue
 
             /// Casts a string to bool or fails.
-            let fail (msg: string) (text: string) : bool =  match ofText None text with None -> failwith msg | Some x -> x
+            let fail (msg: string) (text: string) : bool =  match tryDV None text with None -> failwith msg | Some x -> x
 
             /// Casts a string to bool with a default-value.
-            let def (defValue: bool) (text: string) : bool = ofText None text |> Option.defaultValue defValue
+            let def (defValue: bool) (text: string) : bool = tryDV None text |> Option.defaultValue defValue
 
             // optional-type with default.
             module Opt =
                 /// Casts a string to a bool option type with a default-value.
-                let def = ofText
+                let def (defValue: bool option) (text: string) = tryDV defValue text
         
         [<RequireQualifiedAccess>]
         module Dbl =
             /// Casts a string to a double option.
-            /// "NaN" string is cast to Double.NaN.
-            let private ofText (defValue: double option) (text: string) : double option =
-                try System.Double.Parse(text) |> Some with | _ -> defValue
+            /// "NaN" string is cast to Double.NaN. ("nan", "Nan", ... will fail).
+            let private tryDV (defValue: double option) (text: string) : double option =
+                match System.Double.TryParse(text) with | false, _ -> defValue | true, d -> Some d
 
             /// Casts a string to double or fails.
-            /// "NaN" string is cast to Double.NaN.
-            let fail (msg: string) (text: string) : double =  match ofText None text with None -> failwith msg | Some x -> x
+            /// "NaN" string is cast to Double.NaN. ("nan", "Nan", ... will fail).
+            let fail (msg: string) (text: string) : double =  match tryDV None text with None -> failwith msg | Some x -> x
 
             /// Casts a string to double with a default-value.
-            /// "NaN" string is cast to Double.NaN.
-            let def (defValue: double) (text: string) : double = ofText None text |> Option.defaultValue defValue
+            /// "NaN" string is cast to Double.NaN. ("nan", "Nan", ... will fail).
+            let def (defValue: double) (text: string) : double = tryDV None text |> Option.defaultValue defValue
 
             // optional-type with default.
             module Opt =
                 /// Casts a string to a bool option type with a default-value.
-                /// "NaN" string is cast to Double.NaN.
-                let def = ofText
+                /// "NaN" string is cast to Double.NaN. ("nan", "Nan", ... will fail).
+                let def (defValue: double option) (text: string) = tryDV defValue text
 
         [<RequireQualifiedAccess>]
         module Intg =
-            /// Casts a string to a int option.
-            let private ofText (defValue: int option) (text: string) : int option =
-                try System.Int32.Parse(text) |> Some with | _ -> defValue
+            /// Casts a string to an int option.
+            let private tryDV (defValue: int option) (text: string) : int option =
+                match System.Int32.TryParse(text) with | false, _ -> defValue | true, d -> Some d
 
             /// Casts a string to int or fails.
-            let fail (msg: string) (text: string) : int =  match ofText None text with None -> failwith msg | Some x -> x
+            let fail (msg: string) (text: string) : int =  match tryDV None text with None -> failwith msg | Some x -> x
 
             /// Casts a string to int with a default-value.
-            let def (defValue: int) (text: string) : int = ofText None text |> Option.defaultValue defValue
+            let def (defValue: int) (text: string) : int = tryDV None text |> Option.defaultValue defValue
 
             // optional-type with default.
             module Opt =
-                /// Casts a string to a bool option type with a default-value.
-                let def = ofText
+                /// Casts a string to an int option type with a default-value.
+                let def (defValue: int option) (text: string) = tryDV defValue text
 
         [<RequireQualifiedAccess>]
         module Dte =
             open System.Globalization
 
+            let private parse (text: string) = DateTime.TryParse(text)
+            let private parseExact (format: string) (text: string) = DateTime.TryParseExact(text, format, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None)
+
             /// Casts a string to a DateTime option.
-            let private ofText (defValue: DateTime option) (text: string) : DateTime option =
-                try DateTime.Parse(text, CultureInfo.InvariantCulture) |> Some with | _ -> defValue
+            /// dateFormat examples : "yyyyMMdd", "dd/MMM/yyyy", etc...
+            let private tryDV (dateFormat: string option) (defValue: DateTime option) (text: string) : DateTime option =
+                let parseFn = match dateFormat with | None -> parse | Some format -> parseExact format
+                match parseFn text with 
+                | false, _ -> defValue
+                | true, dte -> Some dte
 
             /// Casts a string to DateTime or fails.
-            let fail (msg: string) (text: string) : DateTime =  match ofText None text with None -> failwith msg | Some x -> x
+            let fail (msg: string) (dateFormat: string option) (text: string) : DateTime =  match tryDV dateFormat None text with None -> failwith msg | Some x -> x
 
             /// Casts a string to DateTime with a default-value.
-            let def (defValue: DateTime) (text: string) : DateTime = ofText None text |> Option.defaultValue defValue
+            let def (dateFormat: string option) (defValue: DateTime) (text: string) : DateTime = tryDV dateFormat None text |> Option.defaultValue defValue
 
             // optional-type with default.
             module Opt =
-                /// Casts a string to a bool option type with a default-value.
-                let def = ofText
+                /// Casts a string to a DateTime option type with a default-value.
+                let def (dateFormat: string option) (defValue: DateTime option) (text: string) = tryDV dateFormat defValue text
 
         type TagFn =
             /// Returns a default-value compatible with 'A and the typeTag.
@@ -2274,7 +2281,7 @@ module API =
                     | _ -> None
 
             /// Casts a string to a 'A, with a default-value for when the casting fails.
-            static member def<'A> (defValue: obj option) (typeTag: string) (text: string) : 'A = 
+            static member def<'A> (dateFormat: string option) (defValue: obj option) (typeTag: string) (text: string) : 'A = 
 
                 match typeTag |> Variant.ofTag with
                 | BOOL -> 
@@ -2297,13 +2304,13 @@ module API =
                     box a0D :?> 'A
                 | DATE -> 
                     let defval = TagFn.defaultValue<DateTime> typeTag defValue
-                    let a0D = Dte.def defval text
+                    let a0D = Dte.def dateFormat defval text
                     box a0D :?> 'A
                 | _ -> failwith "TO BE IMPLEMENTED WITH OTHER VARIANT TYPES" // TODO: Complete the list
 
             /// Casts a string to a 'A option, with a default-value for when the casting fails.
             /// defValue is None, Some 'a or even Some (Some 'a).
-            static member defOpt<'A> (defValue: obj option) (typeTag: string) (text: string) : 'A option = 
+            static member defOpt<'A> (dateFormat: string option) (defValue: obj option) (typeTag: string) (text: string) : 'A option = 
                 match typeTag |> Variant.ofTag with
                 | BOOLOPT -> 
                     let defval = TagFn.defaultValueOpt<bool> defValue
@@ -2325,7 +2332,7 @@ module API =
                     box a0D :?> 'A option
                 | DATEOPT -> 
                     let defval = TagFn.defaultValueOpt<double> defValue |> Option.map (fun d -> DateTime.FromOADate(d))
-                    let a0D = Dte.Opt.def defval text
+                    let a0D = Dte.Opt.def dateFormat defval text
                     box a0D :?> 'A option
                 | _ -> failwith "TO BE IMPLEMENTED WITH OTHER VARIANT TYPES" // TODO FIXME
 
@@ -2333,9 +2340,9 @@ module API =
         module Tag = 
             /// Casts a string to a 'a, with a default-value for when the casting fails.
             /// 'a is determined by typeTag.
-            let def (defValue: obj option) (typeTag: string) (text: string) : obj = 
+            let def (dateFormat: string option) (defValue: obj option) (typeTag: string) (text: string) : obj = 
                 let gentype = typeTag |> Variant.labelType true
-                let args : obj[] = [| defValue; typeTag; text |]
+                let args : obj[] = [| dateFormat; defValue; typeTag; text |]
                 let res = Toolbox.Generics.invoke<TagFn> "def" [| gentype |] args
                 res
 
@@ -2343,9 +2350,9 @@ module API =
             module Opt =
                 /// Casts a string to a 'a option, with a default-value for when the casting fails.
                 /// 'a is determined by typeTag.
-                let def (defValue: obj option) (typeTag: string) (text: string) : obj = 
+                let def (dateFormat: string option) (defValue: obj option) (typeTag: string) (text: string) : obj = 
                     let gentype = typeTag |> Variant.labelType true
-                    let args : obj[] = [| defValue; typeTag; text |]
+                    let args : obj[] = [| dateFormat; defValue; typeTag; text |]
                     let res = Toolbox.Generics.invoke<TagFn> "defOpt" [| gentype |] args
                     res
 
@@ -2353,9 +2360,9 @@ module API =
             module Any =
                 /// Convenient, single function covering def and Opt.def cases.
                 /// The returned (boxed) value might be either a 'a or a ('a option), depending on wether the type-tag is optional or not.
-                let def (defValue: obj option) (typeTag: string) (text: string) : obj = 
+                let def (dateFormat: string option) (defValue: obj option) (typeTag: string) (text: string) : obj = 
                     let gentype = typeTag |> Variant.labelType true
-                    let args : obj[] = [| defValue; typeTag; text |]
+                    let args : obj[] = [| dateFormat; defValue; typeTag; text |]
 
                     let res =
                         if typeTag |> Variant.isOptionalType then
@@ -6333,7 +6340,7 @@ module Rel =
     /// The first or second row of the CSV file can provide the relation field type tags (e.g. "int", "double", "string", "#date" ...)
     /// If mapNameType is provided, then field types are derived from field names (the CSV row of types is ignored).
     /// If mapNameDefvals and mapTypeDefvals provide default values derived from field namess or types respectively (default based on field name prevails).
-    let ofCSV (mapNameTagType: Map<string,string> option) (mapTypeDefvals: Map<string,obj>) (mapNameDefvals: Map<string,obj>) (useVB: bool) (enclosingQuotes: bool) (trim: bool) (sep: string) (csvFields: CSVFields) (fpath: string) : Rel option = 
+    let ofCSV (mapNameTagType: Map<string,string> option) (mapTypeDefvals: Map<string,obj>) (mapNameDefvals: Map<string,obj>) (dateFormat: string option) (useVB: bool) (enclosingQuotes: bool) (trim: bool) (sep: string) (csvFields: CSVFields) (fpath: string) : Rel option = 
         let lines = 
             if useVB then 
                 Toolbox.CSV.readLinesVB enclosingQuotes trim sep fpath
@@ -6420,7 +6427,7 @@ module Rel =
                             match mapNameDefvals |> Map.tryFind fname with
                             | Some defval -> Some defval
                             | None -> mapTypeDefvals |> Map.tryFind (typeTag.ToUpper())
-                        let res = API.Text.Tag.Any.def defValue typeTag text
+                        let res = API.Text.Tag.Any.def dateFormat defValue typeTag text
                         let elem : Elem = { fname = fname; value = res }
                         elem
 
@@ -7168,6 +7175,7 @@ module Rel_XL =
         ([<ExcelArgument(Description= "[Types default values. Default is None.]")>] typeDefaultValues: obj)
         ([<ExcelArgument(Description= "[Enclosing quotes. Default is false.]")>] enclosingQuotes: obj) 
         ([<ExcelArgument(Description= "[Trim blanks. Default is false.]")>] trimBlanks: obj) 
+        ([<ExcelArgument(Description= "[Date format. Default is None.]")>] dateFormat: obj) 
         ([<ExcelArgument(Description= "[Use VB Parser (debugging purpose). Default is true.]")>] useVBParser: obj) 
         : obj = 
         
@@ -7182,9 +7190,10 @@ module Rel_XL =
             | Some fieldNames, Some fieldTypes -> Rel.NoHeader (fieldNames, fieldTypes)
         let mapNameTagType = MRegistry.tryExtract<Map<string,string>> rgMapFNameFType
         let separator = In.D0.Stg.def "," separator
-        let enclosingQuotes = In.D0.Bool.def true enclosingQuotes
+        let enclosingQuotes = In.D0.Bool.def false enclosingQuotes
         let trimBlanks = In.D0.Bool.def true trimBlanks
         let useVBParser = In.D0.Bool.def true useVBParser
+        let dateFormat = In.D0.Stg.Opt.def None dateFormat
         let mapTypeDefvals = 
             match API.In.D1.OStg.tryDV None typesWithDefault with
             | None -> Map.empty
@@ -7198,7 +7207,7 @@ module Rel_XL =
         let rfid = MRegistry.refID
 
         // result
-        match Rel.ofCSV mapNameTagType mapTypeDefvals Map.empty useVBParser enclosingQuotes trimBlanks separator csvFields filePath with
+        match Rel.ofCSV mapNameTagType mapTypeDefvals Map.empty dateFormat useVBParser enclosingQuotes trimBlanks separator csvFields filePath with
         | None -> Proxys.def.failed
         | Some relCSV -> relCSV |> MRegistry.registerBxd rfid
 

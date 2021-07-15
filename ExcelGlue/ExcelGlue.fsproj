@@ -19,6 +19,7 @@
 		<Compile Include="0500_toolbox.fs" />
 		<Compile Include="1000_main.fs" />
 		<Compile Include="2000_xlxl.fs" />
+		<None Include="README.md" />
 	</ItemGroup>
 
 	<ItemGroup>

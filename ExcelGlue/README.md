@@ -29,6 +29,7 @@ Given a project name, MyProject:
   </ItemGroup>
 ```
 4. Install Excel-DNA Nugget packages:
+
 `ExcelDna.Addin version 1.1.1`
 `ExcelDna.Integration version 1.1.0`
 
@@ -38,6 +39,7 @@ Add `open ExcelGlue` to MyProject.fs.
 
 ## Misc
 Typical ExcelDna files location:
+
 `C:\Users\[Username]\.nuget\packages\exceldna.addin\1.1.1\readme.txt`
 
 `C:\Users\[Username]\.nuget\packages\exceldna.addin\1.1.1\build\ExcelDna.AddIn.targets`

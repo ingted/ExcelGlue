@@ -117,6 +117,32 @@ module Toolbox =
             | None, Some cnt -> sub' xs 0 cnt
             | None, None -> xs
 
+        /// Transposes array of arrays.
+        /// Jagged arrays are not allowed (No check is done).
+        let transpose<'a> (xs: 'a[][]) : 'a[][] =
+            if xs.Length = 0 then
+                [||]
+            else
+                Array.init xs.[0].Length (fun j -> Array.init xs.Length (fun i -> xs.[i].[j]))
+
+        /// Returns a 'chunk' of the input array, xs.
+        /// Returns [ emptyValue ] for empty array.
+        /// If there are not enough elements to fill a count-length chunks, pads its end with defValues. 
+        let view (defValue: 'a) (emptyValue: 'a option) (startIndex: int option) (count: int option) (xs : 'a[]) : 'a[] =
+            let subArray = 
+                match emptyValue, sub startIndex count xs with
+                | Some emptyval, [||] -> [| emptyval |]
+                | _, resxs -> resxs
+            match count with
+            | None -> subArray
+            | Some cnt ->
+                // pads subArray with defValues 
+                if subArray.Length < cnt then
+                    Array.append subArray (defValue |> Array.replicate (cnt - subArray.Length))
+                else
+                    subArray
+
+
         // -----------------------------
         // -- Zip functions
         // -----------------------------
@@ -291,6 +317,29 @@ module Toolbox =
                 a1Ds |> array2D
             else
                 Array2D.init a1Ds.[0].Length a1Ds.Length (fun i j -> a1Ds.[j].[i])
+        
+        /// Returns a 2D array, horizontal (rowWise = true) or vertical (rowWise = false),
+        /// from a 1D array.
+        let of1D (rowWise: bool) (a1D: 'a[]) : 'a[,] = a1D |> Array.singleton |> concat2D rowWise
+        
+        let appendV<'a> (a2Dtop: 'a[,]) (a2Dbot: 'a[,]) : 'a[,] option =
+            let len2top = Array2D.length2 a2Dtop
+            let len2bot = Array2D.length2 a2Dbot
+
+            if len2top <> len2bot then
+                None
+            else
+                Array.append
+                    [| for i in a2Dtop.GetLowerBound(0) .. a2Dtop.GetUpperBound(0) 
+                            -> a2Dtop.[i,*]
+                    |]
+
+                    [| for i in a2Dbot.GetLowerBound(0) .. a2Dbot.GetUpperBound(0) 
+                            -> a2Dbot.[i,*]
+                    |]
+
+                |> array2D
+                |> Some
 
     /// CSV files reading functions. 
     module CSV =

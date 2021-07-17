@@ -438,6 +438,8 @@ module API =
     // FIXME better wording
     /// Describes various convenient sets, "kinds", of xl-spreadsheet values.
     type Kind = | Boolean | Numeric | Textual | NA | Error | Missing | Empty with
+        static member def : Set<Kind> = NA |> Set.singleton
+
         static member hasKind (kinds: Set<Kind>) (xlValue: obj) : bool =
             match xlValue with 
             | :? bool -> kinds |> Set.contains Boolean
@@ -996,19 +998,25 @@ module API =
 
             [<RequireQualifiedAccess>]
             module Bool =
-                /// Converts an obj[] to a bool[], given a default-value for non-bool elements.
+                /// Converts an obj[] to a bool[]
+                /// Non-bool elements are replaced by the default-value. TODO / FIXME use the same comments for other types
                 let def (defValue: bool) (o1D: obj[]) = def defValue o1D
 
                 /// optional-type default
                 module Opt =
                     /// Converts an obj[] to a ('a option)[], given a default-value for non-bool elements.
+                    /// bool elements, x, are wrapped to (Some x).
+                    /// Non-bool elements are replaced by the default-value.
                     let def (defValue: bool option) (o1D: obj[]) = Opt.def defValue o1D
 
                 /// Converts an obj[] to a bool[], removing any non-bool element.
                 let filter (o1D: obj[]) = filter<bool> o1D
 
-                /// Converts an obj[] to an optional 'a[]. All the elements must be bool, otherwise defValue array is returned. 
+                /// Converts an obj[] to an optional bool[]. All the elements must be bool, otherwise defValue array is returned. 
                 let tryDV (defValue1D: bool[] option) (o1D: obj[])  = tryDV<bool> defValue1D o1D
+
+                /// Converts an obj[] to a bool[]. All the elements must be bool, fails otherwise. 
+                let fail (o1D: obj[]) = match tryDV None o1D with | Some a1D -> a1D | None -> failwith "Cannot cast elements to bool."
 
             [<RequireQualifiedAccess>]
             module Stg =
@@ -1023,8 +1031,11 @@ module API =
                 /// Converts an obj[] to a string[], removing any non-string element.
                 let filter (o1D: obj[]) = filter<string> o1D
 
-                /// Converts an obj[] to an optional 'a[]. All the elements must be string, otherwise defValue array is returned. 
+                /// Converts an obj[] to an optional string[]. All the elements must be string, otherwise defValue array is returned. 
                 let tryDV (defValue1D: string[] option) (o1D: obj[])  = tryDV<string> defValue1D o1D
+
+                /// Converts an obj[] to a string[]. All the elements must be string, fails otherwise. 
+                let fail (o1D: obj[]) = match tryDV None o1D with | Some a1D -> a1D | None -> failwith "Cannot cast elements to string."
 
             /// Similar to Stg, but with an xl-value as primary input.
             /// (Choice was made to make rowWiseDef false. A much more frequent choice.)
@@ -1044,6 +1055,9 @@ module API =
                 /// Converts an obj[] to an optional 'a[]. All the elements must be string, otherwise defValue array is returned. 
                 let tryDV (defValue1D: string[] option) (xlValue: obj)  = Cast.to1D false xlValue |> Stg.tryDV defValue1D
 
+                /// Converts an obj[] to an optional string[]. All the elements must be string, otherwise defValue array is returned. 
+                let fail (xlValue: obj)  =  match tryDV None xlValue with | Some a1D -> a1D | None -> failwith "Cannot cast elements to string."
+
             [<RequireQualifiedAccess>]
             module Dbl =
                 /// Converts an obj[] to a double[], given a default-value for non-double elements.
@@ -1058,7 +1072,28 @@ module API =
                 let filter (o1D: obj[]) = filter<double> o1D
 
                 /// Converts an obj[] to an optional 'a[]. All the elements must be double, otherwise defValue array is returned. 
-                let tryDV (defValue1D: double[] option) (o1D: obj[])  = tryDV<double> defValue1D o1D
+                let tryDV (defValue1D: double[] option) (o1D: obj[]) = tryDV<double> defValue1D o1D
+
+                /// Converts an obj[] to a double[]. All the elements must be double, fails otherwise. 
+                let fail (o1D: obj[]) = match tryDV None o1D with | Some a1D -> a1D | None -> failwith "Cannot cast elements to double."
+
+            /// Similar to Dbl, but with an xl-value as primary input.
+            /// (Choice was made to make rowWiseDef false. A much more frequent choice.)
+            [<RequireQualifiedAccess>]
+            module ODbl =
+                /// Converts an obj[] to a double[], given a default-value for non-double elements.
+                let def (defValue: double) (xlValue: obj) = Cast.to1D false xlValue |> Dbl.def defValue 
+
+                /// optional-type default
+                module Opt = 
+                    /// Converts an obj[] to a ('a option)[], given a default-value for non-double elements.
+                    let def (defValue: double option) (xlValue: obj) = Cast.to1D false xlValue |> Dbl.Opt.def defValue 
+
+                /// Converts an obj[] to a double[], removing any non-double element.
+                let filter (xlValue: obj) = Cast.to1D false xlValue |> Dbl.filter
+
+                /// Converts an obj[] to an optional 'a[]. All the elements must be double, otherwise defValue array is returned. 
+                let tryDV (defValue1D: double[] option) (xlValue: obj) = Cast.to1D false xlValue |> Dbl.tryDV defValue1D
 
             [<RequireQualifiedAccess>]
             module Nan =
@@ -1106,6 +1141,9 @@ module API =
                     | None -> convert |> Array.map Option.get |> Some
                     | Some _ -> defValue1D
 
+                /// Converts an obj[] to a int[]. All the elements must be int, fails otherwise. 
+                let fail (o1D: obj[]) = match tryDV None o1D with | Some a1D -> a1D | None -> failwith "Cannot cast elements to int."
+
             [<RequireQualifiedAccess>]
             module Dte =
                 /// Converts an obj[] to a DateTime[], given a default-value for non-DateTime elements.
@@ -1128,6 +1166,9 @@ module API =
                     match convert |> Array.tryFind Option.isNone with
                     | None -> convert |> Array.map Option.get |> Some
                     | Some _ -> defValue1D
+
+                /// Converts an obj[] to a DateTime[]. All the elements must be DateTime, fails otherwise. 
+                let fail (o1D: obj[]) = match tryDV None o1D with | Some a1D -> a1D | None -> failwith "Cannot cast elements to DateTime."
     
             /// Useful functions for casting xl-arrays, given a type-tag (e.g. "int", "date", "double", "string"...)
             /// Use module Gen functions for their untyped versions.
@@ -1396,8 +1437,6 @@ module API =
                         let genty, xo1D = tryDVBxd xlKinds rowWiseDef defValue1D typeTag xlValue
                         Toolbox.Option.unwrap xo1D
                         |> Option.map (fun res -> (genty, res :?> obj[]))
-
-
 
         /// Obj[] input functions.
         module D2 =
@@ -1840,6 +1879,13 @@ module API =
                     else    
                         d |> box
 
+                /// Similar to Dbl.out but with a defValue instead of a Proxys object.
+                let outBxd (defValue: obj) (d: double) : obj =
+                    if Double.IsNaN(d) then
+                        defValue
+                    else    
+                        d |> box
+
             /// Outputs primitive types back to Excel.
             // https://docs.microsoft.com/en-us/office/client-developer/excel/data-types-used-by-excel
             [<RequireQualifiedAccess>]
@@ -1930,8 +1976,10 @@ module API =
         let out<'a> (defOutput: obj) (output: 'a option) = match output with None -> defOutput | Some value -> box value
         let outNA<'a> : 'a option -> obj = out (box ExcelError.ExcelErrorNA)
         let outStg<'a> (defString: string) : 'a option -> obj = out (box defString)
-        let outDbl<'a> (defNum: double) : 'a option -> obj = out (box defNum)
-        let outOptx<'a> (defNum: double) : 'a option -> obj = out (box defNum)
+        let outDblTBD<'a> (defNum: double) : 'a option -> obj = out (box defNum)
+        let outOptTBD<'a> (defNum: double) : 'a option -> obj = out (box defNum)
+
+
 
         /// Functions to output 1D arrays back to Excel.
         module D1 =
@@ -4887,60 +4935,96 @@ module MAP =
         // BOILER PLATE. ALL CASES ARE NOT IMPLEMENTED YET
         // END HERE
 
-    module Gen =
-        /// wording
-        let mapN (gtykeys: Type[]) (gtyval: Type) (keys: obj[]) (values: obj) : obj = 
-            let gtys = Array.append gtykeys [| gtyval |]
-            let args : obj[] = Array.append keys [| values |]
-            let methodnm = sprintf "map%d" gtykeys.Length
+    //module GenTBD =
+    //    let MAX_ARITY_MAPN = 10
+    //    /// Builds a Map<'K1*'K2 .. *'KN,'V> key-value pairs map (Currently N <= 10).
+    //    /// Output type: Map<'K1*'K2 .. *'KN,'V>
+    //    let mapN (gtykeys: Type[]) (gtyval: Type) (keys: obj[]) (values: obj) : obj = 
+    //        // if arity > MAX_ARITY_TOMAP then
+    //        let gtys = Array.append gtykeys [| gtyval |]
+    //        let args : obj[] = Array.append keys [| values |]
+    //        let methodnm = sprintf "map%d" gtykeys.Length
 
-            let res = Toolbox.Generics.invoke<GenFn> methodnm gtys args
-            res
+    //        let res = invoke<GenFn> methodnm gtys args
+    //        res
 
-        let map2D (vgtykeys: Type[]) (hgtykeys: Type[]) (gtyval: Type) (vkeys: obj[]) (hkeys: obj[]) (values: obj) : obj = 
-            let gtys = Array.append (Array.append vgtykeys hgtykeys) [| gtyval |]
-            let args : obj[] = Array.append (Array.append vkeys hkeys) [| values |]
-            let methodnm = sprintf "mapV%dH%d" vgtykeys.Length hgtykeys.Length
+    //    /// Builds a Map<'KV1*'KV2 .. *'KH1*'KH2..,'V> key-value pairs map (Currently N <= 10).
+    //    /// Output type: Map<'KV1*'KV2 .. *'KH1*'KH2..,'V>
+    //    let map2D (vgtykeys: Type[]) (hgtykeys: Type[]) (gtyval: Type) (vkeys: obj[]) (hkeys: obj[]) (values: obj) : obj = 
+    //        let gtys = Array.append (Array.append vgtykeys hgtykeys) [| gtyval |]
+    //        let args : obj[] = Array.append (Array.append vkeys hkeys) [| values |]
+    //        let methodnm = sprintf "mapV%dH%d" vgtykeys.Length hgtykeys.Length
 
-            let res = Toolbox.Generics.invoke<GenFn> methodnm gtys args
-            res
+    //        let res = invoke<GenFn> methodnm gtys args
+    //        res
 
-    // -----------------------------------
-    // -- Registry functions
-    // -----------------------------------
-    module Registry =
+    /// -----------------------------------
+    /// -- Reflection functions
+    /// -----------------------------------
+    module RxFn =
         let genType = typeof<Map<_,_>>
 
+        /// Collection of functions which, loosely, return Map<'K,'V> objects.
         module In = 
+            let MAX_ARITY_MAPN = 10 // TODO
+            /// Builds a Map<'K1*'K2 .. *'KN,'V> key-value pairs map (Currently N <= 10).
+            /// Output type: Map<'K1*'K2 .. *'KN,'V>
+            let mapN (gtykeys: Type[]) (gtyval: Type) (keys: obj[]) (values: obj) : obj = 
+                // if arity > MAX_ARITY_TOMAP then
+                let gtys = Array.append gtykeys [| gtyval |]
+                let args : obj[] = Array.append keys [| values |]
+                let methodnm = sprintf "map%d" gtykeys.Length
+
+                let res = invoke<GenFn> methodnm gtys args
+                res
+
+            /// Builds a Map<'KV1*'KV2 .. *'KH1*'KH2..,'V> key-value pairs map (Currently N <= 10).
+            /// Output type: Map<'KV1*'KV2 .. *'KH1*'KH2..,'V>
+            let map2D (vgtykeys: Type[]) (hgtykeys: Type[]) (gtyval: Type) (vkeys: obj[]) (hkeys: obj[]) (values: obj) : obj = 
+                let gtys = Array.append (Array.append vgtykeys hgtykeys) [| gtyval |]
+                let args : obj[] = Array.append (Array.append vkeys hkeys) [| values |]
+                let methodnm = sprintf "mapV%dH%d" vgtykeys.Length hgtykeys.Length
+
+                let res = invoke<GenFn> methodnm gtys args
+                res
+
+            /// Merges several Map<'K*'V> objects together.
+            /// Output type: Map<'KV1*'KV2 .. *'KH1*'KH2..,'V>
             let pool (xlValue: obj) : obj option =
                 let methodNm = "pool"
                 MRegistry.tryExtractGen1D genType xlValue |> Option.map (fun (tys, objs) -> (tys, box objs))
                 |> Option.map (apply<GenFn> methodNm [||] [||]) 
 
+        /// Collection of functions which apply to Map<'K,'V> objects.
         module Out =
+            /// Output type: int
             let count (regKey: string) : obj option =
                 let methodNm = "count"
                 MRegistry.tryExtractGen genType regKey
                 |> Option.map (apply<GenFn> methodNm [||] [||])
 
+            /// Output type: 'K[]
             let keys (regKey: string) (refKey: String) (proxys: Proxys) : obj[] option =
                 let methodNm = "keys"
                 MRegistry.tryExtractGen genType regKey
                 |> Option.map (apply<GenFn> methodNm [||] [| refKey; proxys |])
                 |> Option.map (fun o -> o :?> obj[])
 
+            /// Output type: 'V[]
             let values (regKey: string) (unwrapOptions: bool) (refKey: String) (proxys: Proxys) : obj[] option =
                 let methodNm = "values"
                 MRegistry.tryExtractGen genType regKey
                 |> Option.map (apply<GenFn> methodNm [||] [| unwrapOptions; refKey; proxys |])
                 |> Option.map (fun o -> o :?> obj[])
 
+            /// Output type: obj
             let find1 (regKey: string) (proxys: Proxys) (refKey: string) (okey1: obj) : obj option =
                 let methodNm = "find1"
                 let okey1' = Registry.MRegistry.tryExtractO okey1 |> Option.defaultValue okey1
                 MRegistry.tryExtractGen genType regKey
                 |> Option.map (apply<GenFn> methodNm [||] [| false; proxys; refKey; okey1' |])
 
+            /// Output type: obj
             let findN (regKey: string) (proxys: Proxys) (refKey: string) (okeys: obj[]) : obj option =
                 let args : obj[] = Array.append [| proxys; refKey |] okeys
                 let methodNm = sprintf "find%d" okeys.Length
@@ -4958,7 +5042,8 @@ module MAP =
                             let genTypeRObj = (Array.append elemTys [| tys.[1] |], o)
                             apply<GenFn> methodNm [||] args genTypeRObj
                             |> Some
-
+            
+            /// Output type: obj[]
             let find1D1 (regKey: string) (proxys: Proxys) (refKey: string) (okeys1: obj[]) : obj option =
                 let methodNm = "find1D1"
                 MRegistry.tryExtractGen genType regKey
@@ -5172,7 +5257,7 @@ module MAP_XL =
         match gtykeys_keys_gtyvals_vals with
         | None -> Proxys.def.failed
         | Some (gtykeys, keys, gtyval, vals) ->
-            let map = MAP.Gen.mapN gtykeys gtyval keys vals
+            let map = MAP.RxFn.In.mapN gtykeys gtyval keys vals
             let res = map |> MRegistry.register rfid
             res |> box
 
@@ -5386,7 +5471,7 @@ module MAP_XL =
             | None, _ -> Proxys.def.failed
             | _, None -> Proxys.def.failed
             | Some (vgtykeys, vkeys), Some (hgtykeys, hkeys) ->
-                let map = MAP.Gen.map2D vgtykeys hgtykeys gtyval vkeys hkeys vals
+                let map = MAP.RxFn.In.map2D vgtykeys hgtykeys gtyval vkeys hkeys vals
                 let res = map |> MRegistry.register rfid
                 res |> box
 
@@ -5409,7 +5494,7 @@ module MAP_XL =
         : obj = 
 
         // result
-        match MAP.Registry.Out.count rgMap with
+        match MAP.RxFn.Out.count rgMap with
         | None -> Proxys.def.failed  // TODO Unbox.apply?
         | Some o -> o
 
@@ -5426,7 +5511,7 @@ module MAP_XL =
         let rfid = MRegistry.refID
 
         // result
-        match MAP.Registry.Out.keys rgMap rfid Proxys.def with
+        match MAP.RxFn.Out.keys rgMap rfid Proxys.def with
         | None -> [| Proxys.def.failed |]  // TODO Unbox.apply?
         | Some o1D -> o1D
 
@@ -5439,7 +5524,7 @@ module MAP_XL =
         let rfid = MRegistry.refID
 
         // result
-        match MAP.Registry.Out.values rgMap true rfid Proxys.def with
+        match MAP.RxFn.Out.values rgMap true rfid Proxys.def with
         | None -> [| Proxys.def.failed |]  // TODO Unbox.apply?
         | Some o1D -> o1D
 
@@ -5500,11 +5585,11 @@ module MAP_XL =
                 [| mapKey1 |]
 
         if okeys.Length = 1 then
-            match MAP.Registry.Out.find1 rgMap proxys rfid okeys.[0] with
+            match MAP.RxFn.Out.find1 rgMap proxys rfid okeys.[0] with
             | None -> proxys.failed
             | Some o0D -> o0D
         else
-            match MAP.Registry.Out.findN rgMap proxys rfid okeys with
+            match MAP.RxFn.Out.findN rgMap proxys rfid okeys with
             | None -> proxys.failed
             | Some o0D -> o0D
 
@@ -5523,7 +5608,7 @@ module MAP_XL =
         // caller cell's reference ID
         let rfid = MRegistry.refID
 
-        match MAP.Registry.Out.find1D1 rgMap proxys rfid okeys with
+        match MAP.RxFn.Out.find1D1 rgMap proxys rfid okeys with
         | None -> [| proxys.failed |]
         | Some xo1D -> xo1D |> Out.D1.Unbox.apply proxys id
 
@@ -5536,7 +5621,7 @@ module MAP_XL =
         let rfid = MRegistry.refID
 
         // result
-        match MAP.Registry.In.pool rgMap1D with
+        match MAP.RxFn.In.pool rgMap1D with
         | None -> Proxys.def.failed  // TODO Unbox.apply?
         | Some regObjMap -> regObjMap |> MRegistry.register rfid |> box
 
@@ -5645,8 +5730,8 @@ module Rel =
         static member indexMap (fields: Set<Field>) (away: bool) (keepNames: Set<string>) : Map<string,int> =
             Field.indexing fields away keepNames |> Array.map (fun (x, y) -> (y, x)) |> Map.ofArray
 
-        // Same as Field.indices, but with same ordering as keepNames.
-        // All of keepNames must be valid field names, otherwise returns None
+        /// Same as Field.indices, but with same ordering as keepNames.
+        /// All of keepNames must be valid field names, otherwise returns None
         static member indicesOrdered (fields: Set<Field>) (keepNames: string[]) : int[] option = 
             let indexmap = Field.indexMap fields false (keepNames |> Set.ofArray)
             let indices = keepNames |> Array.choose (fun name -> indexmap |> Map.tryFind name)
@@ -5899,7 +5984,7 @@ module Rel =
     /// Project operator.
     /// Keeps all of r's fields which name are included in R's field names (away = false).
     /// Discards all of r's fields which name are not included in keepNames (away = true).
-    let project (away: bool) (r: Rel) (keepNames: Set<string>) : Rel =
+    let project (r: Rel) (away: bool) (keepNames: Set<string>) : Rel =
         let fields = Field.project r.fields away keepNames
         let indices = Field.indices r.fields away keepNames
 
@@ -6241,6 +6326,33 @@ module Rel =
                         let resBody = extendedRows |> Set.ofArray
                         let rel : Rel = { fields = resFields; body = resBody }
                         rel |> Some
+
+    /// Restrict operator
+    /// where the filtering test is limited to equality of the elements for given fields.
+    /// names = [foo, foo], values = [x1, x2] 
+    ///     => true for rows where foo element is either x1 OR x2 (exclude = false)
+    ///     => true for rows where foo element is neither x1 nOR x2 (exclude = true)
+    /// names = [foo, bar], values = [x, x] 
+    ///     => true for row where foo element is x AND bar element is y (exclude = false)
+    ///     => true for row where (foo, bar) is not equal to (x, y) (exclude = true)
+    let restrictBasic (r: Rel) (exclude: bool) (names: string[]) (values: obj[]) : Rel option =        
+        if (names.Length = 0) && (values.Length = 0) then
+            Some r
+        elif r.card = 0 then
+            None
+        elif names.Length <> values.Length then
+            None
+        else
+            match Field.indicesOrdered r.fields names with
+            | None -> None
+            | Some argIdxs ->
+                
+                let eqRow (row: Row) = Row.ofPositions argIdxs row |> Array.map (fun elem -> elem.value) = values
+                let nonEqRow (row: Row) = Row.ofPositions argIdxs row |> Array.map (fun elem -> elem.value) <> values
+                let filterRow = if exclude then nonEqRow else eqRow
+
+                let rel : Rel = { r with body = r.body |> Set.filter filterRow }
+                rel |> Some
 
     /// Restrict operator.
     /// ofun is a FsharpFunc object.
@@ -6632,7 +6744,7 @@ module Rel =
 
                                 let methodNm = sprintf "omap%d%s" arity (if groupValues then "s" else "")
                                 let methodTys = let flds = rel.fields |> Set.toArray in keepIdxs |> Array.map (fun i -> flds.[i].ftype)
-                                let resMap = MAP.Gen.mapN (Array.sub methodTys 0 arity) (methodTys |> Array.last) (colkeys |> Array.map box) colval
+                                let resMap = MAP.RxFn.In.mapN (Array.sub methodTys 0 arity) (methodTys |> Array.last) (colkeys |> Array.map box) colval
                                 resMap |> Some
 
         module Out =
@@ -6927,7 +7039,7 @@ module Rel_XL =
         // result
         match tryExtract<Rel.Rel> rgRel, projNames with
         | Some rel, Some keepNames -> 
-            let relProj = Rel.project projAway rel (keepNames |> Set.ofArray)
+            let relProj = Rel.project rel projAway (keepNames |> Set.ofArray)
             relProj |> MRegistry.registerBxd rfid
         | _ -> Proxys.def.failed
 

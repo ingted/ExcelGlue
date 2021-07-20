@@ -1,4 +1,7 @@
-﻿namespace ExcelGlue
+﻿//  Copyright (c) cdr021. All rights reserved.
+//  ExcelGlue is licensed under the MIT license. See LICENSE.txt for details.
+
+namespace ExcelGlue
 
 open System
 open System.IO
@@ -180,7 +183,7 @@ type Registry() =
                 else
                     None
 
-    /// Same as tryExtractGen, but also return the generic types array.
+    /// Same as tryExtractGen', but also return the generic types array.
     /// targetGenType is the expected generic type, e.g. targetGenType: typeof<GenMTRX<_>>
     member this.tryExtractGen (targetType: Type) (regKey: string) : ((Type[])*obj) option =
         this.tryExtractGen' targetType regKey
@@ -4044,7 +4047,7 @@ module A2D_XL =
 
 module MAP = 
     open Registry
-    open Toolbox.Generics
+    // open Toolbox.Generics
     open Toolbox.Array
     open Microsoft.FSharp.Reflection
     open API.Out
@@ -4053,10 +4056,10 @@ module MAP =
     // -- Main functions
     // -----------------------------------
 
-    // -----------------------------------
-    // -- Reflection functions
-    // -----------------------------------
-    type GenFn = // TODO change to Map or Refl?
+    /// -----------------------------------
+    /// -- Generic functions
+    /// -----------------------------------
+    type GenFn =
 
         // -----------------------------------
         // -- Inspection functions
@@ -4935,36 +4938,14 @@ module MAP =
         // BOILER PLATE. ALL CASES ARE NOT IMPLEMENTED YET
         // END HERE
 
-    //module GenTBD =
-    //    let MAX_ARITY_MAPN = 10
-    //    /// Builds a Map<'K1*'K2 .. *'KN,'V> key-value pairs map (Currently N <= 10).
-    //    /// Output type: Map<'K1*'K2 .. *'KN,'V>
-    //    let mapN (gtykeys: Type[]) (gtyval: Type) (keys: obj[]) (values: obj) : obj = 
-    //        // if arity > MAX_ARITY_TOMAP then
-    //        let gtys = Array.append gtykeys [| gtyval |]
-    //        let args : obj[] = Array.append keys [| values |]
-    //        let methodnm = sprintf "map%d" gtykeys.Length
-
-    //        let res = invoke<GenFn> methodnm gtys args
-    //        res
-
-    //    /// Builds a Map<'KV1*'KV2 .. *'KH1*'KH2..,'V> key-value pairs map (Currently N <= 10).
-    //    /// Output type: Map<'KV1*'KV2 .. *'KH1*'KH2..,'V>
-    //    let map2D (vgtykeys: Type[]) (hgtykeys: Type[]) (gtyval: Type) (vkeys: obj[]) (hkeys: obj[]) (values: obj) : obj = 
-    //        let gtys = Array.append (Array.append vgtykeys hgtykeys) [| gtyval |]
-    //        let args : obj[] = Array.append (Array.append vkeys hkeys) [| values |]
-    //        let methodnm = sprintf "mapV%dH%d" vgtykeys.Length hgtykeys.Length
-
-    //        let res = invoke<GenFn> methodnm gtys args
-    //        res
-
     /// -----------------------------------
     /// -- Reflection functions
     /// -----------------------------------
     module RxFn =
+        open Toolbox.Generics
         let genType = typeof<Map<_,_>>
 
-        /// Collection of functions which, loosely, return Map<'K,'V> objects.
+        /// Collection of functions which, loosely speaking, add elements to the Registry.
         module In = 
             let MAX_ARITY_MAPN = 10 // TODO
             /// Builds a Map<'K1*'K2 .. *'KN,'V> key-value pairs map (Currently N <= 10).
@@ -4995,7 +4976,7 @@ module MAP =
                 MRegistry.tryExtractGen1D genType xlValue |> Option.map (fun (tys, objs) -> (tys, box objs))
                 |> Option.map (apply<GenFn> methodNm [||] [||]) 
 
-        /// Collection of functions which apply to Map<'K,'V> objects.
+        /// Collection of functions which, loosely speaking, output Registry object to Excel.
         module Out =
             /// Output type: int
             let count (regKey: string) : obj option =

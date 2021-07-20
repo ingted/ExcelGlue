@@ -1,4 +1,7 @@
-﻿namespace ExcelGlue
+﻿//  Copyright (c) cdr021. All rights reserved.
+//  ExcelGlue is licensed under the MIT license. See LICENSE.txt for details.
+
+namespace ExcelGlue
 
 module XlXl =
     open System

@@ -1,4 +1,7 @@
-﻿namespace ExcelGlue
+﻿//  Copyright (c) cdr021. All rights reserved.
+//  ExcelGlue is licensed under the MIT license. See LICENSE.txt for details.
+
+namespace ExcelGlue
 
 module Toolbox =
     open System
@@ -17,7 +20,7 @@ module Toolbox =
 
         /// NONE should always precede SOME in active patterns.
         let (|NONE|_|) : obj -> obj option =
-          fun (a:obj) -> if a = null then Some (box "None detected here") else None
+          fun (a: obj) -> if a = null then Some (box "None detected here") else None
 
         let unwrap (o: obj) : obj option =   
             match o with    
@@ -270,6 +273,15 @@ module Toolbox =
                 let xs9 = Array.sub xs9 0 len
                 let xs10 = Array.sub xs10 0 len
                 [| for i in 0 .. (len - 1) -> (xs1.[i], xs2.[i], xs3.[i], xs4.[i], xs5.[i], xs6.[i], xs7.[i], xs8.[i], xs9.[i], xs10.[i]) |]
+
+        let zipWith (fn: 'a1 -> 'a2 -> 'b) (xs1: 'a1[]) (xs2: 'a2[]) : 'b[] =
+            zip xs1 xs2 |> Array.map (fun (x1, x2) -> fn x1 x2)
+
+        let zipWith3 (fn: 'a1 -> 'a2 -> 'a3 -> 'b) (xs1: 'a1[]) (xs2: 'a2[]) (xs3: 'a3[]) : 'b[] =
+            zip3 xs1 xs2 xs3 |> Array.map (fun (x1, x2, x3) -> fn x1 x2 x3)
+
+        let zipWith4 (fn: 'a1 -> 'a2 -> 'a3 -> 'a4 -> 'b) (xs1: 'a1[]) (xs2: 'a2[]) (xs3: 'a3[]) (xs4: 'a4[]) : 'b[] =
+            zip4 xs1 xs2 xs3 xs4 |> Array.map (fun (x1, x2, x3, x4) -> fn x1 x2 x3 x4)
 
     module Array2D =
         // -----------------------------

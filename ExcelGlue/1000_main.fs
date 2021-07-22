@@ -3337,7 +3337,6 @@ module Fun_XL =
                     res
 
 module A1D = 
-    //open type Registry
     open Registry
     open Toolbox.Array
     open Toolbox.Generics
@@ -5606,29 +5605,31 @@ module MAP_XL =
         | None -> Proxys.def.failed  // TODO Unbox.apply?
         | Some regObjMap -> regObjMap |> MRegistry.register rfid |> box
 
-
 module Rel =
     open API
     open System.Collections
     open type Out.Proxys
 
+
+
+
     // a custom compare function is needed because we use F# Set<Elem>, which requires a comparison constraint on its elements.
     [<RequireQualifiedAccess>]
-    module CompareTBD = // still needed??
+    module Compare =
         // -----------------------------
         // -- Comparaison functions
         // -----------------------------
 
         // write your custom compare function here.
         /// Used if Structural Equality does not apply.
-        let customTBD (o1: obj) (o2: obj) : int =
+        let custom (o1: obj) (o2: obj) : int =
             match (o1, o2) with
             //| (:? Foo), (:? Foo) -> 0
             //| (:? Foo), _ -> -1
             //| _ , (:? Foo) -> 1
             | _ -> failwith "System.ArgumentException: Object must be of type IComparable or IStructuralComparable.\nat oCompare (Object value1) (Object value2)"
     
-        let compareTBD (o1: obj) (o2: obj) : int =
+        let compare (o1: obj) (o2: obj) : int =
             match (o1, o2) with
             | (:? IComparable as c1), (:? IComparable as c2) -> 
                 try 
@@ -5641,7 +5642,7 @@ module Rel =
                 with
                 | e -> failwith e.Message
             | _ ->
-                customTBD o1 o2
+                custom o1 o2
 
     // F# Set requires comparison, and the relation object is defined as Set<Elem>, so custom comparison is necessary for Elem and Field.
     // As the Relation object does not allow two Fields with the same name in its header,
@@ -5669,6 +5670,7 @@ module Rel =
 
         /// Returns field-types, given field-names.
         /// Returns None if any fieldName is not included in fields.
+        /// Preserves fieldNames order.
         static member types (fields: Set<Field>) (fieldNames: string[]) : Type[] option = 
             let mapping = fields |> Set.toArray |> Array.map (fun field -> (field.fname, field.ftype)) |> Map.ofArray
             let types = fieldNames |> Array.choose (fun fname -> mapping |> Map.tryFind fname)
@@ -5764,15 +5766,13 @@ module Rel =
                     if e1.fname <> e2.fname then 
                         e1.fname.CompareTo(e2.fname)
                     else 
-                        // should never reach there for valid relation
-                        CompareTBD.compareTBD e1.value e2.value // RESTORE ME?
-                        // failwith "should never reach there for valid relation."
+                        Compare.compare e1.value e2.value // cases when we reach here?
                 | _ -> invalidArg "o2" "Elem: Cannot compare values of different types."
 
         static member zip (fieldNames: string[]) (elems: obj[]) : Elem[] =
             Array.zip fieldNames elems |> Array.sortBy fst |> Array.map (fun (fname, o) -> { fname = fname; value = o })
     
-    /// Row is an (unordered) set of Elem-s. Similar to C.J. Date's concept of 'Tuple'.
+    /// Row is an (unordered) set of Elem-s. Similar to C.J. Date's concept of 'Tuple' in 'An Introduction to Database Systems'.
     type Row = Elem[]
 
     module Row =
@@ -6177,7 +6177,7 @@ module Rel =
     /// Summarize operator.
     /// operations = operators, operNames, resultNames, resultTypes
     /// operator should be typeof<operName> -> resultType
-    let summarize (r: Rel) (perRel: Rel) (operations: ((obj[] -> obj)*string*string*Type)[]) : Rel option =
+    let summarize' (r: Rel) (perRel: Rel) (operations: ((obj[] -> obj)*string*string*Type)[]) : Rel option =
         let operators, operNames, resultNames, resultTypes = operations |> Toolbox.Array.unzip4
 
         if (perRel.count = 0) && (perRel.card = 0) && (operations.Length = 0) then
@@ -6192,7 +6192,6 @@ module Rel =
             let commonFields = Rel.commonFields r perRel
 
             // summarize relation fields
-            // let resultFields : Set<Field> = Array.zip resultNames resultTypes |> Array.map (fun (resname, restype) -> { fname = resname; ftype = restype } ) |> Set.ofArray
             let resultFields : Set<Field> = Field.zip resultNames resultTypes
             let fields = Set.union commonFields resultFields
 
@@ -6233,6 +6232,136 @@ module Rel =
 
             let rel : Rel = { fields = fields; body = body }
             rel |> Some
+
+    /// Aggregate operators for Summarize.
+    type AOper = | COUNT | DISTINCT | SUM | AVG | MIN | MAX | SPAN with
+        member this.resultType (operandType: Type) : Type option =
+            match this with
+            | COUNT -> Some typeof<int>
+            | DISTINCT -> Some typeof<int>
+            | SPAN -> if operandType = typeof<DateTime> then Some typeof<double> else None
+            | _ -> None
+
+        static member ofLabel (label: string) : AOper =
+            match label.ToUpper().Trim() with
+            | "CNT" | "CNT" | "COUNT" -> COUNT
+            | "D" | "DIST" | "DISTINCT" -> DISTINCT
+            | "S" | "SUM" -> SUM
+            | "A" | "AVG" | "AVERAGE" -> AVG
+            | "MIN" | "MINIMUM" -> MIN
+            | "MAX" | "MAXIMUM" -> MAX
+            | "S" | "SPAN" -> SPAN
+            | _ -> COUNT
+
+    /// Boilerplate code
+    module AOper =
+        module Dbl =
+            let mapUnbox (xs: obj[]) : double[] = xs |> Array.map (unbox<double>)
+            let count (xs: double[]) = xs.Length
+            let distinct (xs: double[]) = xs |> Array.distinct |> Array.length
+            let sum (xs: double[]) = Array.sum xs
+            let avg (xs: double[]) = Array.average xs
+            let min (xs: double[]) = Array.min xs
+            let max (xs: double[]) = Array.max xs
+            let span (xs: double[]) = (Array.max xs) - Array.min xs
+            let aggregate (aoper: AOper) : (obj[] -> obj) =
+                match aoper with
+                | COUNT -> mapUnbox >> count >> box
+                | DISTINCT -> mapUnbox >> distinct >> box
+                | SUM -> mapUnbox >> sum >> box
+                | AVG -> mapUnbox >> avg >> box
+                | MIN -> mapUnbox >> min >> box
+                | MAX -> mapUnbox >> max >> box
+                | SPAN -> mapUnbox >> span >> box
+
+        module Intg =
+            let mapUnbox (xs: obj[]) : int[] = xs |> Array.map (unbox<int>)
+            let count (xs: int[]) = xs.Length
+            let distinct (xs: int[]) = xs |> Array.distinct |> Array.length
+            let sum (xs: int[]) = Array.sum xs
+            let avg (xs: int[]) = xs |> Array.map double |> Array.average |> int
+            let min (xs: int[]) = Array.min xs
+            let max (xs: int[]) = Array.max xs
+            let span (xs: int[]) = (Array.max xs) - Array.min xs
+            let aggregate (aoper: AOper) : (obj[] -> obj) =
+                match aoper with
+                | COUNT -> mapUnbox >> count >> box
+                | DISTINCT -> mapUnbox >> distinct >> box
+                | SUM -> mapUnbox >> sum >> box
+                | AVG -> mapUnbox >> avg >> box
+                | MIN -> mapUnbox >> min >> box
+                | MAX -> mapUnbox >> max >> box
+                | SPAN -> mapUnbox >> span >> box
+
+        module Dte =
+            let mapUnbox (xs: obj[]) : DateTime[] = xs |> Array.map (unbox<DateTime>)
+            let count (xs: DateTime[]) = xs.Length
+            let distinct (xs: DateTime[]) = xs |> Array.distinct |> Array.length
+            let sum (xs: DateTime[]) = xs |> Array.map (fun date -> date.ToOADate()) |> Array.sum |> (fun d -> DateTime.FromOADate(d)) // probably meaningless
+            let avg (xs: DateTime[]) = xs |> Array.map (fun date -> date.ToOADate()) |> Array.average |> (fun d -> DateTime.FromOADate(d))
+            let min (xs: DateTime[]) = Array.min xs
+            let max (xs: DateTime[]) = Array.max xs
+            let span (xs: DateTime[]) = (Array.max xs - Array.min xs).TotalDays |> double
+            let aggregate (aoper: AOper) : (obj[] -> obj) =
+                match aoper with
+                | COUNT -> mapUnbox >> count >> box
+                | DISTINCT -> mapUnbox >> distinct >> box
+                | SUM -> mapUnbox >> sum >> box
+                | AVG -> mapUnbox >> avg >> box
+                | MIN -> mapUnbox >> min >> box
+                | MAX -> mapUnbox >> max >> box
+                | SPAN -> mapUnbox >> span >> box
+
+        module Stg =
+            let mapUnbox (xs: obj[]) : string[] = xs |> Array.map (unbox<string>)
+            let count (xs: string[]) = xs.Length
+            let distinct (xs: string[]) = xs |> Array.distinct |> Array.length
+            let sum (xs: string[]) = String.Join(":", xs)
+            let avg (xs: string[]) = ""
+            let min (xs: string[]) = Array.min xs
+            let max (xs: string[]) = Array.max xs
+            let span (xs: string[]) = ""
+            let aggregate (aoper: AOper) : (obj[] -> obj) =
+                match aoper with
+                | COUNT -> mapUnbox >> count >> box
+                | DISTINCT -> mapUnbox >> distinct >> box
+                | SUM -> mapUnbox >> sum >> box
+                | AVG -> mapUnbox >> avg >> box
+                | MIN -> mapUnbox >> min >> box
+                | MAX -> mapUnbox >> max >> box
+                | SPAN -> mapUnbox >> span >> box
+
+        let aggregate (aoper: AOper) (operType: Type) : (obj[] -> obj) option =
+                match operType with
+                | x when x = typeof<double> -> Dbl.aggregate aoper |> Some
+                | x when x = typeof<int> -> Intg.aggregate aoper |> Some
+                | x when x = typeof<DateTime> -> Dte.aggregate aoper |> Some
+                | x when x = typeof<string> -> Stg.aggregate aoper |> Some
+                | _ -> None
+
+    /// Summarize operator.
+    /// operations = Aggregate operators, operNames, resultNames
+    /// operator should be typeof<operName> -> resultType
+    let summarizeAOper (r: Rel) (perRel: Rel) (operations: (AOper*string*string)[]) : Rel option =
+        let aopers, operNames = operations |> Array.map (fun (aop, opNm, _) -> (aop, opNm)) |> Array.unzip
+
+        match Field.types r.fields operNames with
+        | None -> None
+        | Some resTypes ->
+            let mapTypes = Array.zip operNames resTypes |> Map.ofArray
+            let newOperations = 
+                operations 
+                |> Array.choose
+                    (fun (aop, opNm, resNm) ->
+                         let operType = mapTypes |> Map.find opNm
+                         let resType = aop.resultType operType |> Option.defaultValue (mapTypes |> Map.find opNm)
+                         //let resType = aop.resultType |> Option.defaultValue (mapTypes |> Map.find opNm)
+                         match AOper.aggregate aop operType with
+                         | None -> None
+                         | Some operFn ->
+                             (operFn, opNm, resNm, resType) |> Some
+                    )
+            summarize' r perRel newOperations
 
     /// Un-pivot operator.
     /// FIXME
@@ -6324,12 +6453,25 @@ module Rel =
         elif names.Length <> values.Length then
             None
         else
-            match Field.indicesOrdered r.fields names with
+            // map name -> values associated to the same name
+            let mapFilter = Array.zip names values |> Array.groupBy fst |> Array.map (fun (name, pairs) -> (name, pairs |> Array.map snd)) |> Map.ofArray
+            let filterNames = [| for kvp in mapFilter -> kvp.Key |]
+            
+            match Field.indicesOrdered r.fields filterNames with
             | None -> None
             | Some argIdxs ->
-                
-                let eqRow (row: Row) = Row.ofPositions argIdxs row |> Array.map (fun elem -> elem.value) = values
-                let nonEqRow (row: Row) = Row.ofPositions argIdxs row |> Array.map (fun elem -> elem.value) <> values
+                let eqRow (row: Row) = 
+                    let tests = Row.ofPositions argIdxs row |> Array.map (fun elem -> let vals = mapFilter |> Map.find elem.fname in vals |> Array.contains elem.value)
+                    Array.TrueForAll(tests, fun test -> test)
+
+                let eqRow (row: Row) = 
+                    let tests = Row.ofPositions argIdxs row |> Array.map (fun elem -> let vals = mapFilter |> Map.find elem.fname in vals |> Array.contains elem.value)
+                    Array.TrueForAll(tests, fun test -> test)
+
+                let nonEqRow (row: Row) = 
+                    let tests = Row.ofPositions argIdxs row |> Array.map (fun elem -> let vals = mapFilter |> Map.find elem.fname in vals |> Array.contains elem.value |> not)
+                    Array.TrueForAll(tests, fun test -> test)
+
                 let filterRow = if exclude then nonEqRow else eqRow
 
                 let rel : Rel = { r with body = r.body |> Set.filter filterRow }
@@ -7095,6 +7237,38 @@ module Rel_XL =
             | Some relLJoin -> relLJoin |> MRegistry.registerBxd rfid
         | _ -> Proxys.def.failed
 
+
+    [<ExcelFunction(Category="Relation", Description="Relation summarize operation.")>]
+    let rel_sum
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        ([<ExcelArgument(Description= "Per relation R-object.")>] rgPer: string)  
+        ([<ExcelArgument(Description= "Operand field names.")>] operNames: obj)
+        ([<ExcelArgument(Description= "[Aggregate operators. COUNT, DISTINCT, SUM, AVG, MIN, MAX, SPAN. Default is COUNT.]")>] aggOperators: obj)
+        ([<ExcelArgument(Description= "[Result field names. Default is \"OPERAND_OPERATOR\"")>] resultNames: obj)
+        : obj = 
+
+        // intermediary stage
+        let operNames = In.D1.OStg.filter operNames
+        let aggOperators = In.D1.OStg.filter aggOperators |> Array.map Rel.AOper.ofLabel
+        let resultNames = In.D1.OStg.tryDV None resultNames
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        //match tryExtract (tryRel None) rgRel, tryExtract (tryRel None) rgRelPer with
+        match tryExtract<Rel.Rel> rgRel, tryExtract<Rel.Rel> rgPer with
+        | None, _ -> Proxys.def.failed
+        | _, None -> Proxys.def.failed
+        | Some rel, Some relPer -> 
+            let defResultNames = Array.map2 (fun nm op -> sprintf "%s %s" nm (op.ToString())) operNames aggOperators
+            let resultNames = resultNames |> Option.defaultValue defResultNames
+            let operations = Toolbox.Array.zip3 aggOperators operNames resultNames
+
+            match Rel.summarizeAOper rel relPer operations with
+            | None -> Proxys.def.failed
+            | Some relSumm -> relSumm |> MRegistry.registerBxd rfid
+
     [<ExcelFunction(Category="Relation", Description="Returns a relation un-pivotted.")>]
     let rel_unpivot
         ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
@@ -7146,6 +7320,31 @@ module Rel_XL =
                 | None -> Proxys.def.failed
                 | Some relRestrict -> relRestrict |> MRegistry.registerBxd rfid
             | _ -> Proxys.def.failed
+
+    [<ExcelFunction(Category="Relation", Description="Applys a basic filter to a relation.")>]
+    let rel_filter
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        ([<ExcelArgument(Description= "Filter field names.")>] filterNames: obj)
+        ([<ExcelArgument(Description= "Filter field values.")>] filterValues: obj[])
+        ([<ExcelArgument(Description= "[Exclude values. Default is false.]")>] excludeValues: obj) 
+        : obj = 
+        
+        // intermediary stage
+        let names = In.D1.OStg.tryDV None filterNames
+        let exclude = In.D0.Bool.def false excludeValues
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        match tryExtract<Rel.Rel> rgRel, names with
+        | None, _ -> Proxys.def.failed
+        | _, None -> Proxys.def.failed
+        | Some rel, Some nms -> 
+            match Rel.restrictBasic rel exclude nms filterValues with
+            | None -> Proxys.def.failed
+            | Some relRestrict -> relRestrict |> MRegistry.registerBxd rfid
+        
 
     [<ExcelFunction(Category="Relation", Description="Returns an extended relation.")>]
     let rel_extend

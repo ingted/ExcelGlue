@@ -6355,7 +6355,6 @@ module Rel =
                     (fun (aop, opNm, resNm) ->
                          let operType = mapTypes |> Map.find opNm
                          let resType = aop.resultType operType |> Option.defaultValue (mapTypes |> Map.find opNm)
-                         //let resType = aop.resultType |> Option.defaultValue (mapTypes |> Map.find opNm)
                          match AOper.aggregate aop operType with
                          | None -> None
                          | Some operFn ->
@@ -6364,7 +6363,6 @@ module Rel =
             summarize' r perRel newOperations
 
     /// Un-pivot operator.
-    /// FIXME
     let unpivot (r: Rel) (unpivotNames: Set<string>) (resultName: string) (resultValName: string) : Rel option =
         let perFields = Field.project r.fields true unpivotNames           
         let unpivFields = Field.project r.fields false unpivotNames
@@ -6668,7 +6666,7 @@ module Rel =
 
                     let relBody : Set<Row> = 
                         bodyLines 
-                        |> Seq.map (fun line -> Array.zip3 headerNames headerTypeTags line |> Array.map toElem)
+                        |> Seq.map (fun line -> Array.zip3 headerNames headerTypeTags line |> Array.map toElem |> Row.sort)
                         |> Set.ofSeq
                 
                     let rel : Rel = { fields = relFields; body = relBody }

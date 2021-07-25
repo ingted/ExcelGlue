@@ -8,9 +8,22 @@
 	<PropertyGroup>
 		<ExcelDnaAllowPackageReferenceProjectStyle>true</ExcelDnaAllowPackageReferenceProjectStyle>
 		<RunExcelDnaSetDebuggerOptions>false</RunExcelDnaSetDebuggerOptions>
+		
 		<Authors>cdr021</Authors>
 		<Product>Excel Glue</Product>
 		<PackageLicenseFile>LICENSE</PackageLicenseFile>
+		<Description>Excel F# API.
+Provides tools to ease the development of .NET F# user-defined functions for Excel.
+Using Excel-DNA (https://github.com/Excel-DNA/ExcelDna).
+		</Description>
+		<Company> </Company>
+		<PackageProjectUrl></PackageProjectUrl>
+		<RepositoryUrl>https://github.com/cdr021/ExcelGlue</RepositoryUrl>
+		<PackageTags>F# Excel</PackageTags>
+		<RepositoryType>git</RepositoryType>
+		<Dependencies> <group targetFramework=".NETFramework4.8" /> </Dependencies>
+		<Version>1.0.2</Version>
+		<PackageReleaseNotes>Auto registration added.</PackageReleaseNotes>
 	</PropertyGroup>
 	
 	<ItemGroup>

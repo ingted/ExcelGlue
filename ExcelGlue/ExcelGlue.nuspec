@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- https://docs.microsoft.com/en-us/nuget/reference/nuspec -->
+<package >
+  <metadata>
+    <id>$id$</id>
+    <version>$version$</version>
+    <title>$title$</title>
+    <authors>$author$</authors>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <license type="expression">MIT</license>
+    <description>$description$</description>
+    <releaseNotes>Auto registration added.</releaseNotes>
+    <copyright>$copyright$</copyright>
+    <tags>F# Excel</tags>
+    <repository type="git" url="https://github.com/cdr021/ExcelGlue" />
+    
+    <dependencies> <group targetFramework=".NETFramework4.8" /> </dependencies>
+    
+  </metadata>
+</package>

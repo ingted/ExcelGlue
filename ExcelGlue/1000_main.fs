@@ -4215,11 +4215,30 @@ module MAP =
             : Map<'K1,'V> =
             zip keys1 values |> Map.ofArray
 
+        static member omap1<'K1,'V when 'K1: comparison> (okeys1: obj[]) (ovalues: obj[]) 
+            : Map<'K1,'V> =
+            let fcast (ok1: obj) (oval: obj) = 
+                match ok1, oval with
+                | (:? 'K1 as k), (:? 'V as v) -> Some (k, v)
+                | _ -> None
+            let kvs = Array.map2 fcast okeys1 ovalues |> Array.choose id
+            kvs  |> Map.ofArray
+
         /// Builds a Map<'K1*'K2,'V> key-value pairs map.
         static member map2<'K1,'K2,'V when 'K1: comparison and 'K2: comparison> 
             (keys1: 'K1[]) (keys2: 'K2[]) (values: 'V[]) 
             : Map<'K1*'K2,'V> =
             zip (zip keys1 keys2) values |> Map.ofArray
+
+        static member omap2<'K1,'K2,'V when 'K1: comparison and 'K2: comparison> 
+            (okeys1: obj[]) (okeys2: obj[]) (ovalues: obj[]) 
+            : Map<'K1*'K2,'V> =
+            let fcast (ok1: obj) (ok2: obj) (oval: obj) = 
+                match ok1, ok2, oval with
+                | (:? 'K1 as k1), (:? 'K2 as k2), (:? 'V as v) -> Some ((k1, k2), v)
+                | _ -> None
+            let kvs = Array.map3 fcast okeys1 okeys2 ovalues |> Array.choose id
+            kvs |> Map.ofArray
 
         /// Builds a Map<'K1*'K2,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
@@ -4236,6 +4255,17 @@ module MAP =
             : Map<'K1*'K2*'K3,'V> =
             zip (Toolbox.Array.zip3 keys1 keys2 keys3) values |> Map.ofArray
 
+        static member omap3<'K1,'K2,'K3,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison> 
+            (okeys1: obj[]) (okeys2: obj[]) (okeys3: obj[]) (ovalues: obj[]) 
+            : Map<'K1*'K2*'K3,'V> =
+            let fcast (okvs: obj*obj*obj*obj) =
+                let (ok1, ok2, ok3, oval) = okvs
+                match ok1, ok2, ok3, oval with
+                | (:? 'K1 as k1), (:? 'K2 as k2), (:? 'K3 as k3), (:? 'V as v) -> Some ((k1, k2, k3), v)
+                | _ -> None
+            let kvs = zip4 okeys1 okeys2 okeys3 ovalues |> Array.choose fcast
+            kvs |> Map.ofArray
+
         /// Builds a Map<'K1*'K2*'K3,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
         static member map3s<'K1,'K2,'K3,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison> 
@@ -4250,6 +4280,17 @@ module MAP =
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4,'V> =
             zip (Toolbox.Array.zip4 keys1 keys2 keys3 keys4) values |> Map.ofArray
+
+        static member omap4<'K1,'K2,'K3,'K4,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison> 
+            (okeys1: obj[]) (okeys2: obj[]) (okeys3: obj[]) (okeys4: obj[]) (ovalues: obj[]) 
+            : Map<'K1*'K2*'K3*'K4,'V> =
+            let fcast (okvs: obj*obj*obj*obj*obj) =
+                let (ok1, ok2, ok3, ok4, oval) = okvs
+                match ok1, ok2, ok3, ok4, oval with
+                | (:? 'K1 as k1), (:? 'K2 as k2), (:? 'K3 as k3), (:? 'K4 as k4), (:? 'V as v) -> Some ((k1, k2, k3, k4), v)
+                | _ -> None
+            let kvs = zip5 okeys1 okeys2 okeys3 okeys4 ovalues |> Array.choose fcast
+            kvs |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
@@ -4266,6 +4307,17 @@ module MAP =
             : Map<'K1*'K2*'K3*'K4*'K5,'V> =
             zip (Toolbox.Array.zip5 keys1 keys2 keys3 keys4 keys5) values |> Map.ofArray
 
+        static member omap5<'K1,'K2,'K3,'K4,'K5,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison> 
+            (okeys1: obj[]) (okeys2: obj[]) (okeys3: obj[]) (okeys4: obj[]) (okeys5: obj[]) (ovalues: obj[]) 
+            : Map<'K1*'K2*'K3*'K4*'K5,'V> =
+            let fcast (okvs: obj*obj*obj*obj*obj*obj) =
+                let (ok1, ok2, ok3, ok4, ok5, oval) = okvs
+                match ok1, ok2, ok3, ok4, ok5, oval with
+                | (:? 'K1 as k1), (:? 'K2 as k2), (:? 'K3 as k3), (:? 'K4 as k4), (:? 'K5 as k5), (:? 'V as v) -> Some ((k1, k2, k3, k4, k5), v)
+                | _ -> None
+            let kvs = zip6 okeys1 okeys2 okeys3 okeys4 okeys5 ovalues |> Array.choose fcast
+            kvs |> Map.ofArray
+
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
         static member map5s<'K1,'K2,'K3,'K4,'K5,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison> 
@@ -4280,6 +4332,17 @@ module MAP =
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4*'K5*'K6,'V> =
             zip (Toolbox.Array.zip6 keys1 keys2 keys3 keys4 keys5 keys6) values |> Map.ofArray
+
+        static member omap6<'K1,'K2,'K3,'K4,'K5,'K6,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison> 
+            (okeys1: obj[]) (okeys2: obj[]) (okeys3: obj[]) (okeys4: obj[]) (okeys5: obj[]) (okeys6: obj[]) (ovalues: obj[]) 
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6,'V> =
+            let fcast (okvs: obj*obj*obj*obj*obj*obj*obj) =
+                let (ok1, ok2, ok3, ok4, ok5, ok6, oval) = okvs
+                match ok1, ok2, ok3, ok4, ok5, ok6, oval with
+                | (:? 'K1 as k1), (:? 'K2 as k2), (:? 'K3 as k3), (:? 'K4 as k4), (:? 'K5 as k5), (:? 'K6 as k6), (:? 'V as v) -> Some ((k1, k2, k3, k4, k5, k6), v)
+                | _ -> None
+            let kvs = zip7 okeys1 okeys2 okeys3 okeys4 okeys5 okeys6 ovalues |> Array.choose fcast
+            kvs |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
@@ -4296,6 +4359,17 @@ module MAP =
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V> =
             zip (Toolbox.Array.zip7 keys1 keys2 keys3 keys4 keys5 keys6 keys7) values |> Map.ofArray
 
+        static member omap7<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison> 
+            (okeys1: obj[]) (okeys2: obj[]) (okeys3: obj[]) (okeys4: obj[]) (okeys5: obj[]) (okeys6: obj[]) (okeys7: obj[]) (ovalues: obj[]) 
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V> =
+            let fcast (okvs: obj*obj*obj*obj*obj*obj*obj*obj) =
+                let (ok1, ok2, ok3, ok4, ok5, ok6, ok7, oval) = okvs
+                match ok1, ok2, ok3, ok4, ok5, ok6, ok7, oval with
+                | (:? 'K1 as k1), (:? 'K2 as k2), (:? 'K3 as k3), (:? 'K4 as k4), (:? 'K5 as k5), (:? 'K6 as k6), (:? 'K7 as k7), (:? 'V as v) -> Some ((k1, k2, k3, k4, k5, k6, k7), v)
+                | _ -> None
+            let kvs = zip8 okeys1 okeys2 okeys3 okeys4 okeys5 okeys6 okeys7 ovalues |> Array.choose fcast
+            kvs |> Map.ofArray
+
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
         static member map7s<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison> 
@@ -4310,6 +4384,17 @@ module MAP =
             (keys1: 'K1[]) (keys2: 'K2[]) (keys3: 'K3[]) (keys4: 'K4[]) (keys5: 'K5[]) (keys6: 'K6[]) (keys7: 'K7[]) (keys8: 'K8[]) (values: 'V[]) 
             : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V> =
             zip (Toolbox.Array.zip8 keys1 keys2 keys3 keys4 keys5 keys6 keys7 keys8) values |> Map.ofArray
+
+        static member omap8<'K1,'K2,'K3,'K4,'K5,'K6,'K7,'K8,'V when 'K1: comparison and 'K2: comparison and 'K3: comparison and 'K4: comparison and 'K5: comparison and 'K6: comparison and 'K7: comparison and 'K8: comparison> 
+            (okeys1: obj[]) (okeys2: obj[]) (okeys3: obj[]) (okeys4: obj[]) (okeys5: obj[]) (okeys6: obj[]) (okeys7: obj[]) (okeys8: obj[]) (ovalues: obj[]) 
+            : Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V> =
+            let fcast (okvs: obj*obj*obj*obj*obj*obj*obj*obj*obj) =
+                let (ok1, ok2, ok3, ok4, ok5, ok6, ok7, ok8, oval) = okvs
+                match ok1, ok2, ok3, ok4, ok5, ok6, ok7, ok8, oval with
+                | (:? 'K1 as k1), (:? 'K2 as k2), (:? 'K3 as k3), (:? 'K4 as k4), (:? 'K5 as k5), (:? 'K6 as k6), (:? 'K7 as k7), (:? 'K8 as k8), (:? 'V as v) -> Some ((k1, k2, k3, k4, k5, k6, k7, k8), v)
+                | _ -> None
+            let kvs = zip9 okeys1 okeys2 okeys3 okeys4 okeys5 okeys6 okeys7 okeys8 ovalues |> Array.choose fcast
+            kvs |> Map.ofArray
 
         /// Builds a Map<'K1*'K2*'K3*'K4*'K5*'K6*'K7*'K8,'V[]> key-value pairs map.
         /// Values for a given key will be combined into one array.
@@ -4954,6 +5039,15 @@ module MAP =
                 let gtys = Array.append gtykeys [| gtyval |]
                 let args : obj[] = Array.append keys [| values |]
                 let methodnm = sprintf "map%d" gtykeys.Length
+
+                let res = invoke<GenFn> methodnm gtys args
+                res
+
+            let omapN (gtykeys: Type[]) (gtyval: Type) (keys: obj[]) (values: obj) : obj = 
+                // if arity > MAX_ARITY_TOMAP then
+                let gtys = Array.append gtykeys [| gtyval |]
+                let args : obj[] = Array.append keys [| values |]
+                let methodnm = sprintf "omap%d" gtykeys.Length
 
                 let res = invoke<GenFn> methodnm gtys args
                 res
@@ -6841,7 +6935,32 @@ module Rel =
             /// groupValues = false
             ///    - result map type : ('a1, 'a2, ..., 'an) -> 'b
             ///    - [| ("foo", 1); "value1" |] and [| ("foo", 1); "value2" |] relation rows will produce a map key-value pair (("foo", 1), "value1")
-            let toMap (regKey: string) (groupValues: bool) (keysNames: string[]) (valueName: string) : obj option =
+            let toMap (r: Rel) (groupValues: bool) (keysNames: string[]) (valueName: string) : obj option =
+                if keysNames.Length = 0 then
+                    None
+                else
+                    let keepNames = Array.append keysNames [| valueName |]
+                    match Field.indicesOrdered r.fields keepNames with
+                    | None -> None
+                    | Some keepIdxs ->
+                        let arity = keepIdxs.Length - 1
+                        if (arity < 1) || (arity > MAX_ARITY_TOMAP) then
+                            None
+                        else                                
+                            let rows = r.body |> Set.toArray |> Array.map (Row.ofPositions keepIdxs) |> Array.distinct
+                            let colkeys = 
+                                [| for j in 0 .. arity - 1 -> 
+                                    [| for i in 0 .. rows.Length - 1 -> rows.[i] |> Row.item j |]
+                                |]
+                            let colval = rows |> Array.map (Row.item arity)
+
+                            // let methodNm = sprintf "omap%d%s" arity (if groupValues then "s" else "")
+                            let methodTys = let flds = r.fields |> Set.toArray in keepIdxs |> Array.map (fun i -> flds.[i].ftype)
+                            let resMap = MAP.RxFn.In.omapN (Array.sub methodTys 0 arity) (methodTys |> Array.last) (colkeys |> Array.map box) colval
+                            resMap |> Some
+
+
+            let toMapOLD (regKey: string) (groupValues: bool) (keysNames: string[]) (valueName: string) : obj option =
                 if keysNames.Length = 0 then
                     None
                 else
@@ -6861,7 +6980,8 @@ module Rel =
                                     [| for j in 0 .. keepIdxs.Length - 2 -> 
                                         [| for i in 0 .. rows.Length - 1 -> rows.[i] |> Row.item j |]
                                     |]
-                                let colval = rows |> Array.map (Row.item (keepIdxs |> Array.last))
+                                // let colval = rows |> Array.map (Row.item (keepIdxs |> Array.last))
+                                let colval = rows |> Array.map Array.last
 
                                 let methodNm = sprintf "omap%d%s" arity (if groupValues then "s" else "")
                                 let methodTys = let flds = rel.fields |> Set.toArray in keepIdxs |> Array.map (fun i -> flds.[i].ftype)
@@ -6897,7 +7017,7 @@ module Rel =
                             apply<GenFn> methodNm [||] args genTypeRObj
                             |> Some
 
-        // toMaps, toCSV
+        // toCSV, pool
 
 
 module Rel_XL =
@@ -7501,7 +7621,7 @@ module Rel_XL =
         | None -> Proxys.def.failed
         | Some relCSV -> relCSV |> MRegistry.registerBxd rfid
 
-    [<ExcelFunction(Category="Relation", Description="Extracts a CSV file into a relation.")>]
+    [<ExcelFunction(Category="Relation", Description="Creates a relation from a map R-object.")>]
     let rel_ofMap
         ([<ExcelArgument(Description= "Map R-object.")>] rgMap: string)
         ([<ExcelArgument(Description= "[Key1 field name. Default is KEY1.]")>] fieldNameKey1: obj)  
@@ -7530,6 +7650,45 @@ module Rel_XL =
         match Rel.Registry.Out.ofMap rgMap splitTupleKey fieldNameKeys fieldNameValue with
         | None -> Proxys.def.failed
         | Some relofMap -> relofMap |> MRegistry.registerBxd rfid
+
+    [<ExcelFunction(Category="Map", Description="Creates a map R-object from a relation R-object.")>]
+    let map_ofRel
+        ([<ExcelArgument(Description= "Relation R-object.")>] rgRel: string)
+        ([<ExcelArgument(Description= "Key1 field name.")>] key1Name: string)  
+        ([<ExcelArgument(Description= "[Key2 field name. Default is none.]")>] key2Name: obj)  
+        ([<ExcelArgument(Description= "[Key2 field name. Default is none.]")>] key3Name: obj)  
+        ([<ExcelArgument(Description= "[Key2 field name. Default is none.]")>] key4Name: obj)  
+        ([<ExcelArgument(Description= "[Key2 field name. Default is none.]")>] key5Name: obj)  
+        ([<ExcelArgument(Description= "[Key2 field name. Default is none.]")>] key6Name: obj)  
+        ([<ExcelArgument(Description= "[Key2 field name. Default is none.]")>] key7Name: obj)  
+        ([<ExcelArgument(Description= "[Key2 field name. Default is none.]")>] key8Name: obj)  
+        ([<ExcelArgument(Description= "Value field name.")>] valueName: string)
+        ([<ExcelArgument(Description= "[Group results (map type is (keys -> values[]) for true, (keys -> values) for false). Default is false.]")>] groupResults: obj)
+        : obj = 
+
+        // intermediary arguments / calculations
+        let key2 = In.D0.Stg.Opt.def None key2Name
+        let key3 = In.D0.Stg.Opt.def None key3Name
+        let key4 = In.D0.Stg.Opt.def None key4Name
+        let key5 = In.D0.Stg.Opt.def None key5Name
+        let key6 = In.D0.Stg.Opt.def None key6Name
+        let key7 = In.D0.Stg.Opt.def None key7Name
+        let key8 = In.D0.Stg.Opt.def None key8Name
+        let groupResults = In.D0.Bool.def false groupResults
+        let keysNames = [| Some key1Name; key2; key3; key4; key5; key6; key7; key8 |] |> Array.choose id
+
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+
+        // result
+        //match tryExtract (tryRel None) rgRel with
+        match tryExtract<Rel.Rel> rgRel with
+        | None -> Out.Proxys.def.failed
+        | Some rel ->
+            match Rel.Registry.In.toMap rel groupResults keysNames valueName with
+            | None -> Out.Proxys.def.failed
+            | Some mapofRel -> mapofRel |> MRegistry.registerBxd rfid
+
 
 /// Simple template for generics
 module GenMtrx =
@@ -7761,32 +7920,11 @@ module TEST_XL =
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // Set.indexed + Set.item(i) or at least Set.head
 // Set.groupBy
 // Set.allPair
 // array2D trans
 // Set.disjoint
+
+// io lastmodified
+// fun isfunction. fun arity and type expr_funtype...

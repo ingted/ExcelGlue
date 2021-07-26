@@ -622,3 +622,64 @@ module XlXl =
 
         // result
         String.Join(sep, strings) |> box
+
+module XlIO =
+    open System
+    open API
+    open ExcelDna.Integration
+
+    // ----------------------
+    // -- Basic file functions
+    // ----------------------
+
+    [<ExcelFunction(Category="IO", Description="Returns a file's last write time.")>]
+    let io_fLastMod
+        ([<ExcelArgument(Description= "File path.")>] filePath: string)
+        : obj = 
+
+        // intermediary stage
+        let fileInfo = System.IO.FileInfo(filePath)
+        let lastMod = fileInfo.LastWriteTime
+
+        // result
+        box lastMod
+
+    [<ExcelFunction(Category="IO", Description="Returns a file's size.")>]
+    let io_fSize
+        ([<ExcelArgument(Description= "File path.")>] filePath: string)
+        : obj = 
+
+        // intermediary stage
+        let fileInfo = System.IO.FileInfo(filePath)
+        let size = fileInfo.Length
+
+        // result
+        box size
+
+    [<ExcelFunction(Category="IO", Description="Returns true if a file exists.")>]
+    let io_fExists
+        ([<ExcelArgument(Description= "File path.")>] filePath: string)
+        : obj = 
+
+        // intermediary stage
+        let fileInfo = System.IO.FileInfo(filePath)
+        let exists = fileInfo.Exists
+
+        // result
+        box exists
+
+    [<ExcelFunction(Category="IO", Description="Returns true if a file exists.")>]
+    let io_fCopyTo
+        ([<ExcelArgument(Description= "File path.")>] filePath: string)
+        ([<ExcelArgument(Description= "Destination file path.")>] destinationFilePath: string)
+        ([<ExcelArgument(Description= "[Overwrite. Default is false.]")>] overwrite: obj)
+        : obj = 
+
+        // intermediary stage
+        let fileInfo = System.IO.FileInfo(filePath)
+        let overwrite = In.D0.Bool.def false overwrite
+        let cpyFileInfo = fileInfo.CopyTo(destinationFilePath, overwrite)
+        let now = DateTime.Now
+
+        // result
+        box now

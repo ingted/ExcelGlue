@@ -9,7 +9,7 @@
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <license type="expression">MIT</license>
     <description>$description$</description>
-    <releaseNotes>Auto registration added.</releaseNotes>
+    <releaseNotes>$PackageReleaseNotes$</releaseNotes>
     <copyright>$copyright$</copyright>
     <tags>F# Excel</tags>
     <repository type="git" url="https://github.com/cdr021/ExcelGlue" />

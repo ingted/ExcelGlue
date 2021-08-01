@@ -22,8 +22,8 @@ Using Excel-DNA (https://github.com/Excel-DNA/ExcelDna).
 		<PackageTags>F# Excel</PackageTags>
 		<RepositoryType>git</RepositoryType>
 		<Dependencies> <group targetFramework=".NETFramework4.8" /> </Dependencies>
-		<Version>1.0.5</Version>
-		<PackageReleaseNotes>Added Map.ofRel. Started XlIO.</PackageReleaseNotes>
+		<Version>1.0.6</Version>
+		<PackageReleaseNotes>Added Registry functions (e.g. rg_rname). Added flexibility (more cases) to  rel_ofCSV.</PackageReleaseNotes>
 	</PropertyGroup>
 	
 	<ItemGroup>

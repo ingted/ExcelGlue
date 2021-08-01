@@ -11,34 +11,48 @@ open System.Runtime.Serialization.Formatters.Binary
 
 /// Class where all "registered" xl-sheet objects are stored. TODO better wording
 type Registry() =
-    // 2 dictionaries to keep track of objects, Registry objects or R-objects, and corresponding xl-cells references where the objects are located.
-    /// Dictionary registry-guid -> R-object.
-    /// "The" registry.
+    // 2 dictionaries to keep track of objects, Registry objects or R-objects, and corresponding Excel-cells references, where the objects are generated.
+    /// "The" Registry: 
+    /// Dictionary of string key (mostly guids) -> R-object.
     let reg = Dictionary<string, obj>()
-    /// Dictionary xl-cell reference -> list of associated R-objects guids.
+    /// The Excel-cell references dictionary: 
+    /// Dictionary of Excel-cell reference -> list of associated R-objects keys.
     let ref = Dictionary<string, string[]>()
 
     // -----------------------------
     // -- Construction functions
     // -----------------------------
 
-    /// Removes all objects filed under the xl-cell reference refKey.
-    member this.removeReferencedObjects (refKey: string) = 
+    /// Removes all R-objects, filed under the Excel-cell reference refKey, from the Registry,
+    /// then removes the reference from the Excel-cell references dictionary.
+    member this.removeReferencedObjects (refKey: string) : unit = 
         if ref.ContainsKey refKey then
             for regKey in ref.Item(refKey) do reg.Remove(regKey) |> ignore
             ref.Remove(refKey) |> ignore
+
+    /// Removes a single R-objects, filed under the Excel-cell reference refKey, from the Registry,
+    /// If this was the only R-object filed undert this reference, then removes the reference from the dictionary.
+    member this.removeSingleReferencedObjects (refKey: string) (regKey: string) : unit = 
+        if ref.ContainsKey refKey then
+            let regKeys = ref.Item(refKey)
+            if regKeys |> Array.contains regKey then    
+                let regKeys' = regKeys |> Array.filter ((<>) regKey)
+                reg.Remove(regKey) |> ignore
+                ref.Remove(refKey) |> ignore
+                if regKeys'.Length > 0 then
+                    ref.Add(refKey, regKeys')
 
     /// Removes all objects and their xl-cell references from the Object Registry.
     member this.clear = 
         reg.Clear()
         ref.Clear()
 
-    /// Adds a (xl-cell reference -> single registry-guid) dictionary entry.
+    /// Adds a (xl-cell reference -> single Registry-guid) dictionary entry.
     member private this.addReference (refKey: string) (regKey: string) = 
         this.removeReferencedObjects refKey
         ref.Add(refKey, [| regKey |])
 
-    /// Adds a a single registry key to a (possibly already existing) xl-cell reference.
+    /// Adds a a single Registry key to a (possibly already existing) Excel-cell reference.
     member private this.appendRef (refKey: string) (regKey: string) =
         if ref.ContainsKey refKey then
             let regKeys = ref.Item(refKey)
@@ -47,47 +61,74 @@ type Registry() =
         else
             ref.Add(refKey, [| regKey |])
 
-    /// Adds a R-object to the registry given a xl-cell reference, 
-    /// and removes from the registry all existing R-objects filed under the same reference.
-    member this.register (refKey: string) (regObject: obj) : string = 
-        let regKey = (Guid.NewGuid()).ToString()
+    /// Adds a R-object to the Registry given an Excel-cell reference, 
+    /// and removes from the Registry all existing R-objects filed under the same reference.
+    member this.addObj (refKey: string) (regObject: obj) (regKey: string) : string = 
         this.addReference refKey regKey
         reg.Add(regKey, regObject)
         regKey
 
+    /// Creates a unique Registry key,
+    /// Adds a R-object to the Registry given a Excel-cell reference, 
+    /// and removes from the Registry all existing R-objects filed under the same reference.
+    member this.register (refKey: string) (regObject: obj) : string = 
+        let regKey = (Guid.NewGuid()).ToString()
+        regKey |> this.addObj refKey regObject
+        //this.addReference refKey regKey
+        //reg.Add(regKey, regObject)
+        //regKey
+
     member this.registerBxd (refKey: string) (regObject: obj) : obj = this.register refKey regObject |> box
 
-    /// Adds a R-object to the registry given a xl-cell reference, 
+    /// Adds a R-object to the Registry given a Excel-cell reference, 
     /// without removing existing R-objects filed under the same reference.
-    member this.append (refKey: string) (regObject: obj) : string = 
-        let regKey = (Guid.NewGuid()).ToString()
+    member this.appendObj (refKey: string) (regObject: obj) (regKey: string) : string = 
         this.appendRef refKey regKey
         reg.Add(regKey, regObject)
         regKey
 
+    /// Creates a unique Registry key,
+    /// Adds a R-object to the Registry given a Excel-cell reference, 
+    /// without removing existing R-objects filed under the same reference.
+    member this.append (refKey: string) (regObject: obj) : string = 
+        let regKey = (Guid.NewGuid()).ToString()
+        this.appendObj refKey regObject regKey
+
+    /// Given an arbitrary Registry key,
+    /// Adds a R-object to the Registry given a xl-cell reference, 
+    /// and removes from the Registry all existing R-objects filed under the same reference.
+    member this.adhoc (append: bool) (refKey: string) (regKey: string) (regObject: obj) : string =
+        if append then
+            this.appendObj refKey regObject regKey
+        else
+            this.addObj refKey regObject regKey
 
     // -----------------------------
     // -- Inspection functions
     // -----------------------------
 
-    /// Returns the number of R-objects contained in the registry.
+    /// Returns the number of R-objects contained in the Registry.
     member this.count = reg.Count
 
-    /// Returns a R-object, given its associated registry-guid.
+    /// Returns a R-object, given its associated Registry-guid.
     member this.tryGet (regKey: string) : obj option =
         if reg.ContainsKey regKey then
             reg.Item(regKey) |> Some
         else
             None
 
-    /// Returns a R-object's type, given its associated registry-guid.
-    member this.tryType (regKey: string) : Type option =
-        // regKey |> this.tryGet |> Option.map (fun o -> o.GetType()) // RESTORE !!!
-        let xxx = regKey |> this.tryGet 
-        let yyy = xxx |> Option.map (fun o -> o.GetType()) // RESTORE !!!
-        yyy
+    /// Returns the (unique by construction) reference (key) associated to a given Registry key.
+    member this.findRef (regKey: string) : string option =
+        let refKeys = 
+            [| for kvp in ref -> kvp |] 
+            |> Array.filter (fun kvp -> kvp.Value |> Array.contains regKey)
+        refKeys |> Array.tryHead |> Option.map (fun kvp -> kvp.Key)
 
-    /// Returns a corresponding xl-reference, given a registry-guid.
+    /// Returns a R-object's type, given its associated Registry-guid.
+    member this.tryType (regKey: string) : Type option =
+        regKey |> this.tryGet |> Option.map (fun o -> o.GetType())
+
+    /// Returns a corresponding xl-reference, given a Registry-guid.
     member private this.tryFindRef (regKey: string) : string option = 
         if reg.ContainsKey regKey then
             [| for kvp in ref -> if kvp.Value |> Array.contains regKey then [| kvp.Key |] else [||] |]
@@ -97,7 +138,7 @@ type Registry() =
         else
             None
 
-    /// Given a registry-guid, if its associated R-object is a 1D array,
+    /// Given a Registry-guid, if its associated R-object is a 1D array,
     /// returns the array element type and the array.
     member this.tryFind1D (regKey: string) : ((Type[])*obj) option =
         match this.tryGet regKey with
@@ -112,7 +153,7 @@ type Registry() =
             else
                 None
 
-    /// Given a registry-guid, if its associated R-object is a 2D array,
+    /// Given a Registry-guid, if its associated R-object is a 2D array,
     /// returns the array element type and the array.
     member this.tryFind2D (regKey: string) : ((Type[])*obj) option =
         match this.tryGet regKey with
@@ -133,13 +174,13 @@ type Registry() =
         | Some o1, Some o2 -> o1 = o2
         | _ -> false
 
-    /// Returns the registry's keys.
+    /// Returns the Registry's keys.
     member this.keys : string[] = [| for kvp in reg -> kvp.Key |]
 
-    /// Returns the registry's values.
+    /// Returns the Registry's values.
     member this.values : obj[] = [| for kvp in reg -> kvp.Value |]
 
-    /// Returns the registry's key-value pairs.
+    /// Returns the Registry's key-value pairs.
     member this.keyValuePairs : (string*obj)[] = [| for kvp in reg -> kvp.Key, kvp.Value |]
 
     // -----------------------------
@@ -272,12 +313,12 @@ type Registry() =
     // -- Pretty-print functions
     // -----------------------------
 
-    /// Pretty-prints a R-object, given its associated registry-guid.
+    /// Pretty-prints a R-object, given its associated Registry-guid.
     /// Using F# default formatting.
     member this.tryShow (key: string) : string option =
         this.tryGet key |> Option.map (fun o -> sprintf "%A" o)
 
-    /// Pretty-prints a R-object, given its associated registry-guid.
+    /// Pretty-prints a R-object, given its associated Registry-guid.
     /// Using .Net default formatting.
     member this.tryString (key: string) : string option =
         this.tryGet key |> Option.map (fun o -> o.ToString())
@@ -305,6 +346,16 @@ type Registry() =
         use stream = new FileStream(fpath, FileMode.Open)
         let regObj = (new BinaryFormatter()).Deserialize(stream)
         this.register refKey regObj
+
+    /// Renames an existing Registry key to an arbitrary (string) value.
+    member this.rename (newRefKey: string) (prevRegKey: string) (newRegKey: string) : string option =
+        match this.findRef prevRegKey with
+        | None -> None
+        | Some prevRefKey ->
+            let regObject = reg.Item(prevRegKey)
+            this.removeSingleReferencedObjects prevRefKey prevRegKey
+            this.adhoc false newRefKey newRegKey regObject
+            |> Some
 
 module Registry =
     /// Master registry where all registered objects are held.
@@ -2468,6 +2519,22 @@ module Registry_XL =
         
         // result
         MRegistry.tryShow regKey |> outNA
+
+    [<ExcelFunction(Category="Registry", Description="Renames a reg. object.")>]
+    let rg_rname
+        ([<ExcelArgument(Description= "Previous reg. key.")>] prevRegKey: string)
+        ([<ExcelArgument(Description= "New reg. key.")>] newRegKey: string)
+        ([<ExcelArgument(Description= "[New ref. key. Default is this cell's reference.]")>] newRefKey: obj)
+        : obj =
+        
+        // caller cell's reference ID
+        let rfid = MRegistry.refID
+        let newRefKey = In.D0.Stg.def rfid newRefKey
+
+        // result
+        match MRegistry.rename newRefKey prevRegKey newRegKey with
+        | None -> Proxys.def.failed
+        | Some regKey -> box regKey
 
     [<ExcelFunction(Category="Registry", Description="Returns a registry object's type.")>]
     let rg_type 
@@ -6529,6 +6596,14 @@ module Rel =
                         let rel : Rel = { fields = resFields; body = resBody }
                         rel |> Some
 
+    /// Special case for the Extend operator.
+    /// ofun is a FsharpFunc object.
+    let extendMulti (r: Rel) (operation: string*(string[])*(obj[] -> obj)) = // (argNames: string[]) (resultName: string) : Rel option =
+        
+
+        None
+
+
     /// Restrict operator
     /// where the filtering test is limited to equality of the elements for given fields.
     /// names = [foo, foo], values = [x1, x2] 
@@ -6662,9 +6737,134 @@ module Rel =
         | TypeFst of string[]   /// only field typess are part of the csv file, names are provided as user input. Types on first row of csv file.
         | NoHeader of (string[])*(string[]) /// neither field names or types are part of the csv file; they are provided as user input.
 
+    /// (Field Names) * (Field Types) overrides.
+    /// Type-tag override is either a type-tag array or a (field name -> type-tag) map.
+    type FieldOvrR = (string[] option)*((string[] option)*(Map<string,string> option))
+    type CSVFields2 = 
+        | NameFstTypeSndX of FieldOvrR /// field names and types are part of the csv file. Names on first row, types of second row.
+        | NameSndTypeFstX of FieldOvrR /// field names and types are part of the csv file. Names on second row, types of first row.
+        | NameFstX of FieldOvrR        /// only field names are part of the csv file, types are provided as user input. Names on first row of csv file.
+        | TypeFstX of FieldOvrR        /// only field typess are part of the csv file, names are provided as user input. Types on first row of csv file.
+        | NoHeaderX of FieldOvrR       /// neither field names or types are part of the csv file; they are provided as user input.
+        //with
+        //    member this.ovrride (fieldOvrR: FieldOvrR) : CSVFields2 =
+        //        match this with
+        //        | NameFstTypeSndX _ -> NameFstTypeSndX fieldOvrR
+        //        | NameSndTypeFstX _ -> NameSndTypeFstX fieldOvrR
+        //        | NameFstX _ -> NameFstX fieldOvrR
+        //        | TypeFstX _ -> TypeFstX fieldOvrR
+        //        | NoHeaderX _ -> NoHeaderX fieldOvrR
+
+    // TO DO, change function to accept external names (when not provided in the file)
     /// Converts a CSV file to a Rel object.
-    /// The first or second row of the CSV file must provide the relation field names
-    /// The first or second row of the CSV file can provide the relation field type tags (e.g. "int", "double", "string", "#date" ...)
+    /// The first or second row of the CSV file must provide the relation field names (*). 
+    /// The first or second row of the CSV file can provide the relation field type tags (e.g. "int", "double", "string", "#date" ...) (*).
+    /// (*) otherwise they need to be provided to the function
+    /// If mapNameType is provided, then field types are derived from field names (the CSV row of types is ignored).
+    /// If mapNameDefvals and mapTypeDefvals provide default values derived from field namess or types respectively (default based on field name prevails).
+    let ofCSVX (mapTypeDefvals: Map<string,obj>) (mapNameDefvals: Map<string,obj>) (dateFormat: string option) (useVB: bool) (enclosingQuotes: bool) (trim: bool) (sep: string) (csvFields: CSVFields2) (fpath: string) : Rel option = 
+        let lines = 
+            if useVB then 
+                Toolbox.CSV.readLinesVB enclosingQuotes trim sep fpath
+            else
+                Toolbox.CSV.readLines trim sep fpath
+        
+        let lineCount = lines |> Seq.length
+
+        if lineCount = 0 then
+            None
+        else
+            let skip n s = if n < lineCount then Seq.skip n s else [||] |> Seq.ofArray
+
+            // determines names, types, body as specified by inputs.
+            let (headerNames, headerTypeTags, bodyLines) =
+                match csvFields with
+                | NameFstTypeSndX (names, (types, mapTypes)) -> 
+                    let nms = names |> Option.defaultValue (lines |> Seq.item 0)
+                    let tys = 
+                        match types, mapTypes with
+                        | None, None -> lines |> Seq.item 1
+                        | Some ts, None -> ts
+                        | _, Some mapNmTy -> nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
+                    (nms, tys, lines |> skip 2)
+                | NameSndTypeFstX (names, (types, mapTypes)) -> 
+                    let nms = names |> Option.defaultValue (lines |> Seq.item 1)
+                    let tys = 
+                        match types, mapTypes with
+                        | None, None -> lines |> Seq.item 0
+                        | Some ts, None -> ts
+                        | _, Some mapNmTy -> nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
+                    (nms, tys, lines |> skip 2)
+
+                | NameFstX (names, (types, mapTypes)) -> 
+                    let nms = names |> Option.defaultValue (lines |> Seq.item 0)
+                    let tys = 
+                        match types, mapTypes with
+                        | None, None -> failwith "No CSV types provided"
+                        | Some ts, None -> ts
+                        | _, Some mapNmTy -> nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
+                    (nms, tys, lines |> skip 1)
+
+                | TypeFstX (names, (types, mapTypes)) -> 
+                    let nms = 
+                        match names with
+                        | None -> failwith "No CSV names provided"
+                        | Some ns -> ns
+                    let tys = 
+                        match types, mapTypes with
+                        | None, None -> lines |> Seq.item 0
+                        | Some ts, None -> ts
+                        | _, Some mapNmTy -> nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
+                    (nms, tys, lines |> skip 1)
+
+                | NoHeaderX (names, (types, mapTypes)) -> 
+                    let nms = 
+                        match names with
+                        | None -> failwith "No CSV names provided"
+                        | Some ns -> ns
+                    let tys = 
+                        match types, mapTypes with
+                        | None, None -> failwith "No CSV types provided"
+                        | Some ts, None -> ts
+                        | _, Some mapNmTy -> nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
+                    (nms, tys, lines)
+
+            if (headerNames.Length = 0) || (headerNames.Length <> headerTypeTags.Length) then
+                None
+            elif bodyLines |> Seq.filter (fun line -> line.Length <> headerNames.Length) |> Seq.isEmpty |> not then
+                None
+            else
+                let headerTypes = headerTypeTags |> Array.map (API.Variant.labelType false)
+
+                if (headerTypes.Length <> headerTypeTags.Length) then
+                    None
+                else
+                    let relFields : Set<Field> = Field.zip headerNames headerTypes
+
+                    let toElem (fname: string, typeTag: string, text: string) : Elem =
+                        let defValue = 
+                            match mapNameDefvals |> Map.tryFind fname with
+                            | Some defval -> Some defval
+                            | None -> mapTypeDefvals |> Map.tryFind (typeTag.ToUpper())
+                        let res = API.Text.Tag.Any.def dateFormat defValue typeTag text
+                        let elem : Elem = { fname = fname; value = res }
+                        elem
+
+                    let relBody : Set<Row> = 
+                        bodyLines 
+                        |> Seq.map (fun line -> Array.zip3 headerNames headerTypeTags line |> Array.map toElem |> Row.sort)
+                        |> Set.ofSeq
+                
+                    let rel : Rel = { fields = relFields; body = relBody }
+                    rel |> Some
+
+
+
+    // TO DO, change function to accept external names (when not provided in the file)
+    /// Converts a CSV file to a Rel object.
+    /// The first or second row of the CSV file must provide the relation field names (*). 
+    /// The first or second row of the CSV file can provide the relation field type tags (e.g. "int", "double", "string", "#date" ...) (*).
+    /// (*) otherwise they need to be provided to the function
     /// If mapNameType is provided, then field types are derived from field names (the CSV row of types is ignored).
     /// If mapNameDefvals and mapTypeDefvals provide default values derived from field namess or types respectively (default based on field name prevails).
     let ofCSV (mapNameTagType: Map<string,string> option) (mapTypeDefvals: Map<string,obj>) (mapNameDefvals: Map<string,obj>) (dateFormat: string option) (useVB: bool) (enclosingQuotes: bool) (trim: bool) (sep: string) (csvFields: CSVFields) (fpath: string) : Rel option = 
@@ -6688,13 +6888,13 @@ module Rel =
                 | Some mapNmTy, NameFstTypeSnd ->
                     let nms = lines |> Seq.item 0
                     let tys = nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
-                    (nms, tys, lines |> skip 2)
+                    (nms, tys, lines |> skip 1)
 
                 // Names from Csv file. (Name -> Type) provided. Types are derived from names. Csv file's type row is ignored.
                 | Some mapNmTy, NameSndTypeFst ->
                     let nms = lines |> Seq.item 1
                     let tys = nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
-                    (nms, tys, lines |> skip 2)
+                    (nms, tys, lines |> skip 1)
 
                 // Names from Csv file. (Name -> Type) provided. Types are derived from names.
                 | Some mapNmTy, NameFst _ -> 
@@ -7374,7 +7574,6 @@ module Rel_XL =
         let rfid = MRegistry.refID
 
         // result
-        //match tryExtract (tryRel None) rgRel, tryExtract (tryRel None) rgRelPer with
         match tryExtract<Rel.Rel> rgRel, tryExtract<Rel.Rel> rgPer with
         | None, _ -> Proxys.def.failed
         | _, None -> Proxys.def.failed
@@ -7598,7 +7797,42 @@ module Rel_XL =
             | Some fieldNames, None -> Rel.TypeFst fieldNames
             | None, Some fieldTypes -> Rel.NameFst fieldTypes
             | Some fieldNames, Some fieldTypes -> Rel.NoHeader (fieldNames, fieldTypes)
+
         let mapNameTagType = MRegistry.tryExtract<Map<string,string>> rgMapFNameFType
+
+        let csvFields3 : Rel.CSVFields2 = 
+            match In.D0.Intg.Opt.def None fieldNamesRowIndex, In.D0.Intg.Opt.def None fieldTypesRowIndex, API.In.D1.OStg.tryDV None fieldNamesOvrd, API.In.D1.OStg.tryDV None fieldTypeTagsOvrd, mapNameTagType with            
+            // when the only inputs are the row indices 
+            | None, None, None, None, None -> Rel.NameFstTypeSndX (None, (None, None))
+            | Some nmRowIdx, None, None, None, None -> if nmRowIdx > 1 then Rel.NameSndTypeFstX (None, (None, None)) else Rel.NameFstTypeSndX (None, (None, None))
+            | None, Some tyRowIdx, None, None, None -> if tyRowIdx < 2 then Rel.NameSndTypeFstX (None, (None, None)) else Rel.NameFstTypeSndX (None, (None, None))
+            | Some nmRowIdx, Some tyRowIdx, None, None, None -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFstX (None, (None, None)) else Rel.NameFstTypeSndX (None, (None, None))
+            // when a names-override is provided
+            | None, None, Some fieldNames, None, None -> Rel.TypeFstX (Some fieldNames, (None, None))
+            | Some nmRowIdx, None, Some fieldNames, None, None -> if nmRowIdx > 1 then Rel.NameSndTypeFstX (Some fieldNames, (None, None)) else Rel.NameFstTypeSndX (Some fieldNames, (None, None))
+            | None, Some tyRowIdx, Some fieldNames, None, None -> Rel.TypeFstX (Some fieldNames, (None, None)) // single header can only be on the first row
+            | Some nmRowIdx, Some tyRowIdx, Some fieldNames, None, None -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFstX (Some fieldNames, (None, None)) else Rel.NameFstTypeSndX (Some fieldNames, (None, None))
+            // when a types-override is provided
+            | None, None, None, Some fieldTypes, None -> Rel.NameFstX (None, (Some fieldTypes, None))
+            | Some nmRowIdx, None, None, Some fieldTypes, None -> Rel.NameFstX (None, (Some fieldTypes, None)) // single header can only be on the first row
+            | None, Some tyRowIdx, None, Some fieldTypes, None -> if tyRowIdx < 2 then Rel.NameSndTypeFstX (None, (Some fieldTypes, None)) else Rel.NameFstTypeSndX (None, (Some fieldTypes, None))
+            | Some nmRowIdx, Some tyRowIdx, None, Some fieldTypes, None -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFstX (None, (Some fieldTypes, None)) else Rel.NameFstTypeSndX (None, (Some fieldTypes, None))
+            // when a map types-override is provided
+            | None, None, None, _, Some mapping -> Rel.NameFstX (None, (None, Some mapping))
+            | Some nmRowIdx, None, None, _, Some mapping -> Rel.NameFstX (None, (None, Some mapping)) // single header can only be on the first row
+            | None, Some tyRowIdx, None, _, Some mapping -> if tyRowIdx < 2 then Rel.NameSndTypeFstX (None, (None, Some mapping)) else Rel.NameFstTypeSndX (None, (None, Some mapping))
+            | Some nmRowIdx, Some tyRowIdx, None, _, Some mapping -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFstX (None, (None, Some mapping)) else Rel.NameFstTypeSndX (None, (None, Some mapping))
+            // when both names- and types-override is provided
+            | None, None, Some fieldNames, Some fieldTypes, None -> Rel.NoHeaderX (Some fieldNames, (Some fieldTypes, None))
+            | Some nmRowIdx, None, Some fieldNames, Some fieldTypes, None -> Rel.NameFstX (Some fieldNames, (Some fieldTypes, None)) // single header can only be on the first row
+            | None, Some tyRowIdx, Some fieldNames, Some fieldTypes, None -> Rel.TypeFstX (Some fieldNames, (Some fieldTypes, None)) // single header can only be on the first row
+            | Some nmRowIdx, Some tyRowIdx, Some fieldNames, Some fieldTypes, None -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFstX (Some fieldNames, (Some fieldTypes, None)) else Rel.NameFstTypeSndX (Some fieldNames, (Some fieldTypes, None))
+            // when both names- and map types-override is provided
+            | None, None, Some fieldNames, _, Some mapping -> Rel.NoHeaderX (Some fieldNames, (None, Some mapping))
+            | Some nmRowIdx, None, Some fieldNames, _, Some mapping -> Rel.NameFstX (Some fieldNames, (None, Some mapping)) // single header can only be on the first row
+            | None, Some tyRowIdx, Some fieldNames, _, Some mapping -> Rel.TypeFstX (Some fieldNames, (None, Some mapping)) // single header can only be on the first row
+            | Some nmRowIdx, Some tyRowIdx, Some fieldNames, _, Some mapping -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFstX (Some fieldNames, (None, Some mapping)) else Rel.NameFstTypeSndX (Some fieldNames, (None, Some mapping))
+
         let separator = In.D0.Stg.def "," separator
         let enclosingQuotes = In.D0.Bool.def false enclosingQuotes
         let trimBlanks = In.D0.Bool.def true trimBlanks
@@ -7617,7 +7851,8 @@ module Rel_XL =
         let rfid = MRegistry.refID
 
         // result
-        match Rel.ofCSV mapNameTagType mapTypeDefvals Map.empty dateFormat useVBParser enclosingQuotes trimBlanks separator csvFields filePath with
+        // match Rel.ofCSV mapNameTagType mapTypeDefvals Map.empty dateFormat useVBParser enclosingQuotes trimBlanks separator csvFields filePath with
+        match Rel.ofCSVX mapTypeDefvals Map.empty dateFormat useVBParser enclosingQuotes trimBlanks separator csvFields3 filePath with
         | None -> Proxys.def.failed
         | Some relCSV -> relCSV |> MRegistry.registerBxd rfid
 
@@ -7925,6 +8160,7 @@ module TEST_XL =
 // Set.allPair
 // array2D trans
 // Set.disjoint
+// Set.intersectMany => return empty set if input is empty? (currently throws error)
 
-// io lastmodified
+// io functions
 // fun isfunction. fun arity and type expr_funtype...

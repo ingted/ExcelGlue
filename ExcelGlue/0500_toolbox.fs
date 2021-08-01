@@ -4,16 +4,16 @@
 namespace ExcelGlue
 
 open ExcelDna.Integration
-open ExcelDna.Registration
+// open ExcelDna.Registration
 
-[<AutoOpen>]
-// Need ExplicitRegistration="true" in ExcelGlue-Addin.dna file. 
-type AutoOpenExcelFunctionsRegistration () =
-    interface IExcelAddIn  with
-        member this.AutoOpen ()  = 
-            ExcelRegistration.GetExcelFunctions ()
-            |> ExcelRegistration.RegisterFunctions
-        member this.AutoClose () = ()
+//[<AutoOpen>]
+//// Need ExplicitRegistration="true" in ExcelGlue-Addin.dna file. 
+//type AutoOpenExcelFunctionsRegistration () =
+//    interface IExcelAddIn  with
+//        member this.AutoOpen ()  = 
+//            ExcelRegistration.GetExcelFunctions ()
+//            |> ExcelRegistration.RegisterFunctions
+//        member this.AutoClose () = ()
 
 module Toolbox =
     open System

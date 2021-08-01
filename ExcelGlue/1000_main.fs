@@ -6728,41 +6728,26 @@ module Rel =
     // -- Conversion functions (from / to relations to other types)
     // -----------------------------
 
-    /// Indicates whether the first and second rows contains a relation field names and types,
-    /// Which need to be provided if not present as CSV file rows.
-    type CSVFields = 
-        | NameFstTypeSnd    /// field names and types are part of the csv file. Names on first row, types of second row.
-        | NameSndTypeFst    /// field names and types are part of the csv file. Names on second row, types of first row.
-        | NameFst of string[]   /// only field names are part of the csv file, types are provided as user input. Names on first row of csv file.
-        | TypeFst of string[]   /// only field typess are part of the csv file, names are provided as user input. Types on first row of csv file.
-        | NoHeader of (string[])*(string[]) /// neither field names or types are part of the csv file; they are provided as user input.
 
     /// (Field Names) * (Field Types) overrides.
     /// Type-tag override is either a type-tag array or a (field name -> type-tag) map.
     type FieldOvrR = (string[] option)*((string[] option)*(Map<string,string> option))
-    type CSVFields2 = 
-        | NameFstTypeSndX of FieldOvrR /// field names and types are part of the csv file. Names on first row, types of second row.
-        | NameSndTypeFstX of FieldOvrR /// field names and types are part of the csv file. Names on second row, types of first row.
-        | NameFstX of FieldOvrR        /// only field names are part of the csv file, types are provided as user input. Names on first row of csv file.
-        | TypeFstX of FieldOvrR        /// only field typess are part of the csv file, names are provided as user input. Types on first row of csv file.
-        | NoHeaderX of FieldOvrR       /// neither field names or types are part of the csv file; they are provided as user input.
-        //with
-        //    member this.ovrride (fieldOvrR: FieldOvrR) : CSVFields2 =
-        //        match this with
-        //        | NameFstTypeSndX _ -> NameFstTypeSndX fieldOvrR
-        //        | NameSndTypeFstX _ -> NameSndTypeFstX fieldOvrR
-        //        | NameFstX _ -> NameFstX fieldOvrR
-        //        | TypeFstX _ -> TypeFstX fieldOvrR
-        //        | NoHeaderX _ -> NoHeaderX fieldOvrR
 
-    // TO DO, change function to accept external names (when not provided in the file)
+    /// Indicates whether the first and second rows contains the relation field names and types,
+    /// (which need to be provided if not present as CSV file rows).
+    type CSVFields = 
+        | NameFstTypeSnd of FieldOvrR /// field names and types are part of the csv file. Names on first row, types of second row.
+        | NameSndTypeFst of FieldOvrR /// field names and types are part of the csv file. Names on second row, types of first row.
+        | NameFst of FieldOvrR        /// only field names are part of the csv file, types are provided as user input. Names on first row of csv file.
+        | TypeFst of FieldOvrR        /// only field typess are part of the csv file, names are provided as user input. Types on first row of csv file.
+        | NoHeader of FieldOvrR       /// neither field names or types are part of the csv file; they are provided as user input.
+
     /// Converts a CSV file to a Rel object.
     /// The first or second row of the CSV file must provide the relation field names (*). 
-    /// The first or second row of the CSV file can provide the relation field type tags (e.g. "int", "double", "string", "#date" ...) (*).
-    /// (*) otherwise they need to be provided to the function
-    /// If mapNameType is provided, then field types are derived from field names (the CSV row of types is ignored).
+    /// The first or second row of the CSV file can provide the relation field type-tags (e.g. "int", "double", "string", "#date" ...) (*).
+    /// (*) otherwise they need to be provided to the function.
     /// If mapNameDefvals and mapTypeDefvals provide default values derived from field namess or types respectively (default based on field name prevails).
-    let ofCSVX (mapTypeDefvals: Map<string,obj>) (mapNameDefvals: Map<string,obj>) (dateFormat: string option) (useVB: bool) (enclosingQuotes: bool) (trim: bool) (sep: string) (csvFields: CSVFields2) (fpath: string) : Rel option = 
+    let ofCSV (mapTypeDefvals: Map<string,obj>) (mapNameDefvals: Map<string,obj>) (dateFormat: string option) (useVB: bool) (enclosingQuotes: bool) (trim: bool) (sep: string) (csvFields: CSVFields) (fpath: string) : Rel option = 
         let lines = 
             if useVB then 
                 Toolbox.CSV.readLinesVB enclosingQuotes trim sep fpath
@@ -6779,7 +6764,7 @@ module Rel =
             // determines names, types, body as specified by inputs.
             let (headerNames, headerTypeTags, bodyLines) =
                 match csvFields with
-                | NameFstTypeSndX (names, (types, mapTypes)) -> 
+                | NameFstTypeSnd (names, (types, mapTypes)) -> 
                     let nms = names |> Option.defaultValue (lines |> Seq.item 0)
                     let tys = 
                         match types, mapTypes with
@@ -6787,7 +6772,7 @@ module Rel =
                         | Some ts, None -> ts
                         | _, Some mapNmTy -> nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
                     (nms, tys, lines |> skip 2)
-                | NameSndTypeFstX (names, (types, mapTypes)) -> 
+                | NameSndTypeFst (names, (types, mapTypes)) -> 
                     let nms = names |> Option.defaultValue (lines |> Seq.item 1)
                     let tys = 
                         match types, mapTypes with
@@ -6796,7 +6781,7 @@ module Rel =
                         | _, Some mapNmTy -> nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
                     (nms, tys, lines |> skip 2)
 
-                | NameFstX (names, (types, mapTypes)) -> 
+                | NameFst (names, (types, mapTypes)) -> 
                     let nms = names |> Option.defaultValue (lines |> Seq.item 0)
                     let tys = 
                         match types, mapTypes with
@@ -6805,7 +6790,7 @@ module Rel =
                         | _, Some mapNmTy -> nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
                     (nms, tys, lines |> skip 1)
 
-                | TypeFstX (names, (types, mapTypes)) -> 
+                | TypeFst (names, (types, mapTypes)) -> 
                     let nms = 
                         match names with
                         | None -> failwith "No CSV names provided"
@@ -6817,7 +6802,7 @@ module Rel =
                         | _, Some mapNmTy -> nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
                     (nms, tys, lines |> skip 1)
 
-                | NoHeaderX (names, (types, mapTypes)) -> 
+                | NoHeader (names, (types, mapTypes)) -> 
                     let nms = 
                         match names with
                         | None -> failwith "No CSV names provided"
@@ -6828,114 +6813,6 @@ module Rel =
                         | Some ts, None -> ts
                         | _, Some mapNmTy -> nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
                     (nms, tys, lines)
-
-            if (headerNames.Length = 0) || (headerNames.Length <> headerTypeTags.Length) then
-                None
-            elif bodyLines |> Seq.filter (fun line -> line.Length <> headerNames.Length) |> Seq.isEmpty |> not then
-                None
-            else
-                let headerTypes = headerTypeTags |> Array.map (API.Variant.labelType false)
-
-                if (headerTypes.Length <> headerTypeTags.Length) then
-                    None
-                else
-                    let relFields : Set<Field> = Field.zip headerNames headerTypes
-
-                    let toElem (fname: string, typeTag: string, text: string) : Elem =
-                        let defValue = 
-                            match mapNameDefvals |> Map.tryFind fname with
-                            | Some defval -> Some defval
-                            | None -> mapTypeDefvals |> Map.tryFind (typeTag.ToUpper())
-                        let res = API.Text.Tag.Any.def dateFormat defValue typeTag text
-                        let elem : Elem = { fname = fname; value = res }
-                        elem
-
-                    let relBody : Set<Row> = 
-                        bodyLines 
-                        |> Seq.map (fun line -> Array.zip3 headerNames headerTypeTags line |> Array.map toElem |> Row.sort)
-                        |> Set.ofSeq
-                
-                    let rel : Rel = { fields = relFields; body = relBody }
-                    rel |> Some
-
-
-
-    // TO DO, change function to accept external names (when not provided in the file)
-    /// Converts a CSV file to a Rel object.
-    /// The first or second row of the CSV file must provide the relation field names (*). 
-    /// The first or second row of the CSV file can provide the relation field type tags (e.g. "int", "double", "string", "#date" ...) (*).
-    /// (*) otherwise they need to be provided to the function
-    /// If mapNameType is provided, then field types are derived from field names (the CSV row of types is ignored).
-    /// If mapNameDefvals and mapTypeDefvals provide default values derived from field namess or types respectively (default based on field name prevails).
-    let ofCSV (mapNameTagType: Map<string,string> option) (mapTypeDefvals: Map<string,obj>) (mapNameDefvals: Map<string,obj>) (dateFormat: string option) (useVB: bool) (enclosingQuotes: bool) (trim: bool) (sep: string) (csvFields: CSVFields) (fpath: string) : Rel option = 
-        let lines = 
-            if useVB then 
-                Toolbox.CSV.readLinesVB enclosingQuotes trim sep fpath
-            else
-                Toolbox.CSV.readLines trim sep fpath
-        
-        let lineCount = lines |> Seq.length
-
-        if lineCount = 0 then
-            None
-        else
-            let skip n s = if n < lineCount then Seq.skip n s else [||] |> Seq.ofArray
-
-            // determines names, types, body as specified by inputs.
-            let (headerNames, headerTypeTags, bodyLines) =
-                match mapNameTagType, csvFields with
-                // Names from Csv file. (Name -> Type) provided. Types are derived from names. Csv file's type row is ignored.
-                | Some mapNmTy, NameFstTypeSnd ->
-                    let nms = lines |> Seq.item 0
-                    let tys = nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
-                    (nms, tys, lines |> skip 1)
-
-                // Names from Csv file. (Name -> Type) provided. Types are derived from names. Csv file's type row is ignored.
-                | Some mapNmTy, NameSndTypeFst ->
-                    let nms = lines |> Seq.item 1
-                    let tys = nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
-                    (nms, tys, lines |> skip 1)
-
-                // Names from Csv file. (Name -> Type) provided. Types are derived from names.
-                | Some mapNmTy, NameFst _ -> 
-                    let nms = lines |> Seq.item 0
-                    let tys = nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
-                    (nms, tys, lines |> skip 1)
-
-                // Names from inputs. (Name -> Type) provided. Types are derived from names. Csv file's type row is ignored.
-                | Some mapNmTy, TypeFst nms -> 
-                    let tys = nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
-                    (nms, tys, lines |> skip 1)
-
-                // Names from inputs. (Name -> Type) provided. Types are derived from names.
-                | Some mapNmTy, NoHeader (nms, _) -> 
-                    let tys = nms |> Array.map (fun nm -> mapNmTy |> Map.find nm)
-                    (nms, tys, lines)
-
-                // Names and type from Csv file.
-                | None, NameFstTypeSnd ->
-                    let nms = lines |> Seq.item 0
-                    let tys = lines |> Seq.item 1
-                    (nms, tys, lines |> skip 2)
-
-                // Names and type from Csv file.
-                | None, NameSndTypeFst ->
-                    let tys = lines |> Seq.item 0
-                    let nms = lines |> Seq.item 1
-                    (nms, tys, lines |> skip 2)
-
-                // Names from Csv file, types from inputs.
-                | None, NameFst tys -> 
-                    let nms = lines |> Seq.item 0
-                    (nms, tys, lines |> skip 1)
-
-                // Names from inputs, types from Csv file.
-                | None, TypeFst nms -> 
-                    let tys = lines |> Seq.item 0
-                    (nms, tys, lines |> skip 1)
-
-                // Names and types from inputs.
-                | None, NoHeader (nms, tys) -> (nms, tys, lines)
 
             if (headerNames.Length = 0) || (headerNames.Length <> headerTypeTags.Length) then
                 None
@@ -7791,47 +7668,40 @@ module Rel_XL =
         // intermediary stage
         let fNamesRowIdx = In.D0.Intg.def 1 fieldNamesRowIndex
         let fTypesRowIdx = In.D0.Intg.def 2 fieldTypesRowIndex
-        let csvFields : Rel.CSVFields = 
-            match API.In.D1.OStg.tryDV None fieldNamesOvrd, API.In.D1.OStg.tryDV None fieldTypeTagsOvrd with
-            | None, None -> if fTypesRowIdx < fNamesRowIdx then Rel.NameSndTypeFst else Rel.NameFstTypeSnd
-            | Some fieldNames, None -> Rel.TypeFst fieldNames
-            | None, Some fieldTypes -> Rel.NameFst fieldTypes
-            | Some fieldNames, Some fieldTypes -> Rel.NoHeader (fieldNames, fieldTypes)
-
         let mapNameTagType = MRegistry.tryExtract<Map<string,string>> rgMapFNameFType
 
-        let csvFields3 : Rel.CSVFields2 = 
+        let csvFields : Rel.CSVFields = 
             match In.D0.Intg.Opt.def None fieldNamesRowIndex, In.D0.Intg.Opt.def None fieldTypesRowIndex, API.In.D1.OStg.tryDV None fieldNamesOvrd, API.In.D1.OStg.tryDV None fieldTypeTagsOvrd, mapNameTagType with            
             // when the only inputs are the row indices 
-            | None, None, None, None, None -> Rel.NameFstTypeSndX (None, (None, None))
-            | Some nmRowIdx, None, None, None, None -> if nmRowIdx > 1 then Rel.NameSndTypeFstX (None, (None, None)) else Rel.NameFstTypeSndX (None, (None, None))
-            | None, Some tyRowIdx, None, None, None -> if tyRowIdx < 2 then Rel.NameSndTypeFstX (None, (None, None)) else Rel.NameFstTypeSndX (None, (None, None))
-            | Some nmRowIdx, Some tyRowIdx, None, None, None -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFstX (None, (None, None)) else Rel.NameFstTypeSndX (None, (None, None))
+            | None, None, None, None, None -> Rel.NameFstTypeSnd (None, (None, None))
+            | Some nmRowIdx, None, None, None, None -> if nmRowIdx > 1 then Rel.NameSndTypeFst (None, (None, None)) else Rel.NameFstTypeSnd (None, (None, None))
+            | None, Some tyRowIdx, None, None, None -> if tyRowIdx < 2 then Rel.NameSndTypeFst (None, (None, None)) else Rel.NameFstTypeSnd (None, (None, None))
+            | Some nmRowIdx, Some tyRowIdx, None, None, None -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFst (None, (None, None)) else Rel.NameFstTypeSnd (None, (None, None))
             // when a names-override is provided
-            | None, None, Some fieldNames, None, None -> Rel.TypeFstX (Some fieldNames, (None, None))
-            | Some nmRowIdx, None, Some fieldNames, None, None -> if nmRowIdx > 1 then Rel.NameSndTypeFstX (Some fieldNames, (None, None)) else Rel.NameFstTypeSndX (Some fieldNames, (None, None))
-            | None, Some tyRowIdx, Some fieldNames, None, None -> Rel.TypeFstX (Some fieldNames, (None, None)) // single header can only be on the first row
-            | Some nmRowIdx, Some tyRowIdx, Some fieldNames, None, None -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFstX (Some fieldNames, (None, None)) else Rel.NameFstTypeSndX (Some fieldNames, (None, None))
+            | None, None, Some fieldNames, None, None -> Rel.TypeFst (Some fieldNames, (None, None))
+            | Some nmRowIdx, None, Some fieldNames, None, None -> if nmRowIdx > 1 then Rel.NameSndTypeFst (Some fieldNames, (None, None)) else Rel.NameFstTypeSnd (Some fieldNames, (None, None))
+            | None, Some tyRowIdx, Some fieldNames, None, None -> Rel.TypeFst (Some fieldNames, (None, None)) // single header can only be on the first row
+            | Some nmRowIdx, Some tyRowIdx, Some fieldNames, None, None -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFst (Some fieldNames, (None, None)) else Rel.NameFstTypeSnd (Some fieldNames, (None, None))
             // when a types-override is provided
-            | None, None, None, Some fieldTypes, None -> Rel.NameFstX (None, (Some fieldTypes, None))
-            | Some nmRowIdx, None, None, Some fieldTypes, None -> Rel.NameFstX (None, (Some fieldTypes, None)) // single header can only be on the first row
-            | None, Some tyRowIdx, None, Some fieldTypes, None -> if tyRowIdx < 2 then Rel.NameSndTypeFstX (None, (Some fieldTypes, None)) else Rel.NameFstTypeSndX (None, (Some fieldTypes, None))
-            | Some nmRowIdx, Some tyRowIdx, None, Some fieldTypes, None -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFstX (None, (Some fieldTypes, None)) else Rel.NameFstTypeSndX (None, (Some fieldTypes, None))
+            | None, None, None, Some fieldTypes, None -> Rel.NameFst (None, (Some fieldTypes, None))
+            | Some nmRowIdx, None, None, Some fieldTypes, None -> Rel.NameFst (None, (Some fieldTypes, None)) // single header can only be on the first row
+            | None, Some tyRowIdx, None, Some fieldTypes, None -> if tyRowIdx < 2 then Rel.NameSndTypeFst (None, (Some fieldTypes, None)) else Rel.NameFstTypeSnd (None, (Some fieldTypes, None))
+            | Some nmRowIdx, Some tyRowIdx, None, Some fieldTypes, None -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFst (None, (Some fieldTypes, None)) else Rel.NameFstTypeSnd (None, (Some fieldTypes, None))
             // when a map types-override is provided
-            | None, None, None, _, Some mapping -> Rel.NameFstX (None, (None, Some mapping))
-            | Some nmRowIdx, None, None, _, Some mapping -> Rel.NameFstX (None, (None, Some mapping)) // single header can only be on the first row
-            | None, Some tyRowIdx, None, _, Some mapping -> if tyRowIdx < 2 then Rel.NameSndTypeFstX (None, (None, Some mapping)) else Rel.NameFstTypeSndX (None, (None, Some mapping))
-            | Some nmRowIdx, Some tyRowIdx, None, _, Some mapping -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFstX (None, (None, Some mapping)) else Rel.NameFstTypeSndX (None, (None, Some mapping))
+            | None, None, None, _, Some mapping -> Rel.NameFst (None, (None, Some mapping))
+            | Some nmRowIdx, None, None, _, Some mapping -> Rel.NameFst (None, (None, Some mapping)) // single header can only be on the first row
+            | None, Some tyRowIdx, None, _, Some mapping -> if tyRowIdx < 2 then Rel.NameSndTypeFst (None, (None, Some mapping)) else Rel.NameFstTypeSnd (None, (None, Some mapping))
+            | Some nmRowIdx, Some tyRowIdx, None, _, Some mapping -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFst (None, (None, Some mapping)) else Rel.NameFstTypeSnd (None, (None, Some mapping))
             // when both names- and types-override is provided
-            | None, None, Some fieldNames, Some fieldTypes, None -> Rel.NoHeaderX (Some fieldNames, (Some fieldTypes, None))
-            | Some nmRowIdx, None, Some fieldNames, Some fieldTypes, None -> Rel.NameFstX (Some fieldNames, (Some fieldTypes, None)) // single header can only be on the first row
-            | None, Some tyRowIdx, Some fieldNames, Some fieldTypes, None -> Rel.TypeFstX (Some fieldNames, (Some fieldTypes, None)) // single header can only be on the first row
-            | Some nmRowIdx, Some tyRowIdx, Some fieldNames, Some fieldTypes, None -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFstX (Some fieldNames, (Some fieldTypes, None)) else Rel.NameFstTypeSndX (Some fieldNames, (Some fieldTypes, None))
+            | None, None, Some fieldNames, Some fieldTypes, None -> Rel.NoHeader (Some fieldNames, (Some fieldTypes, None))
+            | Some nmRowIdx, None, Some fieldNames, Some fieldTypes, None -> Rel.NameFst (Some fieldNames, (Some fieldTypes, None)) // single header can only be on the first row
+            | None, Some tyRowIdx, Some fieldNames, Some fieldTypes, None -> Rel.TypeFst (Some fieldNames, (Some fieldTypes, None)) // single header can only be on the first row
+            | Some nmRowIdx, Some tyRowIdx, Some fieldNames, Some fieldTypes, None -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFst (Some fieldNames, (Some fieldTypes, None)) else Rel.NameFstTypeSnd (Some fieldNames, (Some fieldTypes, None))
             // when both names- and map types-override is provided
-            | None, None, Some fieldNames, _, Some mapping -> Rel.NoHeaderX (Some fieldNames, (None, Some mapping))
-            | Some nmRowIdx, None, Some fieldNames, _, Some mapping -> Rel.NameFstX (Some fieldNames, (None, Some mapping)) // single header can only be on the first row
-            | None, Some tyRowIdx, Some fieldNames, _, Some mapping -> Rel.TypeFstX (Some fieldNames, (None, Some mapping)) // single header can only be on the first row
-            | Some nmRowIdx, Some tyRowIdx, Some fieldNames, _, Some mapping -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFstX (Some fieldNames, (None, Some mapping)) else Rel.NameFstTypeSndX (Some fieldNames, (None, Some mapping))
+            | None, None, Some fieldNames, _, Some mapping -> Rel.NoHeader (Some fieldNames, (None, Some mapping))
+            | Some nmRowIdx, None, Some fieldNames, _, Some mapping -> Rel.NameFst (Some fieldNames, (None, Some mapping)) // single header can only be on the first row
+            | None, Some tyRowIdx, Some fieldNames, _, Some mapping -> Rel.TypeFst (Some fieldNames, (None, Some mapping)) // single header can only be on the first row
+            | Some nmRowIdx, Some tyRowIdx, Some fieldNames, _, Some mapping -> if tyRowIdx < nmRowIdx then Rel.NameSndTypeFst (Some fieldNames, (None, Some mapping)) else Rel.NameFstTypeSnd (Some fieldNames, (None, Some mapping))
 
         let separator = In.D0.Stg.def "," separator
         let enclosingQuotes = In.D0.Bool.def false enclosingQuotes
@@ -7851,8 +7721,7 @@ module Rel_XL =
         let rfid = MRegistry.refID
 
         // result
-        // match Rel.ofCSV mapNameTagType mapTypeDefvals Map.empty dateFormat useVBParser enclosingQuotes trimBlanks separator csvFields filePath with
-        match Rel.ofCSVX mapTypeDefvals Map.empty dateFormat useVBParser enclosingQuotes trimBlanks separator csvFields3 filePath with
+        match Rel.ofCSV mapTypeDefvals Map.empty dateFormat useVBParser enclosingQuotes trimBlanks separator csvFields filePath with
         | None -> Proxys.def.failed
         | Some relCSV -> relCSV |> MRegistry.registerBxd rfid
 

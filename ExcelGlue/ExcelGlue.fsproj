@@ -31,7 +31,8 @@ Using Excel-DNA (https://github.com/Excel-DNA/ExcelDna).
 		<None Include="ExcelGlue-Addin.dna" />
 		<Compile Include="0500_toolbox.fs" />
 		<Compile Include="1000_main.fs" />
-		<Compile Include="2000_xlxl.fs" />
+		<Compile Include="2000_xlutils.fs" />
+		<Compile Include="3000_xlcharts.fs" />
 		<None Include="README.md" />
 	</ItemGroup>
 

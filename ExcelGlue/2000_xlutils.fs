@@ -668,7 +668,7 @@ module XlIO =
         // result
         box exists
 
-    [<ExcelFunction(Category="IO", Description="Returns true if a file exists.")>]
+    [<ExcelFunction(Category="IO", Description="Copy a file to a specified location.")>]
     let io_fCopyTo
         ([<ExcelArgument(Description= "File path.")>] filePath: string)
         ([<ExcelArgument(Description= "Destination file path.")>] destinationFilePath: string)
@@ -683,3 +683,57 @@ module XlIO =
 
         // result
         box now
+
+    [<ExcelFunction(Category="IO", Description="Copy a file to a specified location.")>]
+    let io_enumFiles
+        ([<ExcelArgument(Description= "File path.")>] filePath: string)
+        ([<ExcelArgument(Description= "[Search pattern. E.g. \"*.text\", \"file?.csv\"... Default is none.]")>] searchPattern: obj)
+        ([<ExcelArgument(Description= "[Sort on. (A)lphabetical or (D)ate. Default is None.")>] sortOn: obj)
+        ([<ExcelArgument(Description= "[Descending. Default is false.")>] descending: obj)
+        ([<ExcelArgument(Description= "[Full name. Default is false.")>] fullName: obj)
+        : obj[] =
+
+        // intermediary stage
+        let searchPattern = In.D0.Stg.def "" searchPattern        
+        let sortOn = 
+            match In.D0.Stg.Opt.def None sortOn with 
+            | None -> None 
+            | Some s -> 
+                if s.ToUpper().StartsWith "A" then Some "A"
+                elif s.ToUpper().StartsWith "D" then Some "D"
+                else None
+        let descending = In.D0.Bool.def false descending
+        let fullName = In.D0.Bool.def false fullName
+
+        let fileInfo = System.IO.FileInfo(filePath)
+        let dirInfo = fileInfo.Directory
+        let filesInfo = dirInfo.EnumerateFiles(searchPattern) |> Seq.toArray
+        let sorted = 
+            match sortOn with       
+            | None -> filesInfo
+            | Some x -> 
+                if x = "A" then
+                    let sortFn = if descending then Array.sortByDescending else Array.sortBy
+                    filesInfo |> sortFn (fun finfo -> finfo.Name)
+                else
+                    let sortFn = if descending then Array.sortByDescending else Array.sortBy
+                    filesInfo |> sortFn (fun finfo -> finfo.LastWriteTime)
+        sorted 
+        |> Array.map (fun finfo -> (if fullName then finfo.FullName else finfo.Name) |> box)
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

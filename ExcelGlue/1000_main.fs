@@ -5918,7 +5918,7 @@ module Rel =
             | :? Elem as e2 -> (e1.fname = e2.fname) && (e1.value = e2.value)
             | _ -> false
 
-        override e.GetHashCode() = hash e.value
+        override e.GetHashCode() = hash (e.fname, e.value)
 
         interface System.IComparable with
             member e1.CompareTo o2 =

@@ -623,6 +623,20 @@ module XlXl =
         // result
         String.Join(sep, strings) |> box
 
+    // --------------------
+    // --Miscellaneous functions
+    // --------------------
+
+    [<ExcelFunction(Category="Relation", Description="Returns a hash value of an Excel value or of a R-object.")>]
+    let x0_hash
+        ([<ExcelArgument(Description= "Value or R-obj.")>] value: obj)
+        : obj = 
+
+        // result
+        let ovalue = Registry.MRegistry.tryExtractO value |> Option.defaultValue value
+        let res = hash ovalue
+        box res
+
 module XlIO =
     open System
     open API

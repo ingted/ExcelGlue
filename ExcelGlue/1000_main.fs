@@ -5944,18 +5944,20 @@ module Rel =
         let ofPositions2 (positions1: int[]) (positions2: int[]) (row: Row) : Row = Array.append (ofPositions positions1 row) (ofPositions positions2 row)
 
         /// Returns a lookup index of (hashed) row-value -> row indexes.
-        /// Maps each row index to the indices of all rows which have common mapping image (that is, each row where (row |> mapping) is the same).
-        /// Will only works if the rows are sorted by fname.
-        let index (mapping: Row -> Row) (rows: Row[]) : Dictionary<int, int[]> =
-            let dc = new Dictionary<int, int[]>()
+        /// Maps each row index to the indices of all rows which have common mapping image (that is, each row where (row |> rowMap) is the same).
+        /// Will only works if each rows are sorted by fname.
+        let index (rowMap: Row -> Row) (rows: Row[]) : Map<int[], int[]> =
+            let kvs = new ResizeArray<int[]*int> ()
+
             let addEntry index row = 
-                let rowHash = mapping row |> hash
-                if dc.ContainsKey(rowHash) then 
-                    dc.[rowHash] <- Array.append dc.[rowHash] [| index |]
-                else
-                    dc.Add(rowHash, [| index |])
+                let mappedRow = rowMap row
+                let rowHash = mappedRow |> Array.map hash
+                kvs.Add(rowHash, index)
+                    
             rows |> Array.iteri addEntry
-            dc
+            let grpdByHash = kvs.ToArray() |> Array.groupBy (fun (hsh, idx) -> hsh) |> Array.map (fun (hsh, tpls) -> (hsh, tpls |> Array.map snd) )
+            let map = grpdByHash |> Map.ofArray
+            map
 
     /// A relation, Rel, is:
     /// 1. A header, a set of fields.
@@ -6158,16 +6160,14 @@ module Rel =
                 let rows2 = r2.body |> Set.toArray
                 let map1 = Row.index (Row.ofPositions comIdxs1) rows1 // (hashvalue -> rows1 indices) mapping
                 let map2 = Row.index (Row.ofPositions comIdxs2) rows2 // (hashvalue -> rows2 indices) mapping
+                let comHash = Set.intersect ([| for kvp in map1 -> kvp.Key |] |> Set.ofArray) ([| for kvp in map2 -> kvp.Key |] |> Set.ofArray) |> Set.toArray
 
-                let comHash = Set.intersect (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq) |> Set.toArray
-
-                let ofHash (rowHash: int) : Row[] =
+                let ofHash (rowHash: int[]) : Row[] =
                     let rws1 = map1.[rowHash] |> Array.map (fun idx -> let row = rows1.[idx] in Row.ofPositions2 comIdxs1 outIdxs1 row)
                     let rws2 = map2.[rowHash] |> Array.map (fun idx -> let row = rows2.[idx] in Row.ofPositions outIdxs2 row)
                     let pairs = Array.allPairs rws1 rws2
                     let rows = pairs |> Array.map (fun (row1, row2) -> Array.append row1 row2 |> Row.sort)
                     rows
-
                 let body = comHash |> Array.collect ofHash |> Set.ofArray
 
                 let rel : Rel = { fields = Set.union r1.fields r2.fields; body = body }
@@ -6191,14 +6191,12 @@ module Rel =
             let rows2 = r2.body |> Set.toArray
             let map1 = Row.index (Row.ofPositions comIdxs1) rows1 // (hashvalue -> rows1 indices) mapping
             let map2 = Row.index (Row.ofPositions comIdxs2) rows2 // (hashvalue -> rows2 indices) mapping
-
             let oper = if difference then Set.difference else Set.intersect
-            let comHash = oper (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
+            let comHash = oper ([| for kvp in map1 -> kvp.Key |] |> Set.ofArray) ([| for kvp in map2 -> kvp.Key |] |> Set.ofArray) |> Set.toArray
 
-            let ofHash (rowHash: int) : Row[] =
+            let ofHash (rowHash: int[]) : Row[] =
                 let rows = map1.[rowHash] |> Array.map (fun idx -> rows1.[idx])
                 rows
-
             let body = comHash |> Array.collect ofHash |> Set.ofArray
 
             let rel : Rel = { r1 with body = body }
@@ -6250,25 +6248,24 @@ module Rel =
                 let map2 = Row.index (Row.ofPositions comIdxs2) rows2 // (hashvalue -> rows2 indices) mapping
 
                 // 1- common rows
-                let comHash = Set.intersect (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
+                let comHash = Set.intersect ([| for kvp in map1 -> kvp.Key |] |> Set.ofArray) ([| for kvp in map2 -> kvp.Key |] |> Set.ofArray) |> Set.toArray  // DELETE OR RESTORE
 
-                let ofHash (rowHash: int) : Row[] =
+                let ofHash (rowHash: int[]) : Row[] =
                     let rows1 = map1.[rowHash] |> Array.map (fun idx -> let row = rows1.[idx] in Row.ofPositions2 comIdxs1 outIdxs1 row)
                     let rows2 = map2.[rowHash] |> Array.map (fun idx -> let row = rows2.[idx] in Row.ofPositions outIdxs2 row)
                     let pairs = Array.allPairs rows1 rows2
                     let rows = pairs |> Array.map (fun (row1, row2) -> Array.append row1 row2 |> Row.sort)
                     rows
-
                 let comRows = comHash |> Array.collect ofHash
 
                 // 2- rows in r1 which do not have a counterpart in r2 over their common fields
-                let diffHash = Set.difference (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
+                //let diffHash = Set.difference (map1.Keys |> Seq.cast<int> |> Set.ofSeq) (map2.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray  // DELETE OR RESTORE
+                let diffHash = Set.difference ([| for kvp in map1 -> kvp.Key |] |> Set.ofArray) ([| for kvp in map2 -> kvp.Key |] |> Set.ofArray) |> Set.toArray
                 let defRow = Set.difference r2.fields r1.fields |> Set.map (fun field -> { fname = field.fname; value = field |> defaultValues}) |> Set.toArray
 
-                let ofHash (rowHash: int) : Row[] =
+                let ofHash (rowHash: int[]) : Row[] =
                     let rows1 : Row[] = map1.[rowHash] |> Array.map (fun idx -> Array.append rows1.[idx] defRow |> Row.sort)
                     rows1
-
                 let diffRows = diffHash |> Array.collect ofHash
 
                 // union of common and difference rows
@@ -6365,7 +6362,7 @@ module Rel =
             // map row index -> indexes of all rows which match over comIdxs positions
             let rMap = Row.index (Row.ofPositions rComIdxs) rRows
             let perMap = Row.index id perRows  // TODO: optimization: better to hash directly perRows' rows.
-            let comHash = Set.intersect (rMap.Keys |> Seq.cast<int> |> Set.ofSeq) (perMap.Keys |> Seq.cast<int> |> Set.ofSeq)|> Set.toArray
+            let comHash = Set.intersect ([| for kvp in rMap -> kvp.Key |] |> Set.ofArray) ([| for kvp in perMap -> kvp.Key |] |> Set.ofArray) |> Set.toArray 
 
             // map (oper index, operName) -> (operator, operName, resultName, resultType) 
             let operMap = Array.zip (operNames |> Array.indexed) operations |> Map.ofArray
@@ -6379,7 +6376,7 @@ module Rel =
                 let elem : Elem = { fname = resName; value = res }
                 elem
 
-            let ofHash (rowHash: int) : Row =
+            let ofHash (rowHash: int[]) : Row =
                 let hashes = rMap.[rowHash]
                 let idx0 = hashes.[0]
                 let comRow = Row.ofPositions rComIdxs rRows.[idx0]
@@ -6388,7 +6385,6 @@ module Rel =
                     [| for kvp in operMap -> kvp.Key |]
                     |> Array.map (oper operRows)
                 Array.append comRow resRow |> Row.sort
-
             let body = comHash |> Array.map ofHash |> Set.ofArray
 
             let rel : Rel = { fields = fields; body = body }

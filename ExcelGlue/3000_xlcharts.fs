@@ -2,7 +2,7 @@
 //  ExcelGlue is licensed under the MIT license. See LICENSE.txt for details.
 
 namespace ExcelGlue
-
+ 
 open API
 open Toolbox.Array
 

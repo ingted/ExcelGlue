@@ -698,7 +698,7 @@ module XlIO =
         // result
         box now
 
-    [<ExcelFunction(Category="IO", Description="Copy a file to a specified location.")>]
+    [<ExcelFunction(Category="IO", Description="List files which name matches search pattern.")>]
     let io_enumFiles
         ([<ExcelArgument(Description= "File path.")>] filePath: string)
         ([<ExcelArgument(Description= "[Search pattern. E.g. \"*.text\", \"file?.csv\"... Default is none.]")>] searchPattern: obj)

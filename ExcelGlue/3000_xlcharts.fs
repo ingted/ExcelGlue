@@ -131,8 +131,8 @@ module CHART =
     type DataLabels = | ShowLabel | ShowValue | ShowNone with
         static member ofLabel (label: string) : DataLabels =
             match label.ToUpper() with
-            | "LBL" | "LABEL" | "SHOWLABEL" -> ShowLabel
-            | "VAL" | "VALUE" | "SHOWVALUE" -> ShowValue
+            | "LBL" | "LABEL" | "SHWLBL" | "SHOWLABEL" -> ShowLabel
+            | "VAL" | "VALUE" | "SHWVAL" | "SHOWVALUE" -> ShowValue
             | _ -> ShowNone
 
         member this.toXlDataLabelsType : Microsoft.Office.Interop.Excel.XlDataLabelsType =
@@ -503,7 +503,7 @@ module XL =
             (line: CHART.Line option) (marker: CHART.Marker option)
             (xlErrNA: obj) (xvals: double[] option) (yvals: double[] option)
             (ebar: CHART.ErrorBar option) (ebvals: double[] option)
-            (datalabels: CHART.DataLabels option) (labelsize: double option) (labelnfmt: string option)
+            (datalabels: CHART.DataLabels option) (labelsize: double option) (labelnfmt: string option) (filterLabels: (int -> bool) option)
             (axisgroup: int option)
             (xsrs: Series) 
             : unit = 
@@ -527,6 +527,7 @@ module XL =
             // xvalues & yvalues
             match xvals with | None -> () | Some xs -> xsrs.XValues <- xs |> Array.map (Out.D0.Dbl.out { Out.Proxys.def with nan = (COM.errNA |> box) })
             match yvals with | None -> () | Some ys -> xsrs.Values <- ys |> Array.map (Out.D0.Dbl.out { Out.Proxys.def with nan = (COM.errNA |> box) })
+            let yyvals = match yvals with None -> [||] | Some ys -> ys |> Array.map (Out.D0.Dbl.out { Out.Proxys.def with nan = (COM.errNA |> box) })
 
             // markers settings
             match marker with 
@@ -586,6 +587,14 @@ module XL =
             | Some nfmt -> 
                 let dlabels = xsrs.DataLabels() :?> Microsoft.Office.Interop.Excel.DataLabels
                 dlabels.NumberFormat <- nfmt
+
+            match filterLabels with
+            | None -> ()
+            | Some filterLbls -> 
+                for i in 1 .. count xsrs do
+                    if filterLbls i |> not then 
+                        let pnt = xsrs.Points(i) :?> Microsoft.Office.Interop.Excel.Point
+                        pnt.DataLabel.Delete() |> ignore
 
         //let get
         //    (showxs: bool)
@@ -661,29 +670,25 @@ module XL_XLCHART =
         ([<ExcelArgument(Description= "Series name.")>] seriesName: string)
         : obj = 
 
-        // return on error (sentinel value)
-        let snel = ExcelError.ExcelErrorNA |> box
-
         // result
         match tryExtract<ChartObject> rgChrtO with
-        | None -> snel
+        | None -> Out.Proxys.def.failed
         | Some chrto -> 
             XL.Chart.newSeries chrto seriesName |> ignore
-            box "Success."
+            let now = DateTime.Now
+            box now
 
     [<ExcelFunction(Category="Excel Chart", Description="Clear chart area contents.")>]
     let xc_clearContents ([<ExcelArgument(Description= "ChartO reg. obj.")>] rgChrtO: string)
         : obj = 
 
-        // return on error (sentinel value)
-        let snel = ExcelError.ExcelErrorNA |> box
-
         // result
         match tryExtract<ChartObject> rgChrtO with
-        | None -> snel
+        | None -> Out.Proxys.def.failed
         | Some chrto -> 
             XL.Chart.ChartArea.clearContents chrto
-            box "Success."
+            let now = DateTime.Now
+            box now
 
     // REAL PROBLEM ???
     [<ExcelFunction(Category="Excel Chart", Description="Sets a chart's properties.")>]
@@ -732,12 +737,10 @@ module XL_XLCHART =
         ([<ExcelArgument(Description= "[Show DataLabels. Default is no effect.]")>] showDataLabels: obj)
         ([<ExcelArgument(Description= "[DataLabels size. Default is no effect.]")>] dataLabelSize: obj)
         ([<ExcelArgument(Description= "[DataLabels number format. Default is no effect.]")>] dataLabelNumFormat: obj)
+        ([<ExcelArgument(Description= "[DataLabels keep ratio. Default is keep all.]")>] dataLabelKeepRatio: obj)
         : obj = 
 
-        // return on error (sentinel value)
-        let snel = ExcelError.ExcelErrorNA |> box
-
-        // intermediary arguments / calculations
+        // intermediary stage
         let xvals = xValue |> In.D0.Missing.Obj.tryO |> Option.map (In.D1.ODbl.def Double.NaN)
         let yvals = yValue |> In.D0.Missing.Obj.tryO |> Option.map (In.D1.ODbl.def Double.NaN)
         let ebvals = errorBarValues |> In.D0.Missing.Obj.tryO |> Option.map (In.D1.ODbl.def Double.NaN)
@@ -757,18 +760,27 @@ module XL_XLCHART =
         let datalabels = In.D0.Stg.Opt.def None showDataLabels |> Option.map CHART.DataLabels.ofLabel
         let labelsize = In.D0.Dbl.Opt.def None dataLabelSize
         let labelnfmt = In.D0.Stg.Opt.def None dataLabelNumFormat
+        let labelFilter = 
+            match In.D0.Intg.Opt.def None dataLabelKeepRatio with
+            | Some x when x = 0 -> None
+            | Some x when x <= 1 -> None
+            | Some x when x > 0 -> 
+                let fn = fun i -> i % x = 0
+                Some fn
+            | _ -> None
 
         // result
         match tryExtract<ChartObject> rgChrtO with
-        | None -> snel
+        | None -> Out.Proxys.def.failed
         | Some chrto -> 
             match seriesName |> XL.Series.trySeries chrto with
-            | None -> snel
+            | None -> Out.Proxys.def.failed
             | Some xsrs -> 
                 let line : CHART.Line = { style = linestyle; dstyle = linedstyle; color = linecolor; weight = lineweight; visible = linevisible; smooth = linesmooth }
                 let marker : CHART.Marker = { style = mkrstyle; size = mkrsize; fgcol = linecolor; bgcol = linecolor; hollow = mkrHollow } // TODO : map lineweight
-                xsrs |> XL.Series.set (Some line) (Some marker) (ExcelError.ExcelErrorNA |> box) xvals yvals (Some CHART.ErrorBar.def) ebvals datalabels labelsize labelnfmt axisgroup
-                box "Success."
+                xsrs |> XL.Series.set (Some line) (Some marker) (ExcelError.ExcelErrorNA |> box) xvals yvals (Some CHART.ErrorBar.def) ebvals datalabels labelsize labelnfmt labelFilter axisgroup
+                let now = DateTime.Now
+                box now
 
     [<ExcelFunction(Category="Excel Chart", Description="Sets a chart axis' properties.")>]
     let xc_setAxis

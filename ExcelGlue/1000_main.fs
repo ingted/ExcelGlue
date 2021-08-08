@@ -2027,7 +2027,7 @@ module API =
     // -------------------------
 
         // default-output function
-        let out<'a> (defOutput: obj) (output: 'a option) = match output with None -> defOutput | Some value -> box value
+        let out<'a> (noneOutput: obj) (output: 'a option) = match output with None -> noneOutput | Some value -> box value
         let outNA<'a> : 'a option -> obj = out (box ExcelError.ExcelErrorNA)
         let outStg<'a> (defString: string) : 'a option -> obj = out (box defString)
         let outDblTBD<'a> (defNum: double) : 'a option -> obj = out (box defNum)
@@ -2514,11 +2514,18 @@ module Registry_XL =
 
     [<ExcelFunction(Category="Registry", Description="Shows the textual representation of a registry object.")>]
     let rg_show 
-        ([<ExcelArgument(Description= "Reg. key.")>] regKey: string) 
+        ([<ExcelArgument(Description= "Reg. key.")>] regKey: string)
+        ([<ExcelArgument(Description= "[Only single space. Default is false.]")>] onlySingleSpace: string)
         : obj =
         
+        // intermediary stage
+        let onlySingleSpace = In.D0.Bool.def false onlySingleSpace
+        let rec singleSpace (s : string) = if s.Contains("  ") then singleSpace (s.Replace("  ", " ")) else s
+
         // result
-        MRegistry.tryShow regKey |> outNA
+        MRegistry.tryShow regKey 
+        |> Option.map (if onlySingleSpace then singleSpace else id)
+        |> outNA
 
     [<ExcelFunction(Category="Registry", Description="Renames a reg. object.")>]
     let rg_rname

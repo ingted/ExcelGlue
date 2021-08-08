@@ -2520,10 +2520,12 @@ module Registry_XL =
         
         // intermediary stage
         let onlySingleSpace = In.D0.Bool.def false onlySingleSpace
-        let rec singleSpace (s : string) = if s.Contains("  ") then singleSpace (s.Replace("  ", " ")) else s
+        let rec singleSpace (s: string) = if s.Contains("  ") then singleSpace (s.Replace("  ", " ")) else s
+        let removeEOLs (s: string) = s.Replace("\r\n","").Replace("\n","")
 
         // result
-        MRegistry.tryShow regKey 
+        MRegistry.tryShow regKey
+        |> Option.map (if onlySingleSpace then removeEOLs else id)
         |> Option.map (if onlySingleSpace then singleSpace else id)
         |> outNA
 

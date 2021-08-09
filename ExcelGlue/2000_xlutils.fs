@@ -646,6 +646,32 @@ module XlIO =
     // -- Basic file functions
     // ----------------------
 
+    [<ExcelFunction(Category="IO", Description="Saves lines of text to disk.")>]
+    let io_WriteLines
+        ([<ExcelArgument(Description= "File path.")>] filePath: string)
+        ([<ExcelArgument(Description= "Lines of text.")>] lines: obj)
+        : obj =
+
+        // intermediary stage
+        let lines = In.D1.OStg.filter lines
+
+        // result
+        System.IO.File.WriteAllLines(filePath, lines)
+        let now = DateTime.Now
+        box now
+
+    [<ExcelFunction(Category="IO", Description="Loads lines of text to disk.")>]
+    let io_ReadLines
+        ([<ExcelArgument(Description= "File path.")>] filePath: string)
+        : obj =
+
+        // caller cell's reference ID
+        let rfid = Registry.MRegistry.refID
+
+        // result
+        let lines = System.IO.File.ReadAllLines(filePath)
+        lines |> Registry.MRegistry.registerBxd rfid
+
     [<ExcelFunction(Category="IO", Description="Returns a file's last write time.")>]
     let io_fLastMod
         ([<ExcelArgument(Description= "File path.")>] filePath: string)
@@ -735,6 +761,15 @@ module XlIO =
         sorted 
         |> Array.map (fun finfo -> (if fullName then finfo.FullName else finfo.Name) |> box)
         
+    [<ExcelFunction(Category="IO", Description="Copy a string to the clipboard.")>]
+    let io_toClip
+        ([<ExcelArgument(Description= "Text.")>] text: string)
+        : obj = 
+
+        // result
+        System.Windows.Forms.Clipboard.SetText(text)
+        let now = DateTime.Now
+        box now
 
 
 

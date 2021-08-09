@@ -22,8 +22,9 @@ Using Excel-DNA (https://github.com/Excel-DNA/ExcelDna).
 		<PackageTags>F# Excel</PackageTags>
 		<RepositoryType>git</RepositoryType>
 		<Dependencies> <group targetFramework=".NETFramework4.8" /> </Dependencies>
-		<Version>1.0.7.3</Version>
-		<PackageReleaseNotes>Extended rg_show. Extended xc_setSeries.</PackageReleaseNotes>
+		<Version>1.0.7.6</Version>
+		<PackageReleaseNotes>Added io_toClip, io_WriteLines and io_ReadLines.</PackageReleaseNotes>
+		<AssemblyVersion>1.0.7.6</AssemblyVersion>
 	</PropertyGroup>
 	
 	<ItemGroup>

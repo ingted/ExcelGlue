@@ -41,7 +41,8 @@ module CHART =
             | :? string as s -> if (s = "A") || (s = "AUTO") then Some Auto  else None
             | :? double as v -> Fixed v |> Some
             | _ -> None
-
+        
+        /// Axis will have a fixed, manually-set, upper/lower value.
         static member ofDouble (value: double) : AutoValue = Fixed value
 
     type AxisCat = | X | Y of int with

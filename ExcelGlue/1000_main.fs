@@ -2515,7 +2515,7 @@ module Registry_XL =
     [<ExcelFunction(Category="Registry", Description="Shows the textual representation of a registry object.")>]
     let rg_show 
         ([<ExcelArgument(Description= "Reg. key.")>] regKey: string)
-        ([<ExcelArgument(Description= "[Only single space. Default is false.]")>] onlySingleSpace: string)
+        ([<ExcelArgument(Description= "[Only single space. Default is false.]")>] onlySingleSpace: obj)
         : obj =
         
         // intermediary stage
